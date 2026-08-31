@@ -19,6 +19,8 @@ const MONATSNAMEN = [
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ]
 
+const WOCHENTAGE_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+
 function tagImBereich(tag: Date, start: string, ende: string) {
   const t = tag.toISOString().slice(0, 10)
   return t >= start && t <= ende
@@ -31,6 +33,20 @@ function farbeFuerStatus(status: string) {
 
 function normalisiereName(name: string) {
   return name.trim().toLowerCase()
+}
+
+function istWochenende(tag: Date) {
+  const wochentag = tag.getDay()
+  return wochentag === 0 || wochentag === 6
+}
+
+function istHeute(tag: Date) {
+  const heute = new Date()
+  return (
+    tag.getFullYear() === heute.getFullYear() &&
+    tag.getMonth() === heute.getMonth() &&
+    tag.getDate() === heute.getDate()
+  )
 }
 
 export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
@@ -94,6 +110,13 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
     )
   }
 
+  function zellHintergrund(tag: Date, zeilenIndex: number, eintrag: KalenderEintrag | undefined) {
+    if (eintrag) return farbeFuerStatus(eintrag.status)
+    if (istHeute(tag)) return '#dbe6f5'
+    if (istWochenende(tag)) return '#eef1f5'
+    return zeilenIndex % 2 === 0 ? 'var(--card)' : 'var(--bg)'
+  }
+
   return (
     <div>
       <div
@@ -129,8 +152,9 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
                 style={{
                   position: 'sticky',
                   left: 0,
+                  top: 0,
                   background: 'var(--card)',
-                  zIndex: 2,
+                  zIndex: 3,
                   padding: '6px 10px',
                   textAlign: 'left',
                   borderBottom: '1px solid var(--border)',
@@ -144,14 +168,18 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
                 <th
                   key={tag.toISOString()}
                   style={{
-                    padding: '6px 2px',
+                    padding: '4px 2px',
                     borderBottom: '1px solid var(--border)',
-                    color: 'var(--text-muted)',
-                    fontWeight: 500,
-                    minWidth: 22,
+                    color: istHeute(tag) ? 'var(--navy)' : 'var(--text-muted)',
+                    fontWeight: istHeute(tag) ? 700 : 500,
+                    minWidth: 26,
+                    background: istHeute(tag) ? '#dbe6f5' : istWochenende(tag) ? '#eef1f5' : 'var(--card)',
                   }}
                 >
-                  {tag.getDate()}
+                  <div>{tag.getDate()}</div>
+                  <div style={{ fontSize: 9, fontWeight: 400, opacity: 0.8 }}>
+                    {WOCHENTAGE_KURZ[tag.getDay()]}
+                  </div>
                 </th>
               ))}
             </tr>
@@ -181,11 +209,7 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
                       title={eintrag ? zeile.name : undefined}
                       style={{
                         borderBottom: '1px solid var(--border)',
-                        background: eintrag
-                          ? farbeFuerStatus(eintrag.status)
-                          : index % 2 === 0
-                          ? 'var(--card)'
-                          : 'var(--bg)',
+                        background: zellHintergrund(tag, index, eintrag),
                         height: 22,
                       }}
                     />
@@ -197,12 +221,27 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
         </table>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          marginTop: 12,
+          fontSize: 12,
+          color: 'var(--text-muted)',
+          flexWrap: 'wrap',
+        }}
+      >
         <span>
           <span style={legendenPunktStil('var(--warning)')} /> In Prüfung
         </span>
         <span>
           <span style={legendenPunktStil('var(--success)')} /> Genehmigt
+        </span>
+        <span>
+          <span style={legendenFlaecheStil('#eef1f5')} /> Wochenende
+        </span>
+        <span>
+          <span style={legendenFlaecheStil('#dbe6f5')} /> Heute
         </span>
       </div>
     </div>
@@ -226,5 +265,17 @@ function legendenPunktStil(farbe: string): React.CSSProperties {
     borderRadius: '50%',
     background: farbe,
     marginRight: 4,
+  }
+}
+
+function legendenFlaecheStil(farbe: string): React.CSSProperties {
+  return {
+    display: 'inline-block',
+    width: 12,
+    height: 8,
+    borderRadius: 2,
+    background: farbe,
+    marginRight: 4,
+    border: '1px solid var(--border)',
   }
 }

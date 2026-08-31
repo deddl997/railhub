@@ -8,6 +8,7 @@ interface Antrag {
   letzter_tag: string | null
   anzahl_tage: number | null
   status: string
+  dokument_url: string | null
 }
 
 const SPALTEN = [
@@ -30,7 +31,7 @@ export default function MeineAntraege({
     setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
-      .select('id, name, erster_tag, letzter_tag, anzahl_tage, status')
+      .select('id, name, erster_tag, letzter_tag, anzahl_tage, status, dokument_url')
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
     setLadeVorgang(false)
@@ -42,6 +43,20 @@ export default function MeineAntraege({
 
   async function statusAendern(id: string, neuerStatus: string) {
     await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', id)
+    await laden()
+    onGeaendert()
+  }
+
+  async function antragLoeschen(antrag: Antrag) {
+    const bestaetigt = window.confirm(
+      `Antrag von "${antrag.name ?? 'Ohne Namen'}" wirklich unwiderruflich löschen?`
+    )
+    if (!bestaetigt) return
+
+    if (antrag.dokument_url) {
+      await supabase.storage.from('urlaubsantraege-dokumente').remove([antrag.dokument_url])
+    }
+    await supabase.from('urlaubsantraege').delete().eq('id', antrag.id)
     await laden()
     onGeaendert()
   }
@@ -108,9 +123,34 @@ export default function MeineAntraege({
                     borderRadius: 8,
                   }}
                 >
-                  <div style={{ fontWeight: 500 }}>{antrag.name ?? 'Ohne Namen'}</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
-                    {antrag.erster_tag} – {antrag.letzter_tag} ({antrag.anzahl_tage} Tage)
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 500 }}>{antrag.name ?? 'Ohne Namen'}</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
+                        {antrag.erster_tag} – {antrag.letzter_tag} ({antrag.anzahl_tage} Tage)
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => antragLoeschen(antrag)}
+                      title="Antrag löschen"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        fontSize: 16,
+                        lineHeight: 1,
+                        padding: 2,
+                      }}
+                    >
+                      ✕
+                    </button>
                   </div>
 
                   {spalte.status === 'offen' && (
