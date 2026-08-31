@@ -10,6 +10,8 @@ interface Antrag {
   brauchbare_tage: number | null
   status: string
   dokument_url: string | null
+  abzug_vorjahr: number | null
+  abzug_aktuell: number | null
 }
 
 const SPALTEN = [
@@ -32,7 +34,9 @@ export default function MeineAntraege({
     setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
-      .select('id, name, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url')
+      .select(
+        'id, name, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell'
+      )
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
     setLadeVorgang(false)
@@ -46,27 +50,58 @@ export default function MeineAntraege({
     const warGenehmigt = antrag.status === 'genehmigt'
     const wirdGenehmigt = neuerStatus === 'genehmigt'
 
-    await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', antrag.id)
-
-    if (antrag.name && antrag.brauchbare_tage && warGenehmigt !== wirdGenehmigt) {
+    if (antrag.name && antrag.brauchbare_tage && !warGenehmigt && wirdGenehmigt) {
+      // Wird neu genehmigt: zuerst Resturlaub Vorjahr abbuchen, dann aktuelles Jahr
       const { data: mitarbeiterDaten } = await supabase
         .from('mitarbeiter')
-        .select('id, resturlaub')
+        .select('id, resturlaub, resturlaub_vorjahr')
         .ilike('name', antrag.name)
         .maybeSingle()
 
       if (mitarbeiterDaten) {
-        let neuerResturlaub = mitarbeiterDaten.resturlaub ?? 0
-        if (!warGenehmigt && wirdGenehmigt) {
-          neuerResturlaub -= antrag.brauchbare_tage
-        } else if (warGenehmigt && !wirdGenehmigt) {
-          neuerResturlaub += antrag.brauchbare_tage
-        }
+        const vorjahrVerfuegbar = mitarbeiterDaten.resturlaub_vorjahr ?? 0
+        const abzugVorjahr = Math.min(vorjahrVerfuegbar, antrag.brauchbare_tage)
+        const abzugAktuell = antrag.brauchbare_tage - abzugVorjahr
+
         await supabase
           .from('mitarbeiter')
-          .update({ resturlaub: neuerResturlaub })
+          .update({
+            resturlaub_vorjahr: vorjahrVerfuegbar - abzugVorjahr,
+            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) - abzugAktuell,
+          })
+          .eq('id', mitarbeiterDaten.id)
+
+        await supabase
+          .from('urlaubsantraege')
+          .update({ status: neuerStatus, abzug_vorjahr: abzugVorjahr, abzug_aktuell: abzugAktuell })
+          .eq('id', antrag.id)
+      } else {
+        await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', antrag.id)
+      }
+    } else if (antrag.name && warGenehmigt && !wirdGenehmigt) {
+      // War genehmigt, wird zurueckgesetzt/abgelehnt: exakt die damals abgezogenen Anteile gutschreiben
+      const { data: mitarbeiterDaten } = await supabase
+        .from('mitarbeiter')
+        .select('id, resturlaub, resturlaub_vorjahr')
+        .ilike('name', antrag.name)
+        .maybeSingle()
+
+      if (mitarbeiterDaten) {
+        await supabase
+          .from('mitarbeiter')
+          .update({
+            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + (antrag.abzug_vorjahr ?? 0),
+            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + (antrag.abzug_aktuell ?? 0),
+          })
           .eq('id', mitarbeiterDaten.id)
       }
+
+      await supabase
+        .from('urlaubsantraege')
+        .update({ status: neuerStatus, abzug_vorjahr: 0, abzug_aktuell: 0 })
+        .eq('id', antrag.id)
+    } else {
+      await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', antrag.id)
     }
 
     await laden()
@@ -79,17 +114,20 @@ export default function MeineAntraege({
     )
     if (!bestaetigt) return
 
-    if (antrag.status === 'genehmigt' && antrag.name && antrag.brauchbare_tage) {
+    if (antrag.status === 'genehmigt' && antrag.name) {
       const { data: mitarbeiterDaten } = await supabase
         .from('mitarbeiter')
-        .select('id, resturlaub')
+        .select('id, resturlaub, resturlaub_vorjahr')
         .ilike('name', antrag.name)
         .maybeSingle()
 
       if (mitarbeiterDaten) {
         await supabase
           .from('mitarbeiter')
-          .update({ resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + antrag.brauchbare_tage })
+          .update({
+            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + (antrag.abzug_vorjahr ?? 0),
+            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + (antrag.abzug_aktuell ?? 0),
+          })
           .eq('id', mitarbeiterDaten.id)
       }
     }
