@@ -72,9 +72,9 @@ async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
     verplant: (zelle('F16') as number) ?? null,
     rest: (zelle('I16') as number) ?? null,
     resturlaub_vorjahr: (zelle('C18') as number) ?? null,
-    erster_tag: datumZuText(zelle('D22')),
-    letzter_tag: datumZuText(zelle('F22')),
-    anzahl_tage: (zelle('H22') as number) ?? null,
+    erster_tag: datumZuText(zelle('C23')),
+    letzter_tag: datumZuText(zelle('E23')),
+    anzahl_tage: (zelle('G23') as number) ?? null,
     ort_antragsteller: (zelle('A36') as string) ?? null,
     datum_antragsteller: datumZuText(zelle('C36')),
   }
