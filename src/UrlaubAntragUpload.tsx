@@ -33,7 +33,12 @@ function dateiZuBase64(datei: File): Promise<string> {
 
 function datumZuText(wert: unknown): string | null {
   if (!wert) return null
-  if (wert instanceof Date) return wert.toISOString().slice(0, 10)
+  if (wert instanceof Date) {
+    const jahr = wert.getFullYear()
+    const monat = String(wert.getMonth() + 1).padStart(2, '0')
+    const tag = String(wert.getDate()).padStart(2, '0')
+    return `${jahr}-${monat}-${tag}`
+  }
   if (typeof wert === 'string') return wert
   return null
 }
@@ -155,12 +160,12 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       const { error: uploadFehler } = await supabase.storage
         .from('urlaubsantraege-dokumente')
         .upload(dateiPfad, hochgeladeneDatei)
-      if (uploadFehler) throw uploadFehler
+      if (uploadFehler) throw new Error('Upload: ' + uploadFehler.message)
 
       const { error: einfuegenFehler } = await supabase
         .from('urlaubsantraege')
         .insert({ ...ausgelesenerAntrag, status: 'offen', dokument_url: dateiPfad })
-      if (einfuegenFehler) throw einfuegenFehler
+      if (einfuegenFehler) throw new Error('Speichern: ' + einfuegenFehler.message)
 
       setAusgelesenerAntrag(null)
       setHochgeladeneDatei(null)

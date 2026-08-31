@@ -14,7 +14,7 @@ function App() {
   return (
     <div>
       <Kopfzeile />
-      <main style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>
+      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 20px' }}>
         <div
           style={{
             background: 'var(--card)',
@@ -22,6 +22,7 @@ function App() {
             borderRadius: 12,
             padding: 24,
             marginBottom: 32,
+            maxWidth: 640,
           }}
         >
           <UrlaubAntragUpload onGespeichert={neuLaden} />
