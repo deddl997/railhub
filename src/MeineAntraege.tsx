@@ -22,22 +22,35 @@ function statusText(status: string) {
   return 'In Prüfung'
 }
 
-export default function MeineAntraege({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
+export default function MeineAntraege({
+  neuLadenAuslöser,
+  onGeaendert,
+}: {
+  neuLadenAuslöser: number
+  onGeaendert: () => void
+}) {
   const [antraege, setAntraege] = useState<Antrag[]>([])
   const [ladeVorgang, setLadeVorgang] = useState(true)
 
+  async function laden() {
+    setLadeVorgang(true)
+    const { data } = await supabase
+      .from('urlaubsantraege')
+      .select('id, name, erster_tag, letzter_tag, anzahl_tage, status')
+      .order('erstellt_am', { ascending: false })
+    setAntraege(data ?? [])
+    setLadeVorgang(false)
+  }
+
   useEffect(() => {
-    async function laden() {
-      setLadeVorgang(true)
-      const { data } = await supabase
-        .from('urlaubsantraege')
-        .select('id, name, erster_tag, letzter_tag, anzahl_tage, status')
-        .order('erstellt_am', { ascending: false })
-      setAntraege(data ?? [])
-      setLadeVorgang(false)
-    }
     laden()
   }, [neuLadenAuslöser])
+
+  async function statusAendern(id: string, neuerStatus: string) {
+    await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', id)
+    await laden()
+    onGeaendert()
+  }
 
   if (ladeVorgang) {
     return <p style={{ color: 'var(--text-muted)' }}>Lade Anträge...</p>
@@ -62,6 +75,7 @@ export default function MeineAntraege({ neuLadenAuslöser }: { neuLadenAuslöser
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 8,
+              gap: 12,
             }}
           >
             <div>
@@ -70,21 +84,52 @@ export default function MeineAntraege({ neuLadenAuslöser }: { neuLadenAuslöser
                 {antrag.erster_tag} – {antrag.letzter_tag} ({antrag.anzahl_tage} Tage)
               </div>
             </div>
-            <span
-              style={{
-                background: farben.bg,
-                color: farben.text,
-                padding: '4px 10px',
-                borderRadius: 999,
-                fontSize: 13,
-                fontWeight: 500,
-              }}
-            >
-              {statusText(antrag.status)}
-            </span>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {antrag.status === 'offen' && (
+                <>
+                  <button
+                    onClick={() => statusAendern(antrag.id, 'genehmigt')}
+                    style={aktionsKnopfStil('var(--success)')}
+                  >
+                    Genehmigen
+                  </button>
+                  <button
+                    onClick={() => statusAendern(antrag.id, 'abgelehnt')}
+                    style={aktionsKnopfStil('var(--danger)')}
+                  >
+                    Ablehnen
+                  </button>
+                </>
+              )}
+              <span
+                style={{
+                  background: farben.bg,
+                  color: farben.text,
+                  padding: '4px 10px',
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 500,
+                }}
+              >
+                {statusText(antrag.status)}
+              </span>
+            </div>
           </div>
         )
       })}
     </div>
   )
+}
+
+function aktionsKnopfStil(farbe: string): React.CSSProperties {
+  return {
+    background: 'none',
+    border: `1px solid ${farbe}`,
+    color: farbe,
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    cursor: 'pointer',
+  }
 }
