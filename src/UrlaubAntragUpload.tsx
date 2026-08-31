@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 
 interface AusgelesenerAntrag {
@@ -28,6 +29,55 @@ function dateiZuBase64(datei: File): Promise<string> {
     reader.onerror = reject
     reader.readAsDataURL(datei)
   })
+}
+
+function datumZuText(wert: unknown): string | null {
+  if (!wert) return null
+  if (wert instanceof Date) return wert.toISOString().slice(0, 10)
+  if (typeof wert === 'string') return wert
+  return null
+}
+
+async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
+  const puffer = await datei.arrayBuffer()
+  const arbeitsmappe = XLSX.read(puffer, { type: 'array', cellDates: true })
+  const blatt = arbeitsmappe.Sheets[arbeitsmappe.SheetNames[0]]
+
+  function zelle(referenz: string) {
+    return blatt[referenz]?.v ?? null
+  }
+
+  const kategorieFelder: [string, string][] = [
+    ['A10', 'A9'],
+    ['C10', 'C9'],
+    ['E10', 'E9'],
+    ['G10', 'G9'],
+    ['I10', 'I9'],
+  ]
+  const ausgewaehlteKategorien = kategorieFelder
+    .filter(([markierung]) => {
+      const wert = zelle(markierung)
+      return typeof wert === 'string' && wert.trim().toUpperCase() === 'X'
+    })
+    .map(([, label]) => zelle(label))
+    .filter(Boolean)
+
+  return {
+    ua_nummer: (zelle('D5') as number) ?? null,
+    jahr: (zelle('F5') as number) ?? null,
+    name: (zelle('C12') as string) ?? null,
+    personalnummer: zelle('C14') !== null ? String(zelle('C14')) : null,
+    kategorie: ausgewaehlteKategorien.length > 0 ? ausgewaehlteKategorien.join(', ') : null,
+    urlaubsanspruch: (zelle('C16') as number) ?? null,
+    verplant: (zelle('F16') as number) ?? null,
+    rest: (zelle('I16') as number) ?? null,
+    resturlaub_vorjahr: (zelle('C18') as number) ?? null,
+    erster_tag: datumZuText(zelle('D22')),
+    letzter_tag: datumZuText(zelle('F22')),
+    anzahl_tage: (zelle('H22') as number) ?? null,
+    ort_antragsteller: (zelle('A36') as string) ?? null,
+    datum_antragsteller: datumZuText(zelle('C36')),
+  }
 }
 
 const eingabeStil: React.CSSProperties = {
@@ -60,19 +110,28 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     setLadeVorgang(true)
     setAusgelesenerAntrag(null)
 
+    const istExcel =
+      datei.name.toLowerCase().endsWith('.xlsx') ||
+      datei.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
     try {
-      const base64 = await dateiZuBase64(datei)
+      if (istExcel) {
+        const ergebnis = await excelAuswerten(datei)
+        setAusgelesenerAntrag(ergebnis)
+      } else {
+        const base64 = await dateiZuBase64(datei)
 
-      const response = await fetch('/api/urlaubsantrag-auswerten', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bildBase64: base64, mediaType: datei.type }),
-      })
+        const response = await fetch('/api/urlaubsantrag-auswerten', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bildBase64: base64, mediaType: datei.type }),
+        })
 
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
 
-      setAusgelesenerAntrag(data)
+        setAusgelesenerAntrag(data)
+      }
     } catch (err) {
       setFehler(err instanceof Error ? err.message : 'Fehler beim Auslesen')
     } finally {
@@ -117,7 +176,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     <div>
       <h2 style={{ marginTop: 0, fontSize: 18 }}>Urlaubsantrag einreichen</h2>
       <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: -8 }}>
-        Foto oder Scan des unterschriebenen Formulars hochladen.
+        Foto, Scan oder ausgefülltes Excel-Formular hochladen.
       </p>
 
       <label
@@ -136,7 +195,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
         {hochgeladeneDatei ? hochgeladeneDatei.name : 'Datei auswählen'}
         <input
           type="file"
-          accept="image/*,.pdf"
+          accept="image/*,.pdf,.xlsx"
           onChange={handleDateiAuswahl}
           disabled={ladeVorgang}
           style={{ display: 'none' }}
