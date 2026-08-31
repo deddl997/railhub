@@ -6,6 +6,7 @@ interface MitarbeiterZeile {
   name: string
   urlaubsanspruch: number | null
   resturlaub: number | null
+  resturlaub_vorjahr: number | null
 }
 
 export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
@@ -17,7 +18,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     setLadeVorgang(true)
     const { data } = await supabase
       .from('mitarbeiter')
-      .select('id, name, urlaubsanspruch, resturlaub')
+      .select('id, name, urlaubsanspruch, resturlaub, resturlaub_vorjahr')
       .order('name')
     setMitarbeiter(data ?? [])
     setLadeVorgang(false)
@@ -27,7 +28,11 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     laden()
   }, [neuLadenAuslöser])
 
-  function feldAendern(id: string, feld: 'urlaubsanspruch' | 'resturlaub', wert: string) {
+  function feldAendern(
+    id: string,
+    feld: 'urlaubsanspruch' | 'resturlaub' | 'resturlaub_vorjahr',
+    wert: string
+  ) {
     setMitarbeiter((vorher) =>
       vorher.map((m) => (m.id === id ? { ...m, [feld]: wert === '' ? null : Number(wert) } : m))
     )
@@ -36,7 +41,11 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   async function speichern(zeile: MitarbeiterZeile) {
     await supabase
       .from('mitarbeiter')
-      .update({ urlaubsanspruch: zeile.urlaubsanspruch, resturlaub: zeile.resturlaub })
+      .update({
+        urlaubsanspruch: zeile.urlaubsanspruch,
+        resturlaub: zeile.resturlaub,
+        resturlaub_vorjahr: zeile.resturlaub_vorjahr,
+      })
       .eq('id', zeile.id)
 
     setGespeichertId(zeile.id)
@@ -55,6 +64,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             <th style={kopfZelleStil}>Name</th>
             <th style={kopfZelleStil}>Urlaubsanspruch</th>
             <th style={kopfZelleStil}>Resturlaub</th>
+            <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
             <th style={kopfZelleStil}></th>
           </tr>
         </thead>
@@ -76,6 +86,15 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
                   type="number"
                   value={zeile.resturlaub ?? ''}
                   onChange={(e) => feldAendern(zeile.id, 'resturlaub', e.target.value)}
+                  onBlur={() => speichern(zeile)}
+                  style={eingabeStil}
+                />
+              </td>
+              <td style={zellStil}>
+                <input
+                  type="number"
+                  value={zeile.resturlaub_vorjahr ?? ''}
+                  onChange={(e) => feldAendern(zeile.id, 'resturlaub_vorjahr', e.target.value)}
                   onBlur={() => speichern(zeile)}
                   style={eingabeStil}
                 />
