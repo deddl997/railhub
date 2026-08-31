@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { feiertageBayern } from './feiertage'
+import { datumZuISO } from './datumUtils'
 
 interface KalenderEintrag {
   id: string
@@ -22,7 +24,7 @@ const MONATSNAMEN = [
 const WOCHENTAGE_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
 
 function tagImBereich(tag: Date, start: string, ende: string) {
-  const t = tag.toISOString().slice(0, 10)
+  const t = datumZuISO(tag)
   return t >= start && t <= ende
 }
 
@@ -59,12 +61,8 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
 
   useEffect(() => {
     async function laden() {
-      const monatsStart = new Date(monat.getFullYear(), monat.getMonth(), 1)
-        .toISOString()
-        .slice(0, 10)
-      const monatsEnde = new Date(monat.getFullYear(), monat.getMonth() + 1, 0)
-        .toISOString()
-        .slice(0, 10)
+      const monatsStart = datumZuISO(new Date(monat.getFullYear(), monat.getMonth(), 1))
+      const monatsEnde = datumZuISO(new Date(monat.getFullYear(), monat.getMonth() + 1, 0))
 
       const [{ data: antraegeData }, { data: mitarbeiterData }] = await Promise.all([
         supabase
@@ -86,6 +84,13 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
   const tage = Array.from({ length: anzahlTage }, (_, i) =>
     new Date(monat.getFullYear(), monat.getMonth(), i + 1)
   )
+
+  const feiertagsMap = new Map(
+    feiertageBayern(monat.getFullYear()).map((f) => [f.datum, f.name])
+  )
+  function feiertagName(tag: Date) {
+    return feiertagsMap.get(datumZuISO(tag))
+  }
 
   const bekannteNamen = new Set(mitarbeiterListe.map((m) => normalisiereName(m.name)))
   const unbekannteNamen = Array.from(
@@ -113,6 +118,7 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
   function zellHintergrund(tag: Date, zeilenIndex: number, eintrag: KalenderEintrag | undefined) {
     if (eintrag) return farbeFuerStatus(eintrag.status)
     if (istHeute(tag)) return '#dbe6f5'
+    if (feiertagName(tag)) return '#fbe1e4'
     if (istWochenende(tag)) return '#eef1f5'
     return zeilenIndex % 2 === 0 ? 'var(--card)' : 'var(--bg)'
   }
@@ -164,24 +170,34 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
               >
                 Mitarbeiter
               </th>
-              {tage.map((tag) => (
-                <th
-                  key={tag.toISOString()}
-                  style={{
-                    padding: '4px 2px',
-                    borderBottom: '1px solid var(--border)',
-                    color: istHeute(tag) ? 'var(--navy)' : 'var(--text-muted)',
-                    fontWeight: istHeute(tag) ? 700 : 500,
-                    minWidth: 26,
-                    background: istHeute(tag) ? '#dbe6f5' : istWochenende(tag) ? '#eef1f5' : 'var(--card)',
-                  }}
-                >
-                  <div>{tag.getDate()}</div>
-                  <div style={{ fontSize: 9, fontWeight: 400, opacity: 0.8 }}>
-                    {WOCHENTAGE_KURZ[tag.getDay()]}
-                  </div>
-                </th>
-              ))}
+              {tage.map((tag) => {
+                const feiertag = feiertagName(tag)
+                return (
+                  <th
+                    key={tag.toISOString()}
+                    title={feiertag ?? undefined}
+                    style={{
+                      padding: '4px 2px',
+                      borderBottom: '1px solid var(--border)',
+                      color: istHeute(tag) ? 'var(--navy)' : 'var(--text-muted)',
+                      fontWeight: istHeute(tag) ? 700 : 500,
+                      minWidth: 26,
+                      background: istHeute(tag)
+                        ? '#dbe6f5'
+                        : feiertag
+                        ? '#fbe1e4'
+                        : istWochenende(tag)
+                        ? '#eef1f5'
+                        : 'var(--card)',
+                    }}
+                  >
+                    <div>{tag.getDate()}</div>
+                    <div style={{ fontSize: 9, fontWeight: 400, opacity: 0.8 }}>
+                      {WOCHENTAGE_KURZ[tag.getDay()]}
+                    </div>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
@@ -203,10 +219,11 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
                 </td>
                 {tage.map((tag) => {
                   const eintrag = eintragFuerZelle(zeile.name, tag)
+                  const feiertag = feiertagName(tag)
                   return (
                     <td
                       key={tag.toISOString()}
-                      title={eintrag ? zeile.name : undefined}
+                      title={eintrag ? zeile.name : feiertag ?? undefined}
                       style={{
                         borderBottom: '1px solid var(--border)',
                         background: zellHintergrund(tag, index, eintrag),
@@ -236,6 +253,9 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
         </span>
         <span>
           <span style={legendenPunktStil('var(--success)')} /> Genehmigt
+        </span>
+        <span>
+          <span style={legendenFlaecheStil('#fbe1e4')} /> Feiertag
         </span>
         <span>
           <span style={legendenFlaecheStil('#eef1f5')} /> Wochenende

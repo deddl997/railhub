@@ -7,6 +7,7 @@ interface Antrag {
   erster_tag: string | null
   letzter_tag: string | null
   anzahl_tage: number | null
+  brauchbare_tage: number | null
   status: string
   dokument_url: string | null
 }
@@ -31,7 +32,7 @@ export default function MeineAntraege({
     setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
-      .select('id, name, erster_tag, letzter_tag, anzahl_tage, status, dokument_url')
+      .select('id, name, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url')
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
     setLadeVorgang(false)
@@ -41,8 +42,33 @@ export default function MeineAntraege({
     laden()
   }, [neuLadenAuslöser])
 
-  async function statusAendern(id: string, neuerStatus: string) {
-    await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', id)
+  async function statusAendern(antrag: Antrag, neuerStatus: string) {
+    const warGenehmigt = antrag.status === 'genehmigt'
+    const wirdGenehmigt = neuerStatus === 'genehmigt'
+
+    await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', antrag.id)
+
+    if (antrag.name && antrag.brauchbare_tage && warGenehmigt !== wirdGenehmigt) {
+      const { data: mitarbeiterDaten } = await supabase
+        .from('mitarbeiter')
+        .select('id, resturlaub')
+        .ilike('name', antrag.name)
+        .maybeSingle()
+
+      if (mitarbeiterDaten) {
+        let neuerResturlaub = mitarbeiterDaten.resturlaub ?? 0
+        if (!warGenehmigt && wirdGenehmigt) {
+          neuerResturlaub -= antrag.brauchbare_tage
+        } else if (warGenehmigt && !wirdGenehmigt) {
+          neuerResturlaub += antrag.brauchbare_tage
+        }
+        await supabase
+          .from('mitarbeiter')
+          .update({ resturlaub: neuerResturlaub })
+          .eq('id', mitarbeiterDaten.id)
+      }
+    }
+
     await laden()
     onGeaendert()
   }
@@ -52,6 +78,21 @@ export default function MeineAntraege({
       `Antrag von "${antrag.name ?? 'Ohne Namen'}" wirklich unwiderruflich löschen?`
     )
     if (!bestaetigt) return
+
+    if (antrag.status === 'genehmigt' && antrag.name && antrag.brauchbare_tage) {
+      const { data: mitarbeiterDaten } = await supabase
+        .from('mitarbeiter')
+        .select('id, resturlaub')
+        .ilike('name', antrag.name)
+        .maybeSingle()
+
+      if (mitarbeiterDaten) {
+        await supabase
+          .from('mitarbeiter')
+          .update({ resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + antrag.brauchbare_tage })
+          .eq('id', mitarbeiterDaten.id)
+      }
+    }
 
     if (antrag.dokument_url) {
       await supabase.storage.from('urlaubsantraege-dokumente').remove([antrag.dokument_url])
@@ -133,7 +174,8 @@ export default function MeineAntraege({
                     <div>
                       <div style={{ fontWeight: 500 }}>{antrag.name ?? 'Ohne Namen'}</div>
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
-                        {antrag.erster_tag} – {antrag.letzter_tag} ({antrag.anzahl_tage} Tage)
+                        {antrag.erster_tag} – {antrag.letzter_tag} (
+                        {antrag.brauchbare_tage ?? antrag.anzahl_tage} Arbeitstage)
                       </div>
                     </div>
                     <button
@@ -156,13 +198,13 @@ export default function MeineAntraege({
                   {spalte.status === 'offen' && (
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
-                        onClick={() => statusAendern(antrag.id, 'genehmigt')}
+                        onClick={() => statusAendern(antrag, 'genehmigt')}
                         style={aktionsKnopfStil('var(--success)')}
                       >
                         Genehmigen
                       </button>
                       <button
-                        onClick={() => statusAendern(antrag.id, 'abgelehnt')}
+                        onClick={() => statusAendern(antrag, 'abgelehnt')}
                         style={aktionsKnopfStil('var(--danger)')}
                       >
                         Ablehnen
@@ -172,7 +214,7 @@ export default function MeineAntraege({
 
                   {spalte.status !== 'offen' && (
                     <button
-                      onClick={() => statusAendern(antrag.id, 'offen')}
+                      onClick={() => statusAendern(antrag, 'offen')}
                       style={aktionsKnopfStil('var(--text-muted)')}
                     >
                       Zurücksetzen

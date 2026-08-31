@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
+import { berechneBrauchbareTage } from './urlaubsberechnung'
 
 interface AusgelesenerAntrag {
   ua_nummer: number | null
@@ -106,6 +107,46 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   const [ausgelesenerAntrag, setAusgelesenerAntrag] = useState<AusgelesenerAntrag | null>(null)
   const [hochgeladeneDatei, setHochgeladeneDatei] = useState<File | null>(null)
 
+  const [brauchbareTage, setBrauchbareTage] = useState<number | null>(null)
+  const [verfuegbarerResturlaub, setVerfuegbarerResturlaub] = useState<number | null>(null)
+  const [mitarbeiterGefunden, setMitarbeiterGefunden] = useState(false)
+
+  useEffect(() => {
+    if (!ausgelesenerAntrag) {
+      setBrauchbareTage(null)
+      setVerfuegbarerResturlaub(null)
+      setMitarbeiterGefunden(false)
+      return
+    }
+
+    const tage = berechneBrauchbareTage(ausgelesenerAntrag.erster_tag, ausgelesenerAntrag.letzter_tag)
+    setBrauchbareTage(tage)
+
+    async function pruefeMitarbeiter() {
+      if (!ausgelesenerAntrag?.name) {
+        setVerfuegbarerResturlaub(null)
+        setMitarbeiterGefunden(false)
+        return
+      }
+      const { data } = await supabase
+        .from('mitarbeiter')
+        .select('resturlaub')
+        .ilike('name', ausgelesenerAntrag.name)
+        .maybeSingle()
+
+      if (data) {
+        setVerfuegbarerResturlaub(data.resturlaub)
+        setMitarbeiterGefunden(true)
+      } else {
+        setVerfuegbarerResturlaub(null)
+        setMitarbeiterGefunden(false)
+      }
+    }
+
+    pruefeMitarbeiter()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ausgelesenerAntrag?.erster_tag, ausgelesenerAntrag?.letzter_tag, ausgelesenerAntrag?.name])
+
   async function handleDateiAuswahl(event: React.ChangeEvent<HTMLInputElement>) {
     const datei = event.target.files?.[0]
     if (!datei) return
@@ -162,9 +203,12 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
         .upload(dateiPfad, hochgeladeneDatei)
       if (uploadFehler) throw new Error('Upload: ' + uploadFehler.message)
 
-      const { error: einfuegenFehler } = await supabase
-        .from('urlaubsantraege')
-        .insert({ ...ausgelesenerAntrag, status: 'offen', dokument_url: dateiPfad })
+      const { error: einfuegenFehler } = await supabase.from('urlaubsantraege').insert({
+        ...ausgelesenerAntrag,
+        status: 'offen',
+        dokument_url: dateiPfad,
+        brauchbare_tage: brauchbareTage,
+      })
       if (einfuegenFehler) throw new Error('Speichern: ' + einfuegenFehler.message)
 
       setAusgelesenerAntrag(null)
@@ -253,13 +297,54 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
           </div>
 
           <label style={beschriftungStil}>
-            Anzahl Urlaubstage
+            Anzahl Urlaubstage (laut Formular)
             <input
               style={eingabeStil}
               value={ausgelesenerAntrag.anzahl_tage ?? ''}
               onChange={(e) => feldAendern('anzahl_tage', e.target.value)}
             />
           </label>
+
+          {brauchbareTage !== null && (
+            <div
+              style={{
+                background: '#f1f5f9',
+                borderRadius: 6,
+                padding: 10,
+                fontSize: 13,
+              }}
+            >
+              <div>
+                Berechnete Arbeitstage (ohne Wochenende/bayerische Feiertage):{' '}
+                <strong>{brauchbareTage}</strong>
+              </div>
+
+              {ausgelesenerAntrag.anzahl_tage !== null &&
+                Number(ausgelesenerAntrag.anzahl_tage) !== brauchbareTage && (
+                  <div style={{ color: 'var(--warning)', marginTop: 4 }}>
+                    Hinweis: Im Formular stehen {ausgelesenerAntrag.anzahl_tage} Tage, berechnet
+                    wurden {brauchbareTage}.
+                  </div>
+                )}
+
+              {mitarbeiterGefunden && verfuegbarerResturlaub !== null && (
+                <div style={{ marginTop: 4 }}>
+                  Verfügbarer Resturlaub: <strong>{verfuegbarerResturlaub}</strong> Tage
+                  {brauchbareTage > verfuegbarerResturlaub && (
+                    <div style={{ color: 'var(--danger)', marginTop: 4 }}>
+                      Achtung: Antrag übersteigt den verfügbaren Resturlaub!
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!mitarbeiterGefunden && (
+                <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                  Mitarbeiter nicht in der Liste gefunden - kein Abgleich möglich.
+                </div>
+              )}
+            </div>
+          )}
 
           <button
             onClick={antragSpeichern}
