@@ -18,6 +18,9 @@ interface AusgelesenerAntrag {
   anzahl_tage: number | null
   ort_antragsteller: string | null
   datum_antragsteller: string | null
+  bearbeitet_von: string | null
+  ort_bearbeiter: string | null
+  datum_bearbeiter: string | null
 }
 
 function dateiZuBase64(datei: File): Promise<string> {
@@ -68,6 +71,14 @@ async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
     .map(([, label]) => zelle(label))
     .filter(Boolean)
 
+  function ermittleBearbeiter(): string | null {
+    const disposition = zelle('C41')
+    const geschaeftsfuehrung = zelle('C43')
+    if (disposition) return `Disposition: ${disposition}`
+    if (geschaeftsfuehrung) return `Geschäftsführung: ${geschaeftsfuehrung}`
+    return null
+  }
+
   return {
     ua_nummer: (zelle('D5') as number) ?? null,
     jahr: (zelle('F5') as number) ?? null,
@@ -83,6 +94,9 @@ async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
     anzahl_tage: (zelle('G23') as number) ?? null,
     ort_antragsteller: (zelle('A36') as string) ?? null,
     datum_antragsteller: datumZuText(zelle('C36')),
+    bearbeitet_von: ermittleBearbeiter(),
+    ort_bearbeiter: (zelle('A48') as string) ?? null,
+    datum_bearbeiter: datumZuText(zelle('C48')),
   }
 }
 
@@ -343,6 +357,28 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
                   Mitarbeiter nicht in der Liste gefunden - kein Abgleich möglich.
                 </div>
               )}
+            </div>
+          )}
+
+          {(ausgelesenerAntrag.bearbeitet_von ||
+            ausgelesenerAntrag.ort_bearbeiter ||
+            ausgelesenerAntrag.datum_bearbeiter) && (
+            <div
+              style={{
+                background: '#f8fafc',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: 10,
+                fontSize: 13,
+                color: 'var(--text-muted)',
+              }}
+            >
+              <div style={{ fontWeight: 500, marginBottom: 4, color: 'var(--text)' }}>
+                Im Formular bereits ausgefüllte Bearbeitung
+              </div>
+              {ausgelesenerAntrag.bearbeitet_von && <div>Bearbeitet von: {ausgelesenerAntrag.bearbeitet_von}</div>}
+              {ausgelesenerAntrag.ort_bearbeiter && <div>Ort: {ausgelesenerAntrag.ort_bearbeiter}</div>}
+              {ausgelesenerAntrag.datum_bearbeiter && <div>Datum: {ausgelesenerAntrag.datum_bearbeiter}</div>}
             </div>
           )}
 

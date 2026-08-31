@@ -52,7 +52,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   "letzter_tag": Datum im Format YYYY-MM-DD oder null,
   "anzahl_tage": Zahl oder null,
   "ort_antragsteller": Text oder null,
-  "datum_antragsteller": Datum im Format YYYY-MM-DD oder null
+  "datum_antragsteller": Datum im Format YYYY-MM-DD oder null,
+  "bearbeitet_von": Text - falls im unteren Bereich "Bearbeitung durch" bereits ein Name/Vermerk bei Disposition oder Geschäftsführung eingetragen ist, sonst null,
+  "ort_bearbeiter": Text - Ort im unteren Bearbeitungsbereich, falls vorhanden, sonst null,
+  "datum_bearbeiter": Datum im Format YYYY-MM-DD - Datum im unteren Bearbeitungsbereich, falls vorhanden, sonst null
 }`,
               },
             ],
