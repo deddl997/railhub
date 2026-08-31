@@ -10,17 +10,11 @@ interface Antrag {
   status: string
 }
 
-function statusFarben(status: string) {
-  if (status === 'genehmigt') return { bg: 'var(--success-bg)', text: 'var(--success)' }
-  if (status === 'abgelehnt') return { bg: 'var(--danger-bg)', text: 'var(--danger)' }
-  return { bg: 'var(--warning-bg)', text: 'var(--warning)' }
-}
-
-function statusText(status: string) {
-  if (status === 'genehmigt') return 'Genehmigt'
-  if (status === 'abgelehnt') return 'Abgelehnt'
-  return 'In Prüfung'
-}
+const SPALTEN = [
+  { status: 'offen', titel: 'Nicht bearbeitet', farbe: 'var(--warning)' },
+  { status: 'genehmigt', titel: 'Genehmigt', farbe: 'var(--success)' },
+  { status: 'abgelehnt', titel: 'Abgelehnt', farbe: 'var(--danger)' },
+]
 
 export default function MeineAntraege({
   neuLadenAuslöser,
@@ -56,64 +50,96 @@ export default function MeineAntraege({
     return <p style={{ color: 'var(--text-muted)' }}>Lade Anträge...</p>
   }
 
-  if (antraege.length === 0) {
-    return <p style={{ color: 'var(--text-muted)' }}>Noch keine Anträge eingereicht.</p>
-  }
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {antraege.map((antrag) => {
-        const farben = statusFarben(antrag.status)
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: 16,
+      }}
+    >
+      {SPALTEN.map((spalte) => {
+        const eintraege = antraege.filter((a) => a.status === spalte.status)
         return (
-          <div
-            key={antrag.id}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-              gap: 12,
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 500 }}>{antrag.name ?? 'Ohne Namen'}</div>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                {antrag.erster_tag} – {antrag.letzter_tag} ({antrag.anzahl_tage} Tage)
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {antrag.status === 'offen' && (
-                <>
-                  <button
-                    onClick={() => statusAendern(antrag.id, 'genehmigt')}
-                    style={aktionsKnopfStil('var(--success)')}
-                  >
-                    Genehmigen
-                  </button>
-                  <button
-                    onClick={() => statusAendern(antrag.id, 'abgelehnt')}
-                    style={aktionsKnopfStil('var(--danger)')}
-                  >
-                    Ablehnen
-                  </button>
-                </>
-              )}
+          <div key={spalte.status}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginBottom: 10,
+                fontWeight: 600,
+                fontSize: 14,
+              }}
+            >
               <span
                 style={{
-                  background: farben.bg,
-                  color: farben.text,
-                  padding: '4px 10px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: 500,
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: spalte.farbe,
+                  display: 'inline-block',
+                }}
+              />
+              {spalte.titel}
+              <span
+                style={{
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  fontWeight: 400,
                 }}
               >
-                {statusText(antrag.status)}
+                ({eintraege.length})
               </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {eintraege.length === 0 && (
+                <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>—</p>
+              )}
+
+              {eintraege.map((antrag) => (
+                <div
+                  key={antrag.id}
+                  style={{
+                    padding: '12px 14px',
+                    background: 'var(--card)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{ fontWeight: 500 }}>{antrag.name ?? 'Ohne Namen'}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
+                    {antrag.erster_tag} – {antrag.letzter_tag} ({antrag.anzahl_tage} Tage)
+                  </div>
+
+                  {spalte.status === 'offen' && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => statusAendern(antrag.id, 'genehmigt')}
+                        style={aktionsKnopfStil('var(--success)')}
+                      >
+                        Genehmigen
+                      </button>
+                      <button
+                        onClick={() => statusAendern(antrag.id, 'abgelehnt')}
+                        style={aktionsKnopfStil('var(--danger)')}
+                      >
+                        Ablehnen
+                      </button>
+                    </div>
+                  )}
+
+                  {spalte.status !== 'offen' && (
+                    <button
+                      onClick={() => statusAendern(antrag.id, 'offen')}
+                      style={aktionsKnopfStil('var(--text-muted)')}
+                    >
+                      Zurücksetzen
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )
