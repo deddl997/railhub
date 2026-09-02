@@ -32,6 +32,23 @@ interface AusgelesenerAntrag {
   zeitraeume: Zeitraum[]
 }
 
+const LEERE_GEMEINSAME_FELDER: GemeinsameFelder = {
+  ua_nummer: null,
+  jahr: null,
+  name: null,
+  personalnummer: null,
+  kategorie: null,
+  urlaubsanspruch: null,
+  verplant: null,
+  rest: null,
+  resturlaub_vorjahr: null,
+  ort_antragsteller: null,
+  datum_antragsteller: null,
+  bearbeitet_von: null,
+  ort_bearbeiter: null,
+  datum_bearbeiter: null,
+}
+
 function dateiZuBase64(datei: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -110,7 +127,10 @@ const beschriftungStil: React.CSSProperties = {
   color: 'var(--text-muted)',
 }
 
+type Modus = 'auswahl' | 'upload' | 'manuell'
+
 export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: () => void }) {
+  const [modus, setModus] = useState<Modus>('auswahl')
   const [ladeVorgang, setLadeVorgang] = useState(false)
   const [fehler, setFehler] = useState<string | null>(null)
   const [ausgelesenerAntrag, setAusgelesenerAntrag] = useState<AusgelesenerAntrag | null>(null)
@@ -171,6 +191,30 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     pruefeMitarbeiter()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ausgelesenerAntrag])
+
+  function manuellStarten() {
+    setModus('manuell')
+    setFehler(null)
+    setHochgeladeneDatei(null)
+    setAusgelesenerAntrag({
+      gemeinsam: { ...LEERE_GEMEINSAME_FELDER },
+      zeitraeume: [{ erster_tag: null, letzter_tag: null, anzahl_tage: null }],
+    })
+  }
+
+  function uploadStarten() {
+    setModus('upload')
+    setFehler(null)
+    setAusgelesenerAntrag(null)
+    setHochgeladeneDatei(null)
+  }
+
+  function abbrechen() {
+    setModus('auswahl')
+    setFehler(null)
+    setAusgelesenerAntrag(null)
+    setHochgeladeneDatei(null)
+  }
 
   async function handleDateiAuswahl(event: React.ChangeEvent<HTMLInputElement>) {
     const datei = event.target.files?.[0]
@@ -251,7 +295,9 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   )
 
   async function antragSpeichern() {
-    if (!ausgelesenerAntrag || !hochgeladeneDatei) return
+    if (!ausgelesenerAntrag) return
+    if (modus === 'upload' && !hochgeladeneDatei) return
+
     const gueltigeZeitraeume = ausgelesenerAntrag.zeitraeume.filter(
       (z) => z.erster_tag && z.letzter_tag
     )
@@ -259,16 +305,24 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       setFehler('Bitte mindestens einen vollständigen Urlaubszeitraum angeben.')
       return
     }
+    if (!ausgelesenerAntrag.gemeinsam.name) {
+      setFehler('Bitte einen Namen angeben.')
+      return
+    }
 
     setLadeVorgang(true)
     setFehler(null)
 
     try {
-      const dateiPfad = `${Date.now()}-${hochgeladeneDatei.name}`
-      const { error: uploadFehler } = await supabase.storage
-        .from('urlaubsantraege-dokumente')
-        .upload(dateiPfad, hochgeladeneDatei)
-      if (uploadFehler) throw new Error('Upload: ' + uploadFehler.message)
+      let dateiPfad: string | null = null
+
+      if (modus === 'upload' && hochgeladeneDatei) {
+        dateiPfad = `${Date.now()}-${hochgeladeneDatei.name}`
+        const { error: uploadFehler } = await supabase.storage
+          .from('urlaubsantraege-dokumente')
+          .upload(dateiPfad, hochgeladeneDatei)
+        if (uploadFehler) throw new Error('Upload: ' + uploadFehler.message)
+      }
 
       const gruppeId = crypto.randomUUID()
 
@@ -286,6 +340,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       const { error: einfuegenFehler } = await supabase.from('urlaubsantraege').insert(zeilen)
       if (einfuegenFehler) throw new Error('Speichern: ' + einfuegenFehler.message)
 
+      setModus('auswahl')
       setAusgelesenerAntrag(null)
       setHochgeladeneDatei(null)
       onGespeichert()
@@ -299,37 +354,64 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   return (
     <div>
       <h2 style={{ marginTop: 0, fontSize: 18 }}>Urlaubsantrag einreichen</h2>
-      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: -8 }}>
-        Foto, Scan oder ausgefülltes Excel-Formular hochladen.
-      </p>
 
-      <label
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          border: '2px dashed var(--border)',
-          borderRadius: 8,
-          padding: 24,
-          cursor: 'pointer',
-          color: 'var(--text-muted)',
-          fontSize: 14,
-        }}
-      >
-        {hochgeladeneDatei ? hochgeladeneDatei.name : 'Datei auswählen'}
-        <input
-          type="file"
-          accept="image/*,.pdf,.xlsx"
-          onChange={handleDateiAuswahl}
-          disabled={ladeVorgang}
-          style={{ display: 'none' }}
-        />
-      </label>
+      {modus === 'auswahl' && (
+        <div>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: -8 }}>
+            Wähle, wie der Antrag erfasst werden soll.
+          </p>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button onClick={uploadStarten} style={auswahlKnopfStil}>
+              📄 Foto, Scan oder Excel hochladen
+            </button>
+            <button onClick={manuellStarten} style={auswahlKnopfStil}>
+              ✏️ Manuell eingeben
+            </button>
+          </div>
+        </div>
+      )}
+
+      {modus === 'upload' && (
+        <div>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: -8 }}>
+            Foto, Scan oder ausgefülltes Excel-Formular hochladen.
+          </p>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '2px dashed var(--border)',
+              borderRadius: 8,
+              padding: 24,
+              cursor: 'pointer',
+              color: 'var(--text-muted)',
+              fontSize: 14,
+            }}
+          >
+            {hochgeladeneDatei ? hochgeladeneDatei.name : 'Datei auswählen'}
+            <input
+              type="file"
+              accept="image/*,.pdf,.xlsx"
+              onChange={handleDateiAuswahl}
+              disabled={ladeVorgang}
+              style={{ display: 'none' }}
+            />
+          </label>
+
+          {!ausgelesenerAntrag && (
+            <button onClick={abbrechen} style={{ ...zurueckKnopfStil, marginTop: 12 }}>
+              ← Zurück
+            </button>
+          )}
+        </div>
+      )}
 
       {ladeVorgang && <p style={{ color: 'var(--navy)' }}>Wird verarbeitet...</p>}
       {fehler && <p style={{ color: 'var(--danger)' }}>Fehler: {fehler}</p>}
 
-      {ausgelesenerAntrag && (
+      {ausgelesenerAntrag && (modus === 'upload' || modus === 'manuell') && (
         <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <label style={beschriftungStil}>
             Name
@@ -337,6 +419,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               style={eingabeStil}
               value={ausgelesenerAntrag.gemeinsam.name ?? ''}
               onChange={(e) => gemeinsamesFeldAendern('name', e.target.value)}
+              placeholder="Vor- und Nachname"
             />
           </label>
 
@@ -480,25 +563,53 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
             </div>
           )}
 
-          <button
-            onClick={antragSpeichern}
-            disabled={ladeVorgang}
-            style={{
-              background: 'var(--navy)',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 6,
-              padding: '10px 16px',
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: 'pointer',
-              marginTop: 8,
-            }}
-          >
-            Antrag einreichen
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={antragSpeichern}
+              disabled={ladeVorgang}
+              style={{
+                background: 'var(--navy)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: 6,
+                padding: '10px 16px',
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: 'pointer',
+                marginTop: 8,
+              }}
+            >
+              Antrag einreichen
+            </button>
+            <button onClick={abbrechen} style={{ ...zurueckKnopfStil, marginTop: 8 }}>
+              Abbrechen
+            </button>
+          </div>
         </div>
       )}
     </div>
   )
+}
+
+const auswahlKnopfStil: React.CSSProperties = {
+  flex: 1,
+  padding: '20px 16px',
+  border: '1px solid var(--border)',
+  borderRadius: 8,
+  background: '#f8fafc',
+  fontSize: 14,
+  fontWeight: 500,
+  color: 'var(--navy)',
+  cursor: 'pointer',
+  textAlign: 'center',
+}
+
+const zurueckKnopfStil: React.CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--border)',
+  color: 'var(--text-muted)',
+  borderRadius: 6,
+  padding: '10px 16px',
+  fontSize: 14,
+  cursor: 'pointer',
 }
