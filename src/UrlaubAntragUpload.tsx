@@ -134,24 +134,39 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
 
     async function pruefeMitarbeiter() {
       const name = ausgelesenerAntrag?.gemeinsam.name
-      if (!name) {
+      const ersterZeitraumMitDatum = ausgelesenerAntrag?.zeitraeume.find((z) => z.erster_tag)
+
+      if (!name || !ersterZeitraumMitDatum?.erster_tag) {
         setVerfuegbarerResturlaub(null)
         setMitarbeiterGefunden(false)
         return
       }
-      const { data } = await supabase
+
+      const jahr = new Date(ersterZeitraumMitDatum.erster_tag).getFullYear()
+
+      const { data: mitarbeiter } = await supabase
         .from('mitarbeiter')
-        .select('resturlaub')
+        .select('id')
         .ilike('name', name)
         .maybeSingle()
 
-      if (data) {
-        setVerfuegbarerResturlaub(data.resturlaub)
-        setMitarbeiterGefunden(true)
-      } else {
+      if (!mitarbeiter) {
         setVerfuegbarerResturlaub(null)
         setMitarbeiterGefunden(false)
+        return
       }
+      setMitarbeiterGefunden(true)
+
+      const { data: jahresdaten } = await supabase
+        .from('mitarbeiter_jahresdaten')
+        .select('resturlaub, resturlaub_vorjahr')
+        .eq('mitarbeiter_id', mitarbeiter.id)
+        .eq('jahr', jahr)
+        .maybeSingle()
+
+      const resturlaub = jahresdaten?.resturlaub ?? 30
+      const resturlaubVorjahr = jahresdaten?.resturlaub_vorjahr ?? 0
+      setVerfuegbarerResturlaub(resturlaub + resturlaubVorjahr)
     }
 
     pruefeMitarbeiter()

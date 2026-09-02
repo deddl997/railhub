@@ -28,6 +28,44 @@ const SPALTEN = [
   { status: 'abgelehnt', titel: 'Abgelehnt', farbe: 'var(--danger)' },
 ]
 
+async function holeOderErstelleJahresdaten(name: string, jahr: number) {
+  const { data: mitarbeiter } = await supabase
+    .from('mitarbeiter')
+    .select('id')
+    .ilike('name', name)
+    .maybeSingle()
+
+  if (!mitarbeiter) return null
+
+  const { data: jahresdaten } = await supabase
+    .from('mitarbeiter_jahresdaten')
+    .select('id, resturlaub, resturlaub_vorjahr')
+    .eq('mitarbeiter_id', mitarbeiter.id)
+    .eq('jahr', jahr)
+    .maybeSingle()
+
+  if (jahresdaten) return jahresdaten
+
+  const { data: neueDaten } = await supabase
+    .from('mitarbeiter_jahresdaten')
+    .insert({
+      mitarbeiter_id: mitarbeiter.id,
+      jahr,
+      urlaubsanspruch: 30,
+      resturlaub: 30,
+      resturlaub_vorjahr: 0,
+    })
+    .select('id, resturlaub, resturlaub_vorjahr')
+    .single()
+
+  return neueDaten
+}
+
+function jahrDerGruppe(gruppe: Gruppe): number {
+  const erstesDatum = gruppe.zeilen[0]?.erster_tag
+  return erstesDatum ? new Date(erstesDatum).getFullYear() : new Date().getFullYear()
+}
+
 export default function MeineAntraege({
   neuLadenAuslöser,
   onGeaendert,
@@ -76,31 +114,28 @@ export default function MeineAntraege({
     const warGenehmigt = gruppe.status === 'genehmigt'
     const wirdGenehmigt = neuerStatus === 'genehmigt'
     const tageGesamt = gesamtTage(gruppe)
+    const jahr = jahrDerGruppe(gruppe)
 
     if (gruppe.name && !warGenehmigt && wirdGenehmigt) {
-      const { data: mitarbeiterDaten } = await supabase
-        .from('mitarbeiter')
-        .select('id, resturlaub, resturlaub_vorjahr')
-        .ilike('name', gruppe.name)
-        .maybeSingle()
+      const jahresdaten = await holeOderErstelleJahresdaten(gruppe.name, jahr)
 
       await supabase
         .from('urlaubsantraege')
         .update({ status: neuerStatus, abzug_vorjahr: 0, abzug_aktuell: 0 })
         .in('id', ids)
 
-      if (mitarbeiterDaten) {
-        const vorjahrVerfuegbar = mitarbeiterDaten.resturlaub_vorjahr ?? 0
+      if (jahresdaten) {
+        const vorjahrVerfuegbar = jahresdaten.resturlaub_vorjahr ?? 0
         const abzugVorjahr = Math.min(vorjahrVerfuegbar, tageGesamt)
         const abzugAktuell = tageGesamt - abzugVorjahr
 
         await supabase
-          .from('mitarbeiter')
+          .from('mitarbeiter_jahresdaten')
           .update({
             resturlaub_vorjahr: vorjahrVerfuegbar - abzugVorjahr,
-            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) - abzugAktuell,
+            resturlaub: (jahresdaten.resturlaub ?? 0) - abzugAktuell,
           })
-          .eq('id', mitarbeiterDaten.id)
+          .eq('id', jahresdaten.id)
 
         await supabase
           .from('urlaubsantraege')
@@ -111,20 +146,16 @@ export default function MeineAntraege({
       const abzugVorjahrGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_vorjahr ?? 0), 0)
       const abzugAktuellGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_aktuell ?? 0), 0)
 
-      const { data: mitarbeiterDaten } = await supabase
-        .from('mitarbeiter')
-        .select('id, resturlaub, resturlaub_vorjahr')
-        .ilike('name', gruppe.name)
-        .maybeSingle()
+      const jahresdaten = await holeOderErstelleJahresdaten(gruppe.name, jahr)
 
-      if (mitarbeiterDaten) {
+      if (jahresdaten) {
         await supabase
-          .from('mitarbeiter')
+          .from('mitarbeiter_jahresdaten')
           .update({
-            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + abzugVorjahrGesamt,
-            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + abzugAktuellGesamt,
+            resturlaub_vorjahr: (jahresdaten.resturlaub_vorjahr ?? 0) + abzugVorjahrGesamt,
+            resturlaub: (jahresdaten.resturlaub ?? 0) + abzugAktuellGesamt,
           })
-          .eq('id', mitarbeiterDaten.id)
+          .eq('id', jahresdaten.id)
       }
 
       await supabase
@@ -146,23 +177,20 @@ export default function MeineAntraege({
     if (!bestaetigt) return
 
     if (gruppe.status === 'genehmigt' && gruppe.name) {
+      const jahr = jahrDerGruppe(gruppe)
       const abzugVorjahrGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_vorjahr ?? 0), 0)
       const abzugAktuellGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_aktuell ?? 0), 0)
 
-      const { data: mitarbeiterDaten } = await supabase
-        .from('mitarbeiter')
-        .select('id, resturlaub, resturlaub_vorjahr')
-        .ilike('name', gruppe.name)
-        .maybeSingle()
+      const jahresdaten = await holeOderErstelleJahresdaten(gruppe.name, jahr)
 
-      if (mitarbeiterDaten) {
+      if (jahresdaten) {
         await supabase
-          .from('mitarbeiter')
+          .from('mitarbeiter_jahresdaten')
           .update({
-            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + abzugVorjahrGesamt,
-            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + abzugAktuellGesamt,
+            resturlaub_vorjahr: (jahresdaten.resturlaub_vorjahr ?? 0) + abzugVorjahrGesamt,
+            resturlaub: (jahresdaten.resturlaub ?? 0) + abzugAktuellGesamt,
           })
-          .eq('id', mitarbeiterDaten.id)
+          .eq('id', jahresdaten.id)
       }
     }
 
