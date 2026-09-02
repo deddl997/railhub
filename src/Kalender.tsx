@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { feiertageBayern } from './feiertage'
 import { datumZuISO } from './datumUtils'
 import { namensSignatur } from './namensAbgleich'
+import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 
 interface KalenderEintrag {
   id: string
@@ -16,6 +17,7 @@ interface Mitarbeiter {
   id: string
   name: string
   kategorie: string | null
+  lok_typen: string[] | null
 }
 
 const MONATSNAMEN = [
@@ -24,8 +26,6 @@ const MONATSNAMEN = [
 ]
 
 const WOCHENTAGE_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
-
-const KATEGORIEN = ['Lokführer', 'Dienstleister', 'Wagenmeister', 'Disposition', 'Betriebsleitung']
 
 function tagImBereich(tag: Date, start: string, ende: string) {
   const t = datumZuISO(tag)
@@ -83,7 +83,7 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
           .lte('erster_tag', monatsEnde)
           .gte('letzter_tag', monatsStart)
           .in('status', ['offen', 'genehmigt']),
-        supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen').order('name'),
       ])
 
       setEintraege(antraegeData ?? [])
@@ -135,24 +135,40 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
     return zeilenIndex % 2 === 0 ? 'var(--card)' : 'var(--bg)'
   }
 
-  // Auslastung pro Qualifikation berechnen
-  const kategorienMitBesetzung = KATEGORIEN.map((kategorie) => {
-    const mitarbeiterInKategorie = mitarbeiterListe.filter((m) => m.kategorie === kategorie)
-    const namenSignaturenInKategorie = new Set(mitarbeiterInKategorie.map((m) => normalisiereName(m.name)))
-
-    const anzahlProTag = tage.map((tag) => {
-      if (namenSignaturenInKategorie.size === 0) return { anzahl: 0, anteil: 0 }
+  function berechneAuslastung(gruppe: Mitarbeiter[]) {
+    const namenSignaturen = new Set(gruppe.map((m) => normalisiereName(m.name)))
+    return tage.map((tag) => {
+      if (namenSignaturen.size === 0) return { anzahl: 0, anteil: 0 }
       const anzahl = eintraege.filter(
         (e) =>
           e.name &&
-          namenSignaturenInKategorie.has(normalisiereName(e.name)) &&
+          namenSignaturen.has(normalisiereName(e.name)) &&
           tagImBereich(tag, e.erster_tag, e.letzter_tag)
       ).length
-      return { anzahl, anteil: anzahl / mitarbeiterInKategorie.length }
+      return { anzahl, anteil: anzahl / gruppe.length }
     })
+  }
 
-    return { kategorie, gesamt: mitarbeiterInKategorie.length, anzahlProTag }
-  }).filter((k) => k.gesamt > 0)
+  // Auslastung pro Qualifikation - Lokführer zusätzlich nach Lok-Typ aufgeschlüsselt
+  const auslastungsZeilen: { titel: string; gesamt: number; anzahlProTag: { anzahl: number; anteil: number }[] }[] = []
+
+  for (const kategorie of KATEGORIEN) {
+    const gruppe = mitarbeiterListe.filter((m) => m.kategorie === kategorie)
+    if (gruppe.length === 0) continue
+    auslastungsZeilen.push({ titel: kategorie, gesamt: gruppe.length, anzahlProTag: berechneAuslastung(gruppe) })
+
+    if (kategorie === 'Lokführer') {
+      for (const lokTyp of LOK_TYPEN) {
+        const lokGruppe = gruppe.filter((m) => (m.lok_typen ?? []).includes(lokTyp))
+        if (lokGruppe.length === 0) continue
+        auslastungsZeilen.push({
+          titel: `↳ ${lokTyp}`,
+          gesamt: lokGruppe.length,
+          anzahlProTag: berechneAuslastung(lokGruppe),
+        })
+      }
+    }
+  }
 
   return (
     <div>
@@ -296,12 +312,12 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
         </span>
       </div>
 
-      {kategorienMitBesetzung.length > 0 && (
+      {auslastungsZeilen.length > 0 && (
         <div style={{ marginTop: 28 }}>
           <h4 style={{ marginBottom: 4 }}>Auslastung nach Qualifikation</h4>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
-            Zeigt, wie viele Mitarbeiter je Qualifikation gleichzeitig abwesend sind - rot bedeutet
-            hohes Ausfallrisiko.
+            Zeigt, wie viele Mitarbeiter je Qualifikation (bei Lokführern zusätzlich je Lok-Typ)
+            gleichzeitig abwesend sind - rot bedeutet hohes Ausfallrisiko.
           </p>
 
           <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
@@ -340,8 +356,8 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
                 </tr>
               </thead>
               <tbody>
-                {kategorienMitBesetzung.map((k) => (
-                  <tr key={k.kategorie}>
+                {auslastungsZeilen.map((zeile) => (
+                  <tr key={zeile.titel}>
                     <td
                       style={{
                         position: 'sticky',
@@ -352,17 +368,19 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
                         borderRight: '1px solid var(--border)',
                         borderBottom: '1px solid var(--border)',
                         whiteSpace: 'nowrap',
+                        color: zeile.titel.startsWith('↳') ? 'var(--text-muted)' : 'var(--text)',
+                        paddingLeft: zeile.titel.startsWith('↳') ? 20 : 10,
                       }}
                     >
-                      {k.kategorie}{' '}
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({k.gesamt})</span>
+                      {zeile.titel}{' '}
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({zeile.gesamt})</span>
                     </td>
-                    {k.anzahlProTag.map((eintrag, i) => {
+                    {zeile.anzahlProTag.map((eintrag, i) => {
                       const farbe = auslastungsFarbe(eintrag.anteil)
                       return (
                         <td
                           key={i}
-                          title={eintrag.anzahl > 0 ? `${eintrag.anzahl} von ${k.gesamt} abwesend` : undefined}
+                          title={eintrag.anzahl > 0 ? `${eintrag.anzahl} von ${zeile.gesamt} abwesend` : undefined}
                           style={{
                             borderBottom: '1px solid var(--border)',
                             background: farbe ?? 'var(--card)',

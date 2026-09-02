@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
-
-const KATEGORIEN = ['Lokführer', 'Dienstleister', 'Wagenmeister', 'Disposition', 'Betriebsleitung']
-const LOK_TYPEN = ['DE 18', '185', '193', 'V90', 'V60', 'G1206']
+import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 
 interface Jahresdaten {
   id: string
