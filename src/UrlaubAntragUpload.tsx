@@ -231,7 +231,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     })
   }
 
-  const gesamtBrauchbareTage = brauchbareTageProZeitraum.reduce(
+  const gesamtBrauchbareTage = brauchbareTageProZeitraum.reduce<number>(
     (summe, tage) => summe + (tage ?? 0),
     0
   )
