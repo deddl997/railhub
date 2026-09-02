@@ -15,6 +15,7 @@ interface KalenderEintrag {
 interface Mitarbeiter {
   id: string
   name: string
+  kategorie: string | null
 }
 
 const MONATSNAMEN = [
@@ -23,6 +24,8 @@ const MONATSNAMEN = [
 ]
 
 const WOCHENTAGE_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+
+const KATEGORIEN = ['Lokführer', 'Dienstleister', 'Wagenmeister', 'Disposition', 'Betriebsleitung']
 
 function tagImBereich(tag: Date, start: string, ende: string) {
   const t = datumZuISO(tag)
@@ -52,6 +55,14 @@ function istHeute(tag: Date) {
   )
 }
 
+function auslastungsFarbe(anteil: number) {
+  if (anteil === 0) return null
+  if (anteil < 0.34) return '#dcfce7'
+  if (anteil < 0.67) return '#fef3c7'
+  if (anteil < 1) return '#fed7aa'
+  return '#fecaca'
+}
+
 export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
   const [monat, setMonat] = useState(() => {
     const heute = new Date()
@@ -72,7 +83,7 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
           .lte('erster_tag', monatsEnde)
           .gte('letzter_tag', monatsStart)
           .in('status', ['offen', 'genehmigt']),
-        supabase.from('mitarbeiter').select('id, name').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
       ])
 
       setEintraege(antraegeData ?? [])
@@ -123,6 +134,25 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
     if (istWochenende(tag)) return '#eef1f5'
     return zeilenIndex % 2 === 0 ? 'var(--card)' : 'var(--bg)'
   }
+
+  // Auslastung pro Qualifikation berechnen
+  const kategorienMitBesetzung = KATEGORIEN.map((kategorie) => {
+    const mitarbeiterInKategorie = mitarbeiterListe.filter((m) => m.kategorie === kategorie)
+    const namenSignaturenInKategorie = new Set(mitarbeiterInKategorie.map((m) => normalisiereName(m.name)))
+
+    const anzahlProTag = tage.map((tag) => {
+      if (namenSignaturenInKategorie.size === 0) return { anzahl: 0, anteil: 0 }
+      const anzahl = eintraege.filter(
+        (e) =>
+          e.name &&
+          namenSignaturenInKategorie.has(normalisiereName(e.name)) &&
+          tagImBereich(tag, e.erster_tag, e.letzter_tag)
+      ).length
+      return { anzahl, anteil: anzahl / mitarbeiterInKategorie.length }
+    })
+
+    return { kategorie, gesamt: mitarbeiterInKategorie.length, anzahlProTag }
+  }).filter((k) => k.gesamt > 0)
 
   return (
     <div>
@@ -265,6 +295,117 @@ export default function Kalender({ neuLadenAuslöser }: { neuLadenAuslöser: num
           <span style={legendenFlaecheStil('#dbe6f5')} /> Heute
         </span>
       </div>
+
+      {kategorienMitBesetzung.length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <h4 style={{ marginBottom: 4 }}>Auslastung nach Qualifikation</h4>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
+            Zeigt, wie viele Mitarbeiter je Qualifikation gleichzeitig abwesend sind - rot bedeutet
+            hohes Ausfallrisiko.
+          </p>
+
+          <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: 12, width: '100%' }}>
+              <thead>
+                <tr>
+                  <th
+                    style={{
+                      position: 'sticky',
+                      left: 0,
+                      background: 'var(--card)',
+                      zIndex: 2,
+                      padding: '6px 10px',
+                      textAlign: 'left',
+                      borderBottom: '1px solid var(--border)',
+                      borderRight: '1px solid var(--border)',
+                      minWidth: 170,
+                    }}
+                  >
+                    Qualifikation
+                  </th>
+                  {tage.map((tag) => (
+                    <th
+                      key={tag.toISOString()}
+                      style={{
+                        padding: '4px 2px',
+                        borderBottom: '1px solid var(--border)',
+                        color: 'var(--text-muted)',
+                        fontWeight: 500,
+                        minWidth: 26,
+                      }}
+                    >
+                      {tag.getDate()}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {kategorienMitBesetzung.map((k) => (
+                  <tr key={k.kategorie}>
+                    <td
+                      style={{
+                        position: 'sticky',
+                        left: 0,
+                        background: 'var(--card)',
+                        zIndex: 1,
+                        padding: '4px 10px',
+                        borderRight: '1px solid var(--border)',
+                        borderBottom: '1px solid var(--border)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {k.kategorie}{' '}
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({k.gesamt})</span>
+                    </td>
+                    {k.anzahlProTag.map((eintrag, i) => {
+                      const farbe = auslastungsFarbe(eintrag.anteil)
+                      return (
+                        <td
+                          key={i}
+                          title={eintrag.anzahl > 0 ? `${eintrag.anzahl} von ${k.gesamt} abwesend` : undefined}
+                          style={{
+                            borderBottom: '1px solid var(--border)',
+                            background: farbe ?? 'var(--card)',
+                            textAlign: 'center',
+                            fontWeight: eintrag.anzahl > 0 ? 600 : 400,
+                            color: eintrag.anteil >= 1 ? 'var(--danger)' : 'var(--text)',
+                          }}
+                        >
+                          {eintrag.anzahl > 0 ? eintrag.anzahl : ''}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 16,
+              marginTop: 10,
+              fontSize: 12,
+              color: 'var(--text-muted)',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>
+              <span style={legendenFlaecheStil('#dcfce7')} /> Unkritisch
+            </span>
+            <span>
+              <span style={legendenFlaecheStil('#fef3c7')} /> Erhöht
+            </span>
+            <span>
+              <span style={legendenFlaecheStil('#fed7aa')} /> Hoch
+            </span>
+            <span>
+              <span style={legendenFlaecheStil('#fecaca')} /> Alle abwesend
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

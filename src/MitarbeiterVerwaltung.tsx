@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 
+const KATEGORIEN = ['Lokführer', 'Dienstleister', 'Wagenmeister', 'Disposition', 'Betriebsleitung']
+
 interface Jahresdaten {
   id: string
   mitarbeiter_id: string
@@ -13,6 +15,7 @@ interface Jahresdaten {
 interface Zeile {
   mitarbeiterId: string
   name: string
+  kategorie: string | null
   jahresdatenId: string | null
   urlaubsanspruch: number | null
   resturlaub: number | null
@@ -34,7 +37,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     const [{ data: mitarbeiterListe }, { data: alleJahresdaten }, { data: genehmigteAntraege }] =
       await Promise.all([
-        supabase.from('mitarbeiter').select('id, name').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
         supabase.from('mitarbeiter_jahresdaten').select('jahr'),
         supabase
           .from('urlaubsantraege')
@@ -66,6 +69,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
       return {
         mitarbeiterId: m.id,
         name: m.name,
+        kategorie: m.kategorie,
         jahresdatenId: jd?.id ?? null,
         urlaubsanspruch: jd ? jd.urlaubsanspruch : 30,
         resturlaub: jd ? jd.resturlaub : 30,
@@ -135,6 +139,14 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     setGespeichertId(zeile.mitarbeiterId)
     setTimeout(() => setGespeichertId(null), 1200)
+  }
+
+  async function kategorieAendern(zeile: Zeile, neueKategorie: string) {
+    const wert = neueKategorie === '' ? null : neueKategorie
+    setZeilen((vorher) =>
+      vorher.map((z) => (z.mitarbeiterId === zeile.mitarbeiterId ? { ...z, kategorie: wert } : z))
+    )
+    await supabase.from('mitarbeiter').update({ kategorie: wert }).eq('id', zeile.mitarbeiterId)
   }
 
   async function mitarbeiterHinzufuegen() {
@@ -235,6 +247,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           <thead>
             <tr>
               <th style={kopfZelleStil}>Name</th>
+              <th style={kopfZelleStil}>Qualifikation</th>
               <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
               <th style={kopfZelleStil}>Urlaubsanspruch</th>
               <th style={kopfZelleStil}>Resturlaub</th>
@@ -247,6 +260,20 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             {zeilen.map((zeile) => (
               <tr key={zeile.mitarbeiterId}>
                 <td style={zellStil}>{zeile.name}</td>
+                <td style={zellStil}>
+                  <select
+                    value={zeile.kategorie ?? ''}
+                    onChange={(e) => kategorieAendern(zeile, e.target.value)}
+                    style={{ ...eingabeStil, width: 140 }}
+                  >
+                    <option value="">–</option>
+                    {KATEGORIEN.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td style={zellStil}>
                   <input
                     type="number"
