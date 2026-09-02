@@ -128,21 +128,18 @@ export default function MeineAntraege({
         .in('id', ids)
 
       if (jahresdaten) {
-        const vorjahrVerfuegbar = jahresdaten.resturlaub_vorjahr ?? 0
-        const abzugVorjahr = Math.min(vorjahrVerfuegbar, tageGesamt)
-        const abzugAktuell = tageGesamt - abzugVorjahr
-
+        // Resturlaub Vorjahr bleibt als fester Referenzwert stehen - Abzug erfolgt
+        // ausschließlich vom Resturlaub des aktuellen Jahres.
         await supabase
           .from('mitarbeiter_jahresdaten')
           .update({
-            resturlaub_vorjahr: vorjahrVerfuegbar - abzugVorjahr,
-            resturlaub: (jahresdaten.resturlaub ?? 0) - abzugAktuell,
+            resturlaub: (jahresdaten.resturlaub ?? 0) - tageGesamt,
           })
           .eq('id', jahresdaten.id)
 
         await supabase
           .from('urlaubsantraege')
-          .update({ abzug_vorjahr: abzugVorjahr, abzug_aktuell: abzugAktuell })
+          .update({ abzug_vorjahr: 0, abzug_aktuell: tageGesamt })
           .eq('id', ids[0])
       }
     } else if (gruppe.name && warGenehmigt && !wirdGenehmigt) {
