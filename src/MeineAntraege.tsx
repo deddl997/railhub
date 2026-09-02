@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { namensSignatur } from './namensAbgleich'
 
 interface Antrag {
   id: string
@@ -28,19 +29,21 @@ const SPALTEN = [
   { status: 'abgelehnt', titel: 'Abgelehnt', farbe: 'var(--danger)' },
 ]
 
-async function holeOderErstelleJahresdaten(name: string, jahr: number) {
-  const { data: mitarbeiter } = await supabase
-    .from('mitarbeiter')
-    .select('id')
-    .ilike('name', name)
-    .maybeSingle()
+async function findeMitarbeiterId(name: string): Promise<string | null> {
+  const { data: alle } = await supabase.from('mitarbeiter').select('id, name')
+  const signatur = namensSignatur(name)
+  const treffer = (alle ?? []).find((m) => namensSignatur(m.name) === signatur)
+  return treffer?.id ?? null
+}
 
-  if (!mitarbeiter) return null
+async function holeOderErstelleJahresdaten(name: string, jahr: number) {
+  const mitarbeiterId = await findeMitarbeiterId(name)
+  if (!mitarbeiterId) return null
 
   const { data: jahresdaten } = await supabase
     .from('mitarbeiter_jahresdaten')
     .select('id, resturlaub, resturlaub_vorjahr')
-    .eq('mitarbeiter_id', mitarbeiter.id)
+    .eq('mitarbeiter_id', mitarbeiterId)
     .eq('jahr', jahr)
     .maybeSingle()
 
@@ -49,7 +52,7 @@ async function holeOderErstelleJahresdaten(name: string, jahr: number) {
   const { data: neueDaten } = await supabase
     .from('mitarbeiter_jahresdaten')
     .insert({
-      mitarbeiter_id: mitarbeiter.id,
+      mitarbeiter_id: mitarbeiterId,
       jahr,
       urlaubsanspruch: 30,
       resturlaub: 30,

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
+import { namensSignatur } from './namensAbgleich'
 
 interface GemeinsameFelder {
   ua_nummer: number | null
@@ -144,11 +145,9 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
 
       const jahr = new Date(ersterZeitraumMitDatum.erster_tag).getFullYear()
 
-      const { data: mitarbeiter } = await supabase
-        .from('mitarbeiter')
-        .select('id')
-        .ilike('name', name)
-        .maybeSingle()
+      const { data: alleMitarbeiter } = await supabase.from('mitarbeiter').select('id, name')
+      const signatur = namensSignatur(name)
+      const mitarbeiter = (alleMitarbeiter ?? []).find((m) => namensSignatur(m.name) === signatur)
 
       if (!mitarbeiter) {
         setVerfuegbarerResturlaub(null)

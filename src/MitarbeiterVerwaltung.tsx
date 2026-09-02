@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { namensSignatur } from './namensAbgleich'
 
 interface Jahresdaten {
   id: string
@@ -17,10 +18,6 @@ interface Zeile {
   resturlaub: number | null
   resturlaub_vorjahr: number | null
   tageGenommen: number
-}
-
-function normalisiereName(name: string) {
-  return name.trim().toLowerCase()
 }
 
 export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
@@ -60,7 +57,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     const genommenMap = new Map<string, number>()
     for (const antrag of genehmigteAntraege ?? []) {
       if (!antrag.name) continue
-      const schluessel = normalisiereName(antrag.name)
+      const schluessel = namensSignatur(antrag.name)
       genommenMap.set(schluessel, (genommenMap.get(schluessel) ?? 0) + (antrag.brauchbare_tage ?? 0))
     }
 
@@ -73,7 +70,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         urlaubsanspruch: jd ? jd.urlaubsanspruch : 30,
         resturlaub: jd ? jd.resturlaub : 30,
         resturlaub_vorjahr: jd ? jd.resturlaub_vorjahr : 0,
-        tageGenommen: genommenMap.get(normalisiereName(m.name)) ?? 0,
+        tageGenommen: genommenMap.get(namensSignatur(m.name)) ?? 0,
       }
     })
     setZeilen(neueZeilen)

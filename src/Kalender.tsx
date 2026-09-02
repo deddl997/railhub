@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { feiertageBayern } from './feiertage'
 import { datumZuISO } from './datumUtils'
+import { namensSignatur } from './namensAbgleich'
 
 interface KalenderEintrag {
   id: string
@@ -34,7 +35,7 @@ function farbeFuerStatus(status: string) {
 }
 
 function normalisiereName(name: string) {
-  return name.trim().toLowerCase()
+  return namensSignatur(name)
 }
 
 function istWochenende(tag: Date) {
