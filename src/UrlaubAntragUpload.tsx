@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
 
-interface AusgelesenerAntrag {
+interface GemeinsameFelder {
   ua_nummer: number | null
   jahr: number | null
   name: string | null
@@ -13,14 +13,22 @@ interface AusgelesenerAntrag {
   verplant: number | null
   rest: number | null
   resturlaub_vorjahr: number | null
-  erster_tag: string | null
-  letzter_tag: string | null
-  anzahl_tage: number | null
   ort_antragsteller: string | null
   datum_antragsteller: string | null
   bearbeitet_von: string | null
   ort_bearbeiter: string | null
   datum_bearbeiter: string | null
+}
+
+interface Zeitraum {
+  erster_tag: string | null
+  letzter_tag: string | null
+  anzahl_tage: number | null
+}
+
+interface AusgelesenerAntrag {
+  gemeinsam: GemeinsameFelder
+  zeitraeume: Zeitraum[]
 }
 
 function dateiZuBase64(datei: File): Promise<string> {
@@ -56,48 +64,34 @@ async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
     return blatt[referenz]?.v ?? null
   }
 
-  const kategorieFelder: [string, string][] = [
-    ['A10', 'A9'],
-    ['C10', 'C9'],
-    ['E10', 'E9'],
-    ['G10', 'G9'],
-    ['I10', 'I9'],
-  ]
-  const ausgewaehlteKategorien = kategorieFelder
-    .filter(([markierung]) => {
-      const wert = zelle(markierung)
-      return typeof wert === 'string' && wert.trim().toUpperCase() === 'X'
-    })
-    .map(([, label]) => zelle(label))
-    .filter(Boolean)
-
-  function ermittleBearbeiter(): string | null {
-    const disposition = zelle('C41')
-    const geschaeftsfuehrung = zelle('C43')
-    if (disposition) return `Disposition: ${disposition}`
-    if (geschaeftsfuehrung) return `Geschäftsführung: ${geschaeftsfuehrung}`
-    return null
+  const gemeinsam: GemeinsameFelder = {
+    ua_nummer: (zelle('B5') as number) ?? null,
+    jahr: (zelle('E5') as number) ?? null,
+    kategorie: (zelle('B7') as string) ?? null,
+    name: (zelle('B9') as string) ?? null,
+    personalnummer: zelle('G9') !== null ? String(zelle('G9')) : null,
+    urlaubsanspruch: (zelle('C12') as number) ?? null,
+    verplant: (zelle('F12') as number) ?? null,
+    rest: (zelle('C13') as number) ?? null,
+    resturlaub_vorjahr: (zelle('F13') as number) ?? null,
+    ort_antragsteller: (zelle('B24') as string) ?? null,
+    datum_antragsteller: datumZuText(zelle('E24')),
+    bearbeitet_von: (zelle('B27') as string) ?? null,
+    ort_bearbeiter: (zelle('B28') as string) ?? null,
+    datum_bearbeiter: datumZuText(zelle('E28')),
   }
 
-  return {
-    ua_nummer: (zelle('D5') as number) ?? null,
-    jahr: (zelle('F5') as number) ?? null,
-    name: (zelle('C12') as string) ?? null,
-    personalnummer: zelle('C14') !== null ? String(zelle('C14')) : null,
-    kategorie: ausgewaehlteKategorien.length > 0 ? ausgewaehlteKategorien.join(', ') : null,
-    urlaubsanspruch: (zelle('C16') as number) ?? null,
-    verplant: (zelle('F16') as number) ?? null,
-    rest: (zelle('I16') as number) ?? null,
-    resturlaub_vorjahr: (zelle('C18') as number) ?? null,
-    erster_tag: datumZuText(zelle('C23')),
-    letzter_tag: datumZuText(zelle('E23')),
-    anzahl_tage: (zelle('G23') as number) ?? null,
-    ort_antragsteller: (zelle('A36') as string) ?? null,
-    datum_antragsteller: datumZuText(zelle('C36')),
-    bearbeitet_von: ermittleBearbeiter(),
-    ort_bearbeiter: (zelle('A48') as string) ?? null,
-    datum_bearbeiter: datumZuText(zelle('C48')),
+  const zeitraeume: Zeitraum[] = []
+  for (let zeile = 17; zeile <= 20; zeile++) {
+    const von = datumZuText(zelle(`B${zeile}`))
+    const bis = datumZuText(zelle(`C${zeile}`))
+    const tage = zelle(`D${zeile}`) as number | null
+    if (von && bis) {
+      zeitraeume.push({ erster_tag: von, letzter_tag: bis, anzahl_tage: tage })
+    }
   }
+
+  return { gemeinsam, zeitraeume }
 }
 
 const eingabeStil: React.CSSProperties = {
@@ -121,23 +115,26 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   const [ausgelesenerAntrag, setAusgelesenerAntrag] = useState<AusgelesenerAntrag | null>(null)
   const [hochgeladeneDatei, setHochgeladeneDatei] = useState<File | null>(null)
 
-  const [brauchbareTage, setBrauchbareTage] = useState<number | null>(null)
+  const [brauchbareTageProZeitraum, setBrauchbareTageProZeitraum] = useState<(number | null)[]>([])
   const [verfuegbarerResturlaub, setVerfuegbarerResturlaub] = useState<number | null>(null)
   const [mitarbeiterGefunden, setMitarbeiterGefunden] = useState(false)
 
   useEffect(() => {
     if (!ausgelesenerAntrag) {
-      setBrauchbareTage(null)
+      setBrauchbareTageProZeitraum([])
       setVerfuegbarerResturlaub(null)
       setMitarbeiterGefunden(false)
       return
     }
 
-    const tage = berechneBrauchbareTage(ausgelesenerAntrag.erster_tag, ausgelesenerAntrag.letzter_tag)
-    setBrauchbareTage(tage)
+    const berechnet = ausgelesenerAntrag.zeitraeume.map((z) =>
+      berechneBrauchbareTage(z.erster_tag, z.letzter_tag)
+    )
+    setBrauchbareTageProZeitraum(berechnet)
 
     async function pruefeMitarbeiter() {
-      if (!ausgelesenerAntrag?.name) {
+      const name = ausgelesenerAntrag?.gemeinsam.name
+      if (!name) {
         setVerfuegbarerResturlaub(null)
         setMitarbeiterGefunden(false)
         return
@@ -145,7 +142,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       const { data } = await supabase
         .from('mitarbeiter')
         .select('resturlaub')
-        .ilike('name', ausgelesenerAntrag.name)
+        .ilike('name', name)
         .maybeSingle()
 
       if (data) {
@@ -159,7 +156,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
 
     pruefeMitarbeiter()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ausgelesenerAntrag?.erster_tag, ausgelesenerAntrag?.letzter_tag, ausgelesenerAntrag?.name])
+  }, [ausgelesenerAntrag])
 
   async function handleDateiAuswahl(event: React.ChangeEvent<HTMLInputElement>) {
     const datei = event.target.files?.[0]
@@ -199,13 +196,55 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     }
   }
 
-  function feldAendern(feld: keyof AusgelesenerAntrag, wert: string) {
+  function gemeinsamesFeldAendern(feld: keyof GemeinsameFelder, wert: string) {
     if (!ausgelesenerAntrag) return
-    setAusgelesenerAntrag({ ...ausgelesenerAntrag, [feld]: wert })
+    setAusgelesenerAntrag({
+      ...ausgelesenerAntrag,
+      gemeinsam: { ...ausgelesenerAntrag.gemeinsam, [feld]: wert },
+    })
   }
+
+  function zeitraumFeldAendern(index: number, feld: keyof Zeitraum, wert: string) {
+    if (!ausgelesenerAntrag) return
+    const neueZeitraeume = ausgelesenerAntrag.zeitraeume.map((z, i) =>
+      i === index ? { ...z, [feld]: wert } : z
+    )
+    setAusgelesenerAntrag({ ...ausgelesenerAntrag, zeitraeume: neueZeitraeume })
+  }
+
+  function zeitraumHinzufuegen() {
+    if (!ausgelesenerAntrag) return
+    setAusgelesenerAntrag({
+      ...ausgelesenerAntrag,
+      zeitraeume: [
+        ...ausgelesenerAntrag.zeitraeume,
+        { erster_tag: null, letzter_tag: null, anzahl_tage: null },
+      ],
+    })
+  }
+
+  function zeitraumEntfernen(index: number) {
+    if (!ausgelesenerAntrag) return
+    setAusgelesenerAntrag({
+      ...ausgelesenerAntrag,
+      zeitraeume: ausgelesenerAntrag.zeitraeume.filter((_, i) => i !== index),
+    })
+  }
+
+  const gesamtBrauchbareTage = brauchbareTageProZeitraum.reduce(
+    (summe, tage) => summe + (tage ?? 0),
+    0
+  )
 
   async function antragSpeichern() {
     if (!ausgelesenerAntrag || !hochgeladeneDatei) return
+    const gueltigeZeitraeume = ausgelesenerAntrag.zeitraeume.filter(
+      (z) => z.erster_tag && z.letzter_tag
+    )
+    if (gueltigeZeitraeume.length === 0) {
+      setFehler('Bitte mindestens einen vollständigen Urlaubszeitraum angeben.')
+      return
+    }
 
     setLadeVorgang(true)
     setFehler(null)
@@ -217,12 +256,20 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
         .upload(dateiPfad, hochgeladeneDatei)
       if (uploadFehler) throw new Error('Upload: ' + uploadFehler.message)
 
-      const { error: einfuegenFehler } = await supabase.from('urlaubsantraege').insert({
-        ...ausgelesenerAntrag,
+      const gruppeId = crypto.randomUUID()
+
+      const zeilen = gueltigeZeitraeume.map((z) => ({
+        ...ausgelesenerAntrag.gemeinsam,
+        erster_tag: z.erster_tag,
+        letzter_tag: z.letzter_tag,
+        anzahl_tage: z.anzahl_tage,
+        brauchbare_tage: berechneBrauchbareTage(z.erster_tag, z.letzter_tag),
         status: 'offen',
         dokument_url: dateiPfad,
-        brauchbare_tage: brauchbareTage,
-      })
+        gruppe_id: gruppeId,
+      }))
+
+      const { error: einfuegenFehler } = await supabase.from('urlaubsantraege').insert(zeilen)
       if (einfuegenFehler) throw new Error('Speichern: ' + einfuegenFehler.message)
 
       setAusgelesenerAntrag(null)
@@ -274,8 +321,8 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
             Name
             <input
               style={eingabeStil}
-              value={ausgelesenerAntrag.name ?? ''}
-              onChange={(e) => feldAendern('name', e.target.value)}
+              value={ausgelesenerAntrag.gemeinsam.name ?? ''}
+              onChange={(e) => gemeinsamesFeldAendern('name', e.target.value)}
             />
           </label>
 
@@ -283,86 +330,117 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
             Personalnummer
             <input
               style={eingabeStil}
-              value={ausgelesenerAntrag.personalnummer ?? ''}
-              onChange={(e) => feldAendern('personalnummer', e.target.value)}
+              value={ausgelesenerAntrag.gemeinsam.personalnummer ?? ''}
+              onChange={(e) => gemeinsamesFeldAendern('personalnummer', e.target.value)}
             />
           </label>
 
-          <div style={{ display: 'flex', gap: 12 }}>
-            <label style={{ ...beschriftungStil, flex: 1 }}>
-              Erster Urlaubstag
-              <input
-                type="date"
-                style={eingabeStil}
-                value={ausgelesenerAntrag.erster_tag ?? ''}
-                onChange={(e) => feldAendern('erster_tag', e.target.value)}
-              />
-            </label>
-
-            <label style={{ ...beschriftungStil, flex: 1 }}>
-              Letzter Urlaubstag
-              <input
-                type="date"
-                style={eingabeStil}
-                value={ausgelesenerAntrag.letzter_tag ?? ''}
-                onChange={(e) => feldAendern('letzter_tag', e.target.value)}
-              />
-            </label>
-          </div>
-
-          <label style={beschriftungStil}>
-            Anzahl Urlaubstage (laut Formular)
-            <input
-              style={eingabeStil}
-              value={ausgelesenerAntrag.anzahl_tage ?? ''}
-              onChange={(e) => feldAendern('anzahl_tage', e.target.value)}
-            />
-          </label>
-
-          {brauchbareTage !== null && (
-            <div
-              style={{
-                background: '#f1f5f9',
-                borderRadius: 6,
-                padding: 10,
-                fontSize: 13,
-              }}
-            >
-              <div>
-                Berechnete Arbeitstage (ohne Wochenende/bayerische Feiertage):{' '}
-                <strong>{brauchbareTage}</strong>
-              </div>
-
-              {ausgelesenerAntrag.anzahl_tage !== null &&
-                Number(ausgelesenerAntrag.anzahl_tage) !== brauchbareTage && (
-                  <div style={{ color: 'var(--warning)', marginTop: 4 }}>
-                    Hinweis: Im Formular stehen {ausgelesenerAntrag.anzahl_tage} Tage, berechnet
-                    wurden {brauchbareTage}.
+          <div>
+            <div style={{ ...beschriftungStil, marginBottom: 6 }}>Urlaubszeiträume</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {ausgelesenerAntrag.zeitraeume.map((zeitraum, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'flex-end',
+                    background: '#f8fafc',
+                    padding: 8,
+                    borderRadius: 6,
+                  }}
+                >
+                  <label style={{ ...beschriftungStil, flex: 1 }}>
+                    Von
+                    <input
+                      type="date"
+                      style={eingabeStil}
+                      value={zeitraum.erster_tag ?? ''}
+                      onChange={(e) => zeitraumFeldAendern(index, 'erster_tag', e.target.value)}
+                    />
+                  </label>
+                  <label style={{ ...beschriftungStil, flex: 1 }}>
+                    Bis
+                    <input
+                      type="date"
+                      style={eingabeStil}
+                      value={zeitraum.letzter_tag ?? ''}
+                      onChange={(e) => zeitraumFeldAendern(index, 'letzter_tag', e.target.value)}
+                    />
+                  </label>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 90, paddingBottom: 8 }}>
+                    {brauchbareTageProZeitraum[index] ?? '–'} Arbeitstage
                   </div>
-                )}
-
-              {mitarbeiterGefunden && verfuegbarerResturlaub !== null && (
-                <div style={{ marginTop: 4 }}>
-                  Verfügbarer Resturlaub: <strong>{verfuegbarerResturlaub}</strong> Tage
-                  {brauchbareTage > verfuegbarerResturlaub && (
-                    <div style={{ color: 'var(--danger)', marginTop: 4 }}>
-                      Achtung: Antrag übersteigt den verfügbaren Resturlaub!
-                    </div>
+                  {ausgelesenerAntrag.zeitraeume.length > 1 && (
+                    <button
+                      onClick={() => zeitraumEntfernen(index)}
+                      title="Zeitraum entfernen"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--danger)',
+                        cursor: 'pointer',
+                        fontSize: 16,
+                        paddingBottom: 8,
+                      }}
+                    >
+                      ✕
+                    </button>
                   )}
                 </div>
-              )}
-
-              {!mitarbeiterGefunden && (
-                <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
-                  Mitarbeiter nicht in der Liste gefunden - kein Abgleich möglich.
-                </div>
-              )}
+              ))}
             </div>
-          )}
+            <button
+              onClick={zeitraumHinzufuegen}
+              style={{
+                marginTop: 8,
+                background: 'none',
+                border: '1px dashed var(--border)',
+                borderRadius: 6,
+                padding: '6px 12px',
+                fontSize: 13,
+                color: 'var(--navy)',
+                cursor: 'pointer',
+              }}
+            >
+              + Zeitraum hinzufügen
+            </button>
+          </div>
 
-          {(ausgelesenerAntrag.bearbeitet_von ||
-            ausgelesenerAntrag.ort_bearbeiter ||
-            ausgelesenerAntrag.datum_bearbeiter) && (
+          <div
+            style={{
+              background: '#f1f5f9',
+              borderRadius: 6,
+              padding: 10,
+              fontSize: 13,
+            }}
+          >
+            <div>
+              Gesamt berechnete Arbeitstage (ohne Wochenende/bayerische Feiertage):{' '}
+              <strong>{gesamtBrauchbareTage}</strong>
+            </div>
+
+            {mitarbeiterGefunden && verfuegbarerResturlaub !== null && (
+              <div style={{ marginTop: 4 }}>
+                Verfügbarer Resturlaub: <strong>{verfuegbarerResturlaub}</strong> Tage
+                {gesamtBrauchbareTage > verfuegbarerResturlaub && (
+                  <div style={{ color: 'var(--danger)', marginTop: 4 }}>
+                    Achtung: Antrag übersteigt den verfügbaren Resturlaub!
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!mitarbeiterGefunden && (
+              <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                Mitarbeiter nicht in der Liste gefunden - kein Abgleich möglich.
+              </div>
+            )}
+          </div>
+
+          {(ausgelesenerAntrag.gemeinsam.bearbeitet_von ||
+            ausgelesenerAntrag.gemeinsam.ort_bearbeiter ||
+            ausgelesenerAntrag.gemeinsam.datum_bearbeiter) && (
             <div
               style={{
                 background: '#f8fafc',
@@ -376,9 +454,15 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               <div style={{ fontWeight: 500, marginBottom: 4, color: 'var(--text)' }}>
                 Im Formular bereits ausgefüllte Bearbeitung
               </div>
-              {ausgelesenerAntrag.bearbeitet_von && <div>Bearbeitet von: {ausgelesenerAntrag.bearbeitet_von}</div>}
-              {ausgelesenerAntrag.ort_bearbeiter && <div>Ort: {ausgelesenerAntrag.ort_bearbeiter}</div>}
-              {ausgelesenerAntrag.datum_bearbeiter && <div>Datum: {ausgelesenerAntrag.datum_bearbeiter}</div>}
+              {ausgelesenerAntrag.gemeinsam.bearbeitet_von && (
+                <div>Bearbeitet von: {ausgelesenerAntrag.gemeinsam.bearbeitet_von}</div>
+              )}
+              {ausgelesenerAntrag.gemeinsam.ort_bearbeiter && (
+                <div>Ort: {ausgelesenerAntrag.gemeinsam.ort_bearbeiter}</div>
+              )}
+              {ausgelesenerAntrag.gemeinsam.datum_bearbeiter && (
+                <div>Datum: {ausgelesenerAntrag.gemeinsam.datum_bearbeiter}</div>
+              )}
             </div>
           )}
 

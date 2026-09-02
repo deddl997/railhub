@@ -12,6 +12,14 @@ interface Antrag {
   dokument_url: string | null
   abzug_vorjahr: number | null
   abzug_aktuell: number | null
+  gruppe_id: string | null
+}
+
+interface Gruppe {
+  schluessel: string
+  name: string | null
+  status: string
+  zeilen: Antrag[]
 }
 
 const SPALTEN = [
@@ -35,7 +43,7 @@ export default function MeineAntraege({
     const { data } = await supabase
       .from('urlaubsantraege')
       .select(
-        'id, name, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell'
+        'id, name, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
       )
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
@@ -46,22 +54,45 @@ export default function MeineAntraege({
     laden()
   }, [neuLadenAuslöser])
 
-  async function statusAendern(antrag: Antrag, neuerStatus: string) {
-    const warGenehmigt = antrag.status === 'genehmigt'
-    const wirdGenehmigt = neuerStatus === 'genehmigt'
+  const gruppenMap = new Map<string, Antrag[]>()
+  for (const antrag of antraege) {
+    const schluessel = antrag.gruppe_id ?? antrag.id
+    if (!gruppenMap.has(schluessel)) gruppenMap.set(schluessel, [])
+    gruppenMap.get(schluessel)!.push(antrag)
+  }
+  const gruppen: Gruppe[] = Array.from(gruppenMap.entries()).map(([schluessel, zeilen]) => ({
+    schluessel,
+    name: zeilen[0].name,
+    status: zeilen[0].status,
+    zeilen: zeilen.sort((a, b) => (a.erster_tag ?? '').localeCompare(b.erster_tag ?? '')),
+  }))
 
-    if (antrag.name && antrag.brauchbare_tage && !warGenehmigt && wirdGenehmigt) {
-      // Wird neu genehmigt: zuerst Resturlaub Vorjahr abbuchen, dann aktuelles Jahr
+  function gesamtTage(gruppe: Gruppe) {
+    return gruppe.zeilen.reduce((summe, z) => summe + (z.brauchbare_tage ?? z.anzahl_tage ?? 0), 0)
+  }
+
+  async function statusAendern(gruppe: Gruppe, neuerStatus: string) {
+    const ids = gruppe.zeilen.map((z) => z.id)
+    const warGenehmigt = gruppe.status === 'genehmigt'
+    const wirdGenehmigt = neuerStatus === 'genehmigt'
+    const tageGesamt = gesamtTage(gruppe)
+
+    if (gruppe.name && !warGenehmigt && wirdGenehmigt) {
       const { data: mitarbeiterDaten } = await supabase
         .from('mitarbeiter')
         .select('id, resturlaub, resturlaub_vorjahr')
-        .ilike('name', antrag.name)
+        .ilike('name', gruppe.name)
         .maybeSingle()
+
+      await supabase
+        .from('urlaubsantraege')
+        .update({ status: neuerStatus, abzug_vorjahr: 0, abzug_aktuell: 0 })
+        .in('id', ids)
 
       if (mitarbeiterDaten) {
         const vorjahrVerfuegbar = mitarbeiterDaten.resturlaub_vorjahr ?? 0
-        const abzugVorjahr = Math.min(vorjahrVerfuegbar, antrag.brauchbare_tage)
-        const abzugAktuell = antrag.brauchbare_tage - abzugVorjahr
+        const abzugVorjahr = Math.min(vorjahrVerfuegbar, tageGesamt)
+        const abzugAktuell = tageGesamt - abzugVorjahr
 
         await supabase
           .from('mitarbeiter')
@@ -73,25 +104,25 @@ export default function MeineAntraege({
 
         await supabase
           .from('urlaubsantraege')
-          .update({ status: neuerStatus, abzug_vorjahr: abzugVorjahr, abzug_aktuell: abzugAktuell })
-          .eq('id', antrag.id)
-      } else {
-        await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', antrag.id)
+          .update({ abzug_vorjahr: abzugVorjahr, abzug_aktuell: abzugAktuell })
+          .eq('id', ids[0])
       }
-    } else if (antrag.name && warGenehmigt && !wirdGenehmigt) {
-      // War genehmigt, wird zurueckgesetzt/abgelehnt: exakt die damals abgezogenen Anteile gutschreiben
+    } else if (gruppe.name && warGenehmigt && !wirdGenehmigt) {
+      const abzugVorjahrGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_vorjahr ?? 0), 0)
+      const abzugAktuellGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_aktuell ?? 0), 0)
+
       const { data: mitarbeiterDaten } = await supabase
         .from('mitarbeiter')
         .select('id, resturlaub, resturlaub_vorjahr')
-        .ilike('name', antrag.name)
+        .ilike('name', gruppe.name)
         .maybeSingle()
 
       if (mitarbeiterDaten) {
         await supabase
           .from('mitarbeiter')
           .update({
-            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + (antrag.abzug_vorjahr ?? 0),
-            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + (antrag.abzug_aktuell ?? 0),
+            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + abzugVorjahrGesamt,
+            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + abzugAktuellGesamt,
           })
           .eq('id', mitarbeiterDaten.id)
       }
@@ -99,43 +130,50 @@ export default function MeineAntraege({
       await supabase
         .from('urlaubsantraege')
         .update({ status: neuerStatus, abzug_vorjahr: 0, abzug_aktuell: 0 })
-        .eq('id', antrag.id)
+        .in('id', ids)
     } else {
-      await supabase.from('urlaubsantraege').update({ status: neuerStatus }).eq('id', antrag.id)
+      await supabase.from('urlaubsantraege').update({ status: neuerStatus }).in('id', ids)
     }
 
     await laden()
     onGeaendert()
   }
 
-  async function antragLoeschen(antrag: Antrag) {
+  async function gruppeLoeschen(gruppe: Gruppe) {
     const bestaetigt = window.confirm(
-      `Antrag von "${antrag.name ?? 'Ohne Namen'}" wirklich unwiderruflich löschen?`
+      `Antrag von "${gruppe.name ?? 'Ohne Namen'}" (${gruppe.zeilen.length} Zeitraum/Zeiträume) wirklich unwiderruflich löschen?`
     )
     if (!bestaetigt) return
 
-    if (antrag.status === 'genehmigt' && antrag.name) {
+    if (gruppe.status === 'genehmigt' && gruppe.name) {
+      const abzugVorjahrGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_vorjahr ?? 0), 0)
+      const abzugAktuellGesamt = gruppe.zeilen.reduce((s, z) => s + (z.abzug_aktuell ?? 0), 0)
+
       const { data: mitarbeiterDaten } = await supabase
         .from('mitarbeiter')
         .select('id, resturlaub, resturlaub_vorjahr')
-        .ilike('name', antrag.name)
+        .ilike('name', gruppe.name)
         .maybeSingle()
 
       if (mitarbeiterDaten) {
         await supabase
           .from('mitarbeiter')
           .update({
-            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + (antrag.abzug_vorjahr ?? 0),
-            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + (antrag.abzug_aktuell ?? 0),
+            resturlaub_vorjahr: (mitarbeiterDaten.resturlaub_vorjahr ?? 0) + abzugVorjahrGesamt,
+            resturlaub: (mitarbeiterDaten.resturlaub ?? 0) + abzugAktuellGesamt,
           })
           .eq('id', mitarbeiterDaten.id)
       }
     }
 
-    if (antrag.dokument_url) {
-      await supabase.storage.from('urlaubsantraege-dokumente').remove([antrag.dokument_url])
+    const dokumentUrl = gruppe.zeilen[0].dokument_url
+    if (dokumentUrl) {
+      await supabase.storage.from('urlaubsantraege-dokumente').remove([dokumentUrl])
     }
-    await supabase.from('urlaubsantraege').delete().eq('id', antrag.id)
+    await supabase
+      .from('urlaubsantraege')
+      .delete()
+      .in('id', gruppe.zeilen.map((z) => z.id))
     await laden()
     onGeaendert()
   }
@@ -148,12 +186,12 @@ export default function MeineAntraege({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
         gap: 16,
       }}
     >
       {SPALTEN.map((spalte) => {
-        const eintraege = antraege.filter((a) => a.status === spalte.status)
+        const gefiltert = gruppen.filter((g) => g.status === spalte.status)
         return (
           <div key={spalte.status}>
             <div
@@ -176,25 +214,19 @@ export default function MeineAntraege({
                 }}
               />
               {spalte.titel}
-              <span
-                style={{
-                  fontSize: 12,
-                  color: 'var(--text-muted)',
-                  fontWeight: 400,
-                }}
-              >
-                ({eintraege.length})
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>
+                ({gefiltert.length})
               </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {eintraege.length === 0 && (
+              {gefiltert.length === 0 && (
                 <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>—</p>
               )}
 
-              {eintraege.map((antrag) => (
+              {gefiltert.map((gruppe) => (
                 <div
-                  key={antrag.id}
+                  key={gruppe.schluessel}
                   style={{
                     padding: '12px 14px',
                     background: 'var(--card)',
@@ -209,15 +241,23 @@ export default function MeineAntraege({
                       alignItems: 'flex-start',
                     }}
                   >
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{antrag.name ?? 'Ohne Namen'}</div>
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
-                        {antrag.erster_tag} – {antrag.letzter_tag} (
-                        {antrag.brauchbare_tage ?? antrag.anzahl_tage} Arbeitstage)
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500 }}>{gruppe.name ?? 'Ohne Namen'}</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {gruppe.zeilen.map((z) => (
+                          <div key={z.id}>
+                            {z.erster_tag} – {z.letzter_tag} ({z.brauchbare_tage ?? z.anzahl_tage} Arbeitstage)
+                          </div>
+                        ))}
+                        {gruppe.zeilen.length > 1 && (
+                          <div style={{ fontWeight: 500, marginTop: 2 }}>
+                            Gesamt: {gesamtTage(gruppe)} Arbeitstage
+                          </div>
+                        )}
                       </div>
                     </div>
                     <button
-                      onClick={() => antragLoeschen(antrag)}
+                      onClick={() => gruppeLoeschen(gruppe)}
                       title="Antrag löschen"
                       style={{
                         background: 'none',
@@ -234,15 +274,15 @@ export default function MeineAntraege({
                   </div>
 
                   {spalte.status === 'offen' && (
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <button
-                        onClick={() => statusAendern(antrag, 'genehmigt')}
+                        onClick={() => statusAendern(gruppe, 'genehmigt')}
                         style={aktionsKnopfStil('var(--success)')}
                       >
                         Genehmigen
                       </button>
                       <button
-                        onClick={() => statusAendern(antrag, 'abgelehnt')}
+                        onClick={() => statusAendern(gruppe, 'abgelehnt')}
                         style={aktionsKnopfStil('var(--danger)')}
                       >
                         Ablehnen
@@ -252,8 +292,8 @@ export default function MeineAntraege({
 
                   {spalte.status !== 'offen' && (
                     <button
-                      onClick={() => statusAendern(antrag, 'offen')}
-                      style={aktionsKnopfStil('var(--text-muted)')}
+                      onClick={() => statusAendern(gruppe, 'offen')}
+                      style={{ ...aktionsKnopfStil('var(--text-muted)'), marginTop: 8 }}
                     >
                       Zurücksetzen
                     </button>
