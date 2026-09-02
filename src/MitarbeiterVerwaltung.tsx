@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 
 const KATEGORIEN = ['Lokführer', 'Dienstleister', 'Wagenmeister', 'Disposition', 'Betriebsleitung']
+const LOK_TYPEN = ['DE 18', '185', '193', 'V90', 'V60', 'G1206']
 
 interface Jahresdaten {
   id: string
@@ -16,6 +17,7 @@ interface Zeile {
   mitarbeiterId: string
   name: string
   kategorie: string | null
+  lokTypen: string[]
   jahresdatenId: string | null
   urlaubsanspruch: number | null
   resturlaub: number | null
@@ -31,13 +33,14 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   const [gespeichertId, setGespeichertId] = useState<string | null>(null)
   const [neuerName, setNeuerName] = useState('')
   const [wirdHinzugefuegt, setWirdHinzugefuegt] = useState(false)
+  const [offenesLokMenue, setOffenesLokMenue] = useState<string | null>(null)
 
   async function laden() {
     setLadeVorgang(true)
 
     const [{ data: mitarbeiterListe }, { data: alleJahresdaten }, { data: genehmigteAntraege }] =
       await Promise.all([
-        supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen').order('name'),
         supabase.from('mitarbeiter_jahresdaten').select('jahr'),
         supabase
           .from('urlaubsantraege')
@@ -70,6 +73,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         mitarbeiterId: m.id,
         name: m.name,
         kategorie: m.kategorie,
+        lokTypen: m.lok_typen ?? [],
         jahresdatenId: jd?.id ?? null,
         urlaubsanspruch: jd ? jd.urlaubsanspruch : 30,
         resturlaub: jd ? jd.resturlaub : 30,
@@ -144,9 +148,27 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   async function kategorieAendern(zeile: Zeile, neueKategorie: string) {
     const wert = neueKategorie === '' ? null : neueKategorie
     setZeilen((vorher) =>
-      vorher.map((z) => (z.mitarbeiterId === zeile.mitarbeiterId ? { ...z, kategorie: wert } : z))
+      vorher.map((z) =>
+        z.mitarbeiterId === zeile.mitarbeiterId
+          ? { ...z, kategorie: wert, lokTypen: wert === 'Lokführer' ? z.lokTypen : [] }
+          : z
+      )
     )
-    await supabase.from('mitarbeiter').update({ kategorie: wert }).eq('id', zeile.mitarbeiterId)
+    await supabase
+      .from('mitarbeiter')
+      .update({ kategorie: wert, ...(wert !== 'Lokführer' ? { lok_typen: [] } : {}) })
+      .eq('id', zeile.mitarbeiterId)
+  }
+
+  async function lokTypAendern(zeile: Zeile, lokTyp: string, ausgewaehlt: boolean) {
+    const neueTypen = ausgewaehlt
+      ? [...zeile.lokTypen, lokTyp]
+      : zeile.lokTypen.filter((t) => t !== lokTyp)
+
+    setZeilen((vorher) =>
+      vorher.map((z) => (z.mitarbeiterId === zeile.mitarbeiterId ? { ...z, lokTypen: neueTypen } : z))
+    )
+    await supabase.from('mitarbeiter').update({ lok_typen: neueTypen }).eq('id', zeile.mitarbeiterId)
   }
 
   async function mitarbeiterHinzufuegen() {
@@ -248,6 +270,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             <tr>
               <th style={kopfZelleStil}>Name</th>
               <th style={kopfZelleStil}>Qualifikation</th>
+              <th style={kopfZelleStil}>Lok-Typen</th>
               <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
               <th style={kopfZelleStil}>Urlaubsanspruch</th>
               <th style={kopfZelleStil}>Resturlaub</th>
@@ -273,6 +296,71 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
                       </option>
                     ))}
                   </select>
+                </td>
+                <td style={{ ...zellStil, position: 'relative' }}>
+                  {zeile.kategorie === 'Lokführer' ? (
+                    <>
+                      <button
+                        onClick={() =>
+                          setOffenesLokMenue(
+                            offenesLokMenue === zeile.mitarbeiterId ? null : zeile.mitarbeiterId
+                          )
+                        }
+                        style={{
+                          background: 'none',
+                          border: '1px solid var(--border)',
+                          borderRadius: 4,
+                          padding: '4px 8px',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          minWidth: 120,
+                          textAlign: 'left',
+                        }}
+                      >
+                        {zeile.lokTypen.length > 0 ? zeile.lokTypen.join(', ') : 'Auswählen...'}
+                      </button>
+
+                      {offenesLokMenue === zeile.mitarbeiterId && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            zIndex: 10,
+                            background: 'var(--card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 6,
+                            padding: 8,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                            minWidth: 140,
+                          }}
+                        >
+                          {LOK_TYPEN.map((lokTyp) => (
+                            <label
+                              key={lokTyp}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                fontSize: 12,
+                                padding: '3px 0',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={zeile.lokTypen.includes(lokTyp)}
+                                onChange={(e) => lokTypAendern(zeile, lokTyp, e.target.checked)}
+                              />
+                              {lokTyp}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)' }}>–</span>
+                  )}
                 </td>
                 <td style={zellStil}>
                   <input
