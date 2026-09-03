@@ -69,6 +69,23 @@ export default function Streckenkunde() {
   }, [])
 
   useEffect(() => {
+    async function eigenenMitarbeiterVorauswaehlen() {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const userId = sessionData.session?.user.id
+      if (!userId) return
+
+      const { data } = await supabase
+        .from('mitarbeiter')
+        .select('id')
+        .eq('auth_user_id', userId)
+        .maybeSingle()
+
+      if (data) setAusgewaehlterMitarbeiter(data.id)
+    }
+    eigenenMitarbeiterVorauswaehlen()
+  }, [])
+
+  useEffect(() => {
     if (!kartenRef.current || kartenInstanz.current) return
 
     const karte = L.map(kartenRef.current).setView([49.0, 11.5], 7)

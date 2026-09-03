@@ -1,5 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
+import { supabase } from './lib/supabase'
 import Kopfzeile from './Kopfzeile'
+import Anmeldung from './Anmeldung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
 import Kalender from './Kalender'
@@ -17,16 +20,59 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id']
 
 function App() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [ladeSession, setLadeSession] = useState(true)
+  const [angemeldeterName, setAngemeldeterName] = useState<string | null>(null)
   const [neuLadenAuslöser, setNeuLadenAuslöser] = useState(0)
   const [aktiverTab, setAktiverTab] = useState<TabId>('antrag')
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+      setLadeSession(false)
+    })
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, neueSession) => {
+      setSession(neueSession)
+    })
+
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!session) {
+      setAngemeldeterName(null)
+      return
+    }
+    supabase
+      .from('mitarbeiter')
+      .select('name')
+      .eq('auth_user_id', session.user.id)
+      .maybeSingle()
+      .then(({ data }) => setAngemeldeterName(data?.name ?? null))
+  }, [session])
 
   function neuLaden() {
     setNeuLadenAuslöser((n) => n + 1)
   }
 
+  async function abmelden() {
+    await supabase.auth.signOut()
+  }
+
+  if (ladeSession) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>Lädt...</div>
+    )
+  }
+
+  if (!session) {
+    return <Anmeldung />
+  }
+
   return (
     <div>
-      <Kopfzeile />
+      <Kopfzeile angemeldeterName={angemeldeterName} onAbmelden={abmelden} />
 
       <nav
         style={{
