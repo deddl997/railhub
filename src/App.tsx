@@ -4,12 +4,14 @@ import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
 import Kalender from './Kalender'
 import MitarbeiterVerwaltung from './MitarbeiterVerwaltung'
+import Streckenkunde from './Streckenkunde'
 
 const TABS = [
   { id: 'antrag', label: 'Antrag einreichen' },
   { id: 'kalender', label: 'Personalplanung' },
   { id: 'antraege', label: 'Anträge' },
   { id: 'mitarbeiter', label: 'Mitarbeiter' },
+  { id: 'streckenkunde', label: 'Streckenkunde' },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -105,6 +107,20 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Mitarbeiterübersicht</h3>
             <MitarbeiterVerwaltung neuLadenAuslöser={neuLadenAuslöser} />
+          </div>
+        )}
+
+        {aktiverTab === 'streckenkunde' && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Streckenkunde-Überwachung</h3>
+            <Streckenkunde />
           </div>
         )}
       </main>
