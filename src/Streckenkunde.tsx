@@ -40,7 +40,7 @@ export default function Streckenkunde() {
   const { mitarbeiter: eigenerMitarbeiter, istAdmin } = useAktuellerMitarbeiter()
   const kartenRef = useRef<HTMLDivElement>(null)
   const kartenInstanz = useRef<L.Map | null>(null)
-  const linienRef = useRef<Map<string, L.Polyline>>(new Map())
+  const linienRef = useRef<Map<string, L.LayerGroup>>(new Map())
 
   const [strecken, setStrecken] = useState<Strecke[]>([])
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
@@ -124,16 +124,24 @@ export default function Streckenkunde() {
       const bekannt = !!ausgewaehlterMitarbeiter && !!kenntnisEintrag
       const verfallen = kenntnisEintrag ? tageSeit(kenntnisEintrag.zuletzt_befahren) > VERFALL_TAGE : false
 
-      let farbe = '#64748b'
+      let farbe = '#2563eb' // blau = nicht befahren / kein Mitarbeiter ausgewählt
       if (ausgewaehlterMitarbeiter) {
-        farbe = bekannt ? (verfallen ? '#f59e0b' : '#16a34a') : '#94a3b8'
+        farbe = bekannt ? (verfallen ? '#7c3aed' : '#db2777') : '#2563eb'
       }
-      if (ausgewaehlteStrecke === strecke.id) farbe = '#14325c'
+      const istAusgewaehlt = ausgewaehlteStrecke === strecke.id
+      if (istAusgewaehlt) farbe = '#facc15'
+
+      // Weisser Rand darunter fuer klare Sichtbarkeit gegen die OpenRailwayMap-Kacheln
+      const rand = L.polyline(strecke.punkte, {
+        color: '#ffffff',
+        weight: istAusgewaehlt ? 12 : 9,
+        opacity: 0.9,
+      }).addTo(karte)
 
       const linie = L.polyline(strecke.punkte, {
         color: farbe,
-        weight: ausgewaehlteStrecke === strecke.id ? 6 : 4,
-        opacity: 0.85,
+        weight: istAusgewaehlt ? 7 : 5,
+        opacity: 1,
       })
         .bindTooltip(strecke.name, { sticky: true })
         .on('click', (e) => {
@@ -142,7 +150,12 @@ export default function Streckenkunde() {
         })
         .addTo(karte)
 
-      linienRef.current.set(strecke.id, linie)
+      rand.on('click', (e) => {
+        L.DomEvent.stopPropagation(e)
+        setAusgewaehlteStrecke(strecke.id)
+      })
+
+      linienRef.current.set(strecke.id, L.layerGroup([rand, linie]))
     })
   }, [strecken, kenntnisse, ausgewaehlterMitarbeiter, ausgewaehlteStrecke])
 
@@ -340,9 +353,9 @@ export default function Streckenkunde() {
       )}
 
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-        <span><span style={legendenPunktStil('#16a34a')} /> Aktuell bekannt</span>
-        <span><span style={legendenPunktStil('#f59e0b')} /> Verfallen (&gt;{VERFALL_TAGE} Tage)</span>
-        <span><span style={legendenPunktStil('#94a3b8')} /> Nicht befahren</span>
+        <span><span style={legendenPunktStil('#db2777')} /> Aktuell bekannt</span>
+        <span><span style={legendenPunktStil('#7c3aed')} /> Verfallen (&gt;{VERFALL_TAGE} Tage)</span>
+        <span><span style={legendenPunktStil('#2563eb')} /> Nicht befahren</span>
       </div>
 
       {ausgewaehlterMitarbeiter && (
