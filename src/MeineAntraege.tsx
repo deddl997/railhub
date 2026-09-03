@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
+import { erstelleUrlaubsantragPdf } from './pdfErstellung'
 
 interface Antrag {
   id: string
   name: string | null
+  personalnummer: string | null
+  kategorie: string | null
+  ua_nummer: number | null
+  jahr: number | null
+  urlaubsanspruch: number | null
+  verplant: number | null
+  rest: number | null
+  resturlaub_vorjahr: number | null
+  ort_antragsteller: string | null
+  datum_antragsteller: string | null
+  bearbeitet_von: string | null
+  ort_bearbeiter: string | null
+  datum_bearbeiter: string | null
   erster_tag: string | null
   letzter_tag: string | null
   anzahl_tage: number | null
@@ -79,12 +93,17 @@ export default function MeineAntraege({
   const [antraege, setAntraege] = useState<Antrag[]>([])
   const [ladeVorgang, setLadeVorgang] = useState(true)
 
+  const [pdfDialogSchluessel, setPdfDialogSchluessel] = useState<string | null>(null)
+  const [pdfBearbeitetVon, setPdfBearbeitetVon] = useState('')
+  const [pdfOrt, setPdfOrt] = useState('')
+  const [pdfDatum, setPdfDatum] = useState('')
+
   async function laden() {
     setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
       .select(
-        'id, name, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
+        'id, name, personalnummer, kategorie, ua_nummer, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, ort_antragsteller, datum_antragsteller, bearbeitet_von, ort_bearbeiter, datum_bearbeiter, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
       )
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
@@ -128,8 +147,6 @@ export default function MeineAntraege({
         .in('id', ids)
 
       if (jahresdaten) {
-        // Resturlaub Vorjahr bleibt als fester Referenzwert stehen - Abzug erfolgt
-        // ausschließlich vom Resturlaub des aktuellen Jahres.
         await supabase
           .from('mitarbeiter_jahresdaten')
           .update({
@@ -204,6 +221,48 @@ export default function MeineAntraege({
       .in('id', gruppe.zeilen.map((z) => z.id))
     await laden()
     onGeaendert()
+  }
+
+  function pdfDialogOeffnen(gruppe: Gruppe) {
+    const erste = gruppe.zeilen[0]
+    setPdfDialogSchluessel(gruppe.schluessel)
+    setPdfBearbeitetVon(erste.bearbeitet_von ?? '')
+    setPdfOrt(erste.ort_bearbeiter ?? '')
+    setPdfDatum(erste.datum_bearbeiter ?? new Date().toISOString().slice(0, 10))
+  }
+
+  async function pdfGenerieren(gruppe: Gruppe) {
+    const ids = gruppe.zeilen.map((z) => z.id)
+    await supabase
+      .from('urlaubsantraege')
+      .update({
+        bearbeitet_von: pdfBearbeitetVon,
+        ort_bearbeiter: pdfOrt,
+        datum_bearbeiter: pdfDatum,
+      })
+      .in('id', ids)
+
+    const erste = gruppe.zeilen[0]
+    erstelleUrlaubsantragPdf(
+      {
+        name: gruppe.name,
+        personalnummer: erste.personalnummer,
+        kategorie: erste.kategorie,
+        ua_nummer: erste.ua_nummer,
+        jahr: erste.jahr,
+        urlaubsanspruch: erste.urlaubsanspruch,
+        verplant: erste.verplant,
+        rest: erste.rest,
+        resturlaub_vorjahr: erste.resturlaub_vorjahr,
+        ort_antragsteller: erste.ort_antragsteller,
+        datum_antragsteller: erste.datum_antragsteller,
+        zeilen: gruppe.zeilen,
+      },
+      { bearbeitetVon: pdfBearbeitetVon, ort: pdfOrt, datum: pdfDatum }
+    )
+
+    setPdfDialogSchluessel(null)
+    await laden()
   }
 
   if (ladeVorgang) {
@@ -319,12 +378,86 @@ export default function MeineAntraege({
                   )}
 
                   {spalte.status !== 'offen' && (
-                    <button
-                      onClick={() => statusAendern(gruppe, 'offen')}
-                      style={{ ...aktionsKnopfStil('var(--text-muted)'), marginTop: 8 }}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => statusAendern(gruppe, 'offen')}
+                        style={aktionsKnopfStil('var(--text-muted)')}
+                      >
+                        Zurücksetzen
+                      </button>
+                      {spalte.status === 'genehmigt' && (
+                        <button
+                          onClick={() => pdfDialogOeffnen(gruppe)}
+                          style={aktionsKnopfStil('var(--navy)')}
+                        >
+                          📄 PDF erstellen
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {pdfDialogSchluessel === gruppe.schluessel && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 10,
+                        background: '#f8fafc',
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
                     >
-                      Zurücksetzen
-                    </button>
+                      <label style={beschriftungStil}>
+                        Bearbeitet von
+                        <input
+                          value={pdfBearbeitetVon}
+                          onChange={(e) => setPdfBearbeitetVon(e.target.value)}
+                          style={eingabeStil}
+                          placeholder="Name des Genehmigers"
+                        />
+                      </label>
+                      <label style={beschriftungStil}>
+                        Ort
+                        <input
+                          value={pdfOrt}
+                          onChange={(e) => setPdfOrt(e.target.value)}
+                          style={eingabeStil}
+                        />
+                      </label>
+                      <label style={beschriftungStil}>
+                        Datum
+                        <input
+                          type="date"
+                          value={pdfDatum}
+                          onChange={(e) => setPdfDatum(e.target.value)}
+                          style={eingabeStil}
+                        />
+                      </label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => pdfGenerieren(gruppe)}
+                          style={{
+                            background: 'var(--navy)',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: 6,
+                            padding: '6px 12px',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          PDF generieren
+                        </button>
+                        <button
+                          onClick={() => setPdfDialogSchluessel(null)}
+                          style={aktionsKnopfStil('var(--text-muted)')}
+                        >
+                          Abbrechen
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               ))}
@@ -346,4 +479,19 @@ function aktionsKnopfStil(farbe: string): React.CSSProperties {
     fontSize: 12,
     cursor: 'pointer',
   }
+}
+
+const beschriftungStil: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 500,
+  color: 'var(--text-muted)',
+}
+
+const eingabeStil: React.CSSProperties = {
+  width: '100%',
+  padding: '6px 8px',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  fontSize: 13,
+  marginTop: 2,
 }
