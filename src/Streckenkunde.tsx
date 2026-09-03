@@ -37,7 +37,7 @@ function streckennummerSortWert(nummer: string | null): number {
 }
 
 export default function Streckenkunde() {
-  const { mitarbeiter: eigenerMitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
+  const { mitarbeiter: eigenerMitarbeiter, istAdmin } = useAktuellerMitarbeiter()
   const kartenRef = useRef<HTMLDivElement>(null)
   const kartenInstanz = useRef<L.Map | null>(null)
   const linienRef = useRef<Map<string, L.Polyline>>(new Map())
