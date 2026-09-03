@@ -9,9 +9,7 @@ interface AntragZeile {
 
 interface AntragDaten {
   name: string | null
-  personalnummer: string | null
   kategorie: string | null
-  ua_nummer: number | null
   jahr: number | null
   urlaubsanspruch: number | null
   verplant: number | null
@@ -75,13 +73,9 @@ export function erstelleUrlaubsantragPdf(antrag: AntragDaten, bearbeiter: Bearbe
   doc.line(rand, y + 3, seitenBreite - rand, y + 3)
 
   y = 40
-  feld(doc, 'UA-Nr.', antrag.ua_nummer !== null ? String(antrag.ua_nummer) : '', rand, y)
-  feld(doc, 'Jahr', antrag.jahr !== null ? String(antrag.jahr) : '', rand + 55, y)
-  feld(doc, 'Kategorie', antrag.kategorie ?? '', rand + 105, y)
-
-  y += 15
-  feld(doc, 'Name', antrag.name ?? '', rand, y)
-  feld(doc, 'Personalnummer', antrag.personalnummer ?? '', rand + 90, y)
+  feld(doc, 'Jahr', antrag.jahr !== null ? String(antrag.jahr) : '', rand, y)
+  feld(doc, 'Kategorie', antrag.kategorie ?? '', rand + 55, y)
+  feld(doc, 'Name', antrag.name ?? '', rand + 115, y)
 
   y += 15
   feld(

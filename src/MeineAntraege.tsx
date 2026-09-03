@@ -6,9 +6,7 @@ import { erstelleUrlaubsantragPdf } from './pdfErstellung'
 interface Antrag {
   id: string
   name: string | null
-  personalnummer: string | null
   kategorie: string | null
-  ua_nummer: number | null
   jahr: number | null
   urlaubsanspruch: number | null
   verplant: number | null
@@ -103,7 +101,7 @@ export default function MeineAntraege({
     const { data } = await supabase
       .from('urlaubsantraege')
       .select(
-        'id, name, personalnummer, kategorie, ua_nummer, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, ort_antragsteller, datum_antragsteller, bearbeitet_von, ort_bearbeiter, datum_bearbeiter, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
+        'id, name, kategorie, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, ort_antragsteller, datum_antragsteller, bearbeitet_von, ort_bearbeiter, datum_bearbeiter, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
       )
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
@@ -246,9 +244,7 @@ export default function MeineAntraege({
     erstelleUrlaubsantragPdf(
       {
         name: gruppe.name,
-        personalnummer: erste.personalnummer,
         kategorie: erste.kategorie,
-        ua_nummer: erste.ua_nummer,
         jahr: erste.jahr,
         urlaubsanspruch: erste.urlaubsanspruch,
         verplant: erste.verplant,

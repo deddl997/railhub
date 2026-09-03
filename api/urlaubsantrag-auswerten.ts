@@ -36,14 +36,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               },
               {
                 type: 'text',
-                text: `Das ist ein Foto/Scan eines "Urlaubsantrag - Betriebsdienst" Formulars von Rail Bavaria Logistik. Das Formular kann MEHRERE Urlaubszeiträume enthalten (Tabelle mit Spalten Von/Bis/Anzahl Tage). Lies alle Felder aus und antworte AUSSCHLIESSLICH mit einem JSON-Objekt in genau dieser Struktur, ohne Markdown-Codeblock, ohne weiteren Text:
+                text: `Das ist ein Foto/Scan eines "Urlaubsantrag - Betriebsdienst" Formulars von Rail Bavaria Logistik. Das Formular kann MEHRERE Urlaubszeiträume enthalten (Tabelle mit Spalten Von/Bis/Anzahl Tage, bis zu 6 Zeilen). Lies alle Felder aus und antworte AUSSCHLIESSLICH mit einem JSON-Objekt in genau dieser Struktur, ohne Markdown-Codeblock, ohne weiteren Text:
 
 {
   "gemeinsam": {
-    "ua_nummer": Zahl oder null,
     "jahr": Zahl oder null,
     "name": Text oder null,
-    "personalnummer": Text oder null,
     "kategorie": Text (Lokführer/Dienstleister/Wagenmeister/Disposition/Betriebsleitung - welche Option ausgewählt/angekreuzt ist) oder null,
     "urlaubsanspruch": Zahl oder null,
     "verplant": Zahl oder null,
@@ -64,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   ]
 }
 
-Gib in "zeitraeume" ein Array-Element PRO ausgefüllter Zeile der Zeitraum-Tabelle zurück (ignoriere leere Zeilen). Falls nur ein einzelner Zeitraum im Formular steht, enthält das Array genau ein Element.`,
+Gib in "zeitraeume" ein Array-Element PRO ausgefüllter Zeile der Zeitraum-Tabelle zurück (ignoriere leere Zeilen, es können bis zu 6 sein). Falls nur ein einzelner Zeitraum im Formular steht, enthält das Array genau ein Element.`,
               },
             ],
           },

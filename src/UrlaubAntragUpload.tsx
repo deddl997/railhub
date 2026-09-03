@@ -5,10 +5,8 @@ import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { namensSignatur } from './namensAbgleich'
 
 interface GemeinsameFelder {
-  ua_nummer: number | null
   jahr: number | null
   name: string | null
-  personalnummer: string | null
   kategorie: string | null
   urlaubsanspruch: number | null
   verplant: number | null
@@ -33,10 +31,8 @@ interface AusgelesenerAntrag {
 }
 
 const LEERE_GEMEINSAME_FELDER: GemeinsameFelder = {
-  ua_nummer: null,
   jahr: null,
   name: null,
-  personalnummer: null,
   kategorie: null,
   urlaubsanspruch: null,
   verplant: null,
@@ -83,24 +79,22 @@ async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
   }
 
   const gemeinsam: GemeinsameFelder = {
-    ua_nummer: (zelle('B5') as number) ?? null,
-    jahr: (zelle('E5') as number) ?? null,
+    jahr: (zelle('B5') as number) ?? null,
     kategorie: (zelle('B7') as string) ?? null,
     name: (zelle('B9') as string) ?? null,
-    personalnummer: zelle('G9') !== null ? String(zelle('G9')) : null,
     urlaubsanspruch: (zelle('C12') as number) ?? null,
     verplant: (zelle('F12') as number) ?? null,
     rest: (zelle('C13') as number) ?? null,
     resturlaub_vorjahr: (zelle('F13') as number) ?? null,
-    ort_antragsteller: (zelle('B24') as string) ?? null,
-    datum_antragsteller: datumZuText(zelle('E24')),
-    bearbeitet_von: (zelle('B27') as string) ?? null,
-    ort_bearbeiter: (zelle('B28') as string) ?? null,
-    datum_bearbeiter: datumZuText(zelle('E28')),
+    ort_antragsteller: (zelle('B26') as string) ?? null,
+    datum_antragsteller: datumZuText(zelle('E26')),
+    bearbeitet_von: (zelle('B29') as string) ?? null,
+    ort_bearbeiter: (zelle('B30') as string) ?? null,
+    datum_bearbeiter: datumZuText(zelle('E30')),
   }
 
   const zeitraeume: Zeitraum[] = []
-  for (let zeile = 17; zeile <= 20; zeile++) {
+  for (let zeile = 17; zeile <= 22; zeile++) {
     const von = datumZuText(zelle(`B${zeile}`))
     const bis = datumZuText(zelle(`C${zeile}`))
     const tage = zelle(`D${zeile}`) as number | null
@@ -423,15 +417,6 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
             />
           </label>
 
-          <label style={beschriftungStil}>
-            Personalnummer
-            <input
-              style={eingabeStil}
-              value={ausgelesenerAntrag.gemeinsam.personalnummer ?? ''}
-              onChange={(e) => gemeinsamesFeldAendern('personalnummer', e.target.value)}
-            />
-          </label>
-
           <div>
             <div style={{ ...beschriftungStil, marginBottom: 6 }}>Urlaubszeiträume</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -487,21 +472,23 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
                 </div>
               ))}
             </div>
-            <button
-              onClick={zeitraumHinzufuegen}
-              style={{
-                marginTop: 8,
-                background: 'none',
-                border: '1px dashed var(--border)',
-                borderRadius: 6,
-                padding: '6px 12px',
-                fontSize: 13,
-                color: 'var(--navy)',
-                cursor: 'pointer',
-              }}
-            >
-              + Zeitraum hinzufügen
-            </button>
+            {ausgelesenerAntrag.zeitraeume.length < 6 && (
+              <button
+                onClick={zeitraumHinzufuegen}
+                style={{
+                  marginTop: 8,
+                  background: 'none',
+                  border: '1px dashed var(--border)',
+                  borderRadius: 6,
+                  padding: '6px 12px',
+                  fontSize: 13,
+                  color: 'var(--navy)',
+                  cursor: 'pointer',
+                }}
+              >
+                + Zeitraum hinzufügen
+              </button>
+            )}
           </div>
 
           <div
