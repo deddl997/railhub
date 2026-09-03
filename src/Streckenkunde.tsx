@@ -73,9 +73,13 @@ export default function Streckenkunde() {
 
     const karte = L.map(kartenRef.current).setView([49.0, 11.5], 7)
 
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap-Mitwirkende',
+      maxZoom: 19,
+    }).addTo(karte)
+
     L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
-      attribution:
-        'Kartendaten: © OpenStreetMap-Mitwirkende, Style: © OpenRailwayMap (CC-BY-SA 2.0)',
+      attribution: 'Style: © OpenRailwayMap (CC-BY-SA 2.0)',
       maxZoom: 19,
     }).addTo(karte)
 
