@@ -138,22 +138,25 @@ export default function Streckenkunde() {
         opacity: 0.9,
       }).addTo(karte)
 
+      function beiKlick(e: L.LeafletMouseEvent) {
+        L.DomEvent.stopPropagation(e)
+        setAusgewaehlteStrecke(strecke.id)
+        setStreckenSuche(strecke.streckennummer ?? strecke.name)
+        if (ausgewaehlterMitarbeiter) {
+          befahrungEintragen(ausgewaehlterMitarbeiter, strecke.id)
+        }
+      }
+
       const linie = L.polyline(strecke.punkte, {
         color: farbe,
         weight: istAusgewaehlt ? 7 : 5,
         opacity: 1,
       })
         .bindTooltip(strecke.name, { sticky: true })
-        .on('click', (e) => {
-          L.DomEvent.stopPropagation(e)
-          setAusgewaehlteStrecke(strecke.id)
-        })
+        .on('click', beiKlick)
         .addTo(karte)
 
-      rand.on('click', (e) => {
-        L.DomEvent.stopPropagation(e)
-        setAusgewaehlteStrecke(strecke.id)
-      })
+      rand.on('click', beiKlick)
 
       linienRef.current.set(strecke.id, L.layerGroup([rand, linie]))
     })
@@ -277,6 +280,13 @@ export default function Streckenkunde() {
         )}
       </div>
 
+      {!zeichenModus && (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
+          Klick auf eine eingezeichnete Strecke auf der Karte trägt sie sofort als "heute befahren"
+          ein - die Liste unten aktualisiert sich automatisch.
+        </p>
+      )}
+
       {zeichenModus && (
         <div
           style={{
@@ -346,7 +356,7 @@ export default function Streckenkunde() {
           </div>
           {ausgewaehlterMitarbeiter && (
             <button onClick={() => befahrungEintragen()} style={primaerKnopfStil}>
-              Heute als befahren eintragen
+              Heute erneut bestätigen
             </button>
           )}
         </div>
