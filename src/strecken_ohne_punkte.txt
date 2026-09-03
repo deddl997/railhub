@@ -1,0 +1,56 @@
+54 Strecken ohne automatische Zuordnung (muessen manuell eingezeichnet werden):
+
+29 ( Lindau (Bodensee) - DB-Grenze
+32.A Bft Zollberg - Langenprozelten La-Mitte
+37 ( Abzw München Kanal - Bft Mü-Pasing Nord - Mü-Pasing Bbf (A
+52 ( Bft Mü Ost Rbf - Mü-Trudering - Abzw Mü-Waldtrudering(eing
+55 Regensburg Ost - Bft Regensburg Hafenbrücke Abzw - Regensbur
+57 ( Bft München Ost Pbf Fernbahn – Bft München Ost Rbf / *Bft 
+58 ( Bft Mü Ost Rbf - Bft München-Riem Pbf (W326) (eingleisig)
+78 ( München-Pasing - München-Pasing Bbf (Nordgleis) (eingleisi
+80 ( Pasing (Gl. 5 – 8) - Tunnelabschnitt – Mü-Ost S-Bahn ( S-B
+82 ( Abzw Nymphenburg - Abzw Neulustheim
+83 ( Bft München Berg am Laim - Grafing Bf *
+84 ( Mü Ost S-Bahn - Bft Mü Leuchtenbergring – Bft Mü Ost *Hult
+86 ( Bft München Ost Pbf S-Bahn – Bft Mü-Steinhausen *
+91 ( Mü-Laim Rbf - Bft Mü-Pasing Ost / Bft Mü-Pasing Gbf - Bft 
+95 Ebenhausen (Unterfr.) - Bad Kissingen (eingleisig)
+99 ( Abzw Hallstadt (b Bamberg) - Abzw Höflein
+108 ( München-Laim Rbf (W 104) - Abzw Mü-Obermenzing (W 1) (eing
+117 ( Bft Mü Ost S-Bahn – Bft Mü Leuchtenbergring- *Bft Berg am 
+120 Pressath – Grafenwöhr Lager (eingleisige Nebenbahn)
+128 ( Dachau Bf – Altomünster (eingleisige Nebenbahn)
+135 Grafing Bahnhof - Wasserburg (Inn) Bahnhof (eingleisige Nebe
+145 Tüßling – Burghausen – Wackerwerk (eingleisige Nebenbahn)
+148 Forchheim – Ebermannstadt (eingleisige Nebenbahn)
+150 ( Abzw Landl (Oberbay) - Rohrdorf (Oberbay)(eingleisige Nebe
+231 ( Nürnberg Rbf Minervabrücke Ausfahrt/Einfahrt - Nürnberg-La
+361 ( Abzw Nantenbach – Rohrbach (Zweigl. Verbindungskurve) La-M
+704 Rbf München Nord *( Bft Mü Nord Einfahrgruppe - Bft Mü Nord 
+705 Rbf München Nord( Bft Mü Nord Einfahrgruppe - Bft Mü Nord Mi
+708 Rbf München Nord *( Bft Mü Nord Ausfahrgruppe - Mü Nord Lass
+709 Rbf München Nord( Bft Mü Nord Richtungsgruppe (Gleis 311 - 3
+711 Rbf München Nord *( Mü Nord Forstweg - Bft Mü Nord Einfahrgr
+712 Rbf München Nord *( Mü Nord Weiche 707 - Mü Nord Lassallestr
+1037 ( München-Pasing - München-Pasing Bbf (Südgleis) - eingleisi
+1046 ( Abzw Neufahrn (b. Freising) Ost – Abzw Neufahrn (b. Freisi
+1050 (Freilassing - Esig km 82,900 (Fortsetzung freie Strecke Gle
+5003 Anst Müll – Kulmbach (eingleisige Nebenbahn)
+5004 Untersteinach (b Stadtsteinach) – Stadtsteinach (eingleisige
+5007 Neuenmarkt-Wirsberg Süd (W124) - Neuenmarkt-Wirsberg Ost (W 
+5062 Amberg – Schnaittenbach (eingleisige Nebenbahn)
+5213 Lohr Bf - Lohr Stadt (eingleisige Nebenbahn) La-Mitte
+5251 Steinach (b.R.o.d.T.) - Rothenburg o.d.T. (eingleisige Neben
+5383 Rohrbach (Ilm) – Wolnzach Markt (eingleisige Nebenbahn mit Z
+5386 Ingolstadt Nord - Ingolstadt Nord Werkbf Terreno (( Ingolsta
+5388 Abzw Schmidtmühle - Ingolstadt Nord Esso Werkbf ( - ( Ingols
+5558 ( Bft München Flughafen West – Bft München Flughafen Tanklag
+5633 Langenbach (Oberbay) – Anglberg (( Bf Langenbach)(eingleisig
+5803 Bodenwöhr Nord - Nittenau (eingleisige Nebenbahn)
+5833 Vilshofen (Niederbay) - Neustift-Blindham (eingleisige Neben
+5841 Deggendorf Hbf – Deggendorf Hafen (eingleisige Nebenbahn)
+5865 ( Bft Regensburg Hafenbrücke Abzw – Bft Regensburg Bayernhaf
+5912 Muggenhof Strw - Fürth Hbf (- Bft Fürth Gbf) (eingleisige Ne
+5916 ( Erlangen – Frauenaurach (eingleisige Nebenbahn)
+5944 Roth – Hilpoltstein (eingleisige Nebenbahn)
+5952 ( Nürnberg Rbf Ausfahrt – Bft Nürnberg Jansenbrücke Abzw (ei
