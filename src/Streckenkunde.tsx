@@ -25,6 +25,7 @@ interface Kenntnis {
   mitarbeiter_id: string
   strecke_id: string
   zuletzt_befahren: string
+  bis_index: number | null
 }
 
 function tageSeit(datum: string): number {
@@ -36,6 +37,19 @@ function streckennummerSortWert(nummer: string | null): number {
   if (!nummer) return 999999
   const zahl = parseFloat(nummer)
   return isNaN(zahl) ? 999999 : zahl
+}
+
+function naechsterPunktIndex(punkte: [number, number][], klick: L.LatLng): number {
+  let besterIndex = 0
+  let besteDistanz = Infinity
+  punkte.forEach((p, i) => {
+    const d = Math.hypot(p[0] - klick.lat, p[1] - klick.lng)
+    if (d < besteDistanz) {
+      besteDistanz = d
+      besterIndex = i
+    }
+  })
+  return besterIndex
 }
 
 export default function Streckenkunde() {
@@ -68,7 +82,7 @@ export default function Streckenkunde() {
       await Promise.all([
         supabase.from('strecken').select('id, name, streckennummer, punkte, anker_punkte').order('name'),
         supabase.from('mitarbeiter').select('id, name, kategorie').eq('kategorie', 'Lokführer').order('name'),
-        supabase.from('streckenkenntnis').select('mitarbeiter_id, strecke_id, zuletzt_befahren'),
+        supabase.from('streckenkenntnis').select('mitarbeiter_id, strecke_id, zuletzt_befahren, bis_index'),
       ])
     setStrecken(streckenData ?? [])
     setMitarbeiterListe(mitarbeiterData ?? [])
@@ -131,13 +145,11 @@ export default function Streckenkunde() {
       )
       const bekannt = !!ausgewaehlterMitarbeiter && !!kenntnisEintrag
       const verfallen = kenntnisEintrag ? tageSeit(kenntnisEintrag.zuletzt_befahren) > VERFALL_TAGE : false
-
-      let farbe = '#2563eb' // blau = nicht befahren / kein Mitarbeiter ausgewählt
-      if (ausgewaehlterMitarbeiter) {
-        farbe = bekannt ? (verfallen ? '#7c3aed' : '#db2777') : '#2563eb'
-      }
       const istAusgewaehlt = ausgewaehlteStrecke === strecke.id
-      if (istAusgewaehlt) farbe = '#facc15'
+
+      const farbeBekannt = verfallen ? '#7c3aed' : '#db2777'
+      const farbeUnbekannt = '#2563eb'
+      const farbeAusgewaehlt = '#facc15'
 
       // Weisser Rand darunter fuer klare Sichtbarkeit gegen die OpenRailwayMap-Kacheln
       const rand = L.polyline(strecke.punkte, {
@@ -150,23 +162,54 @@ export default function Streckenkunde() {
         L.DomEvent.stopPropagation(e)
         setAusgewaehlteStrecke(strecke.id)
         setStreckenSuche(strecke.streckennummer ?? strecke.name)
-        if (ausgewaehlterMitarbeiter) {
-          befahrungEintragen(ausgewaehlterMitarbeiter, strecke.id)
+        if (ausgewaehlterMitarbeiter && strecke.punkte) {
+          const index = naechsterPunktIndex(strecke.punkte, e.latlng)
+          befahrungEintragen(ausgewaehlterMitarbeiter, strecke.id, index)
         }
       }
-
-      const linie = L.polyline(strecke.punkte, {
-        color: farbe,
-        weight: istAusgewaehlt ? 7 : 5,
-        opacity: 1,
-      })
-        .bindTooltip(strecke.name, { sticky: true })
-        .on('click', beiKlick)
-        .addTo(karte)
-
       rand.on('click', beiKlick)
 
-      linienRef.current.set(strecke.id, L.layerGroup([rand, linie]))
+      const teilweise =
+        bekannt &&
+        kenntnisEintrag?.bis_index != null &&
+        kenntnisEintrag.bis_index < strecke.punkte.length - 1
+
+      const linien: L.Polyline[] = []
+
+      if (istAusgewaehlt) {
+        linien.push(
+          L.polyline(strecke.punkte, { color: farbeAusgewaehlt, weight: 7, opacity: 1 })
+            .bindTooltip(strecke.name, { sticky: true })
+            .on('click', beiKlick)
+            .addTo(karte)
+        )
+      } else if (teilweise && kenntnisEintrag) {
+        const grenzIndex = kenntnisEintrag.bis_index as number
+        const bekannterTeil = strecke.punkte.slice(0, grenzIndex + 1)
+        const restTeil = strecke.punkte.slice(grenzIndex)
+        linien.push(
+          L.polyline(bekannterTeil, { color: farbeBekannt, weight: 5, opacity: 1 })
+            .bindTooltip(`${strecke.name} (teilweise bekannt)`, { sticky: true })
+            .on('click', beiKlick)
+            .addTo(karte)
+        )
+        linien.push(
+          L.polyline(restTeil, { color: farbeUnbekannt, weight: 5, opacity: 1, dashArray: '4 6' })
+            .bindTooltip(strecke.name, { sticky: true })
+            .on('click', beiKlick)
+            .addTo(karte)
+        )
+      } else {
+        const farbe = ausgewaehlterMitarbeiter ? (bekannt ? farbeBekannt : farbeUnbekannt) : farbeUnbekannt
+        linien.push(
+          L.polyline(strecke.punkte, { color: farbe, weight: 5, opacity: 1 })
+            .bindTooltip(strecke.name, { sticky: true })
+            .on('click', beiKlick)
+            .addTo(karte)
+        )
+      }
+
+      linienRef.current.set(strecke.id, L.layerGroup([rand, ...linien]))
     })
   }, [strecken, kenntnisse, ausgewaehlterMitarbeiter, ausgewaehlteStrecke])
 
@@ -214,16 +257,19 @@ export default function Streckenkunde() {
     await laden()
   }
 
-  async function befahrungEintragen(mitarbeiterId?: string, streckeId?: string) {
+  async function befahrungEintragen(mitarbeiterId?: string, streckeId?: string, bisIndex?: number | null) {
     const m = mitarbeiterId ?? ausgewaehlterMitarbeiter
     const s = streckeId ?? ausgewaehlteStrecke
     if (!m || !s) return
     const heute = new Date().toISOString().slice(0, 10)
 
+    const vorhandenerEintrag = kenntnisFuer(m, s)
+    const neuerBisIndex = bisIndex !== undefined ? bisIndex : vorhandenerEintrag?.bis_index ?? null
+
     await supabase
       .from('streckenkenntnis')
       .upsert(
-        { mitarbeiter_id: m, strecke_id: s, zuletzt_befahren: heute },
+        { mitarbeiter_id: m, strecke_id: s, zuletzt_befahren: heute, bis_index: neuerBisIndex },
         { onConflict: 'mitarbeiter_id,strecke_id' }
       )
     await laden()
@@ -430,9 +476,20 @@ export default function Streckenkunde() {
                   const eintrag = kenntnisseDesMitarbeiters.find((k) => k.strecke_id === ausgewaehlteStrecke)
                   if (!eintrag) return 'Noch nicht befahren'
                   const tage = tageSeit(eintrag.zuletzt_befahren)
-                  return tage > VERFALL_TAGE
-                    ? `Verfallen (zuletzt vor ${tage} Tagen)`
-                    : `Zuletzt vor ${tage} Tagen befahren`
+                  const ausgewaehlteStreckeDaten = strecken.find((s) => s.id === ausgewaehlteStrecke)
+                  const teilInfo =
+                    eintrag.bis_index != null &&
+                    ausgewaehlteStreckeDaten?.punkte &&
+                    eintrag.bis_index < ausgewaehlteStreckeDaten.punkte.length - 1
+                      ? ` - teilweise bekannt (bis ca. ${Math.round(
+                          ((eintrag.bis_index + 1) / ausgewaehlteStreckeDaten.punkte.length) * 100
+                        )}%)`
+                      : ''
+                  return (
+                    (tage > VERFALL_TAGE
+                      ? `Verfallen (zuletzt vor ${tage} Tagen)`
+                      : `Zuletzt vor ${tage} Tagen befahren`) + teilInfo
+                  )
                 })()}
               </span>
             )}
@@ -445,10 +502,18 @@ export default function Streckenkunde() {
         </div>
       )}
 
+      {ausgewaehlterMitarbeiter && ausgewaehlteStrecke && (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+          Tipp: Klicke gezielt auf einen bestimmten Punkt der Linie, um nur "kundig bis dort" statt der
+          ganzen Strecke einzutragen.
+        </p>
+      )}
+
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
         <span><span style={legendenPunktStil('#db2777')} /> Aktuell bekannt</span>
         <span><span style={legendenPunktStil('#7c3aed')} /> Verfallen (&gt;{VERFALL_TAGE} Tage)</span>
         <span><span style={legendenPunktStil('#2563eb')} /> Nicht befahren</span>
+        <span style={{ color: 'var(--text-muted)' }}>· · · Gestrichelt = unbekannter Rest bei Teilstrecken</span>
       </div>
 
       {ausgewaehlterMitarbeiter && (
@@ -598,7 +663,7 @@ export default function Streckenkunde() {
                         checked={!!eintrag}
                         onChange={(e) =>
                           e.target.checked
-                            ? befahrungEintragen(ausgewaehlterMitarbeiter, s.id)
+                            ? befahrungEintragen(ausgewaehlterMitarbeiter, s.id, null)
                             : wissenEntfernen(ausgewaehlterMitarbeiter, s.id)
                         }
                         style={{ flexShrink: 0, cursor: 'pointer' }}
@@ -657,6 +722,12 @@ export default function Streckenkunde() {
                         {verfallen
                           ? `Verfallen (${tageSeit(eintrag.zuletzt_befahren)} Tage)`
                           : `vor ${tageSeit(eintrag.zuletzt_befahren)} Tagen`}
+                        {eintrag.bis_index != null && s.punkte && eintrag.bis_index < s.punkte.length - 1 && (
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            {' '}
+                            (bis ca. {Math.round(((eintrag.bis_index + 1) / s.punkte.length) * 100)}%)
+                          </span>
+                        )}
                         {verfallen && (
                           <button
                             onClick={() => befahrungEintragen(ausgewaehlterMitarbeiter, s.id)}
