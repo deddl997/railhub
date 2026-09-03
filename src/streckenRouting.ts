@@ -14,10 +14,8 @@ async function overpassAbfrage(query: string): Promise<any> {
 
   for (const server of OVERPASS_SERVER) {
     try {
-      const antwort = await fetch(server, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
+      const antwort = await fetch(server + '?data=' + encodeURIComponent(query), {
+        method: 'GET',
       })
       if (!antwort.ok) {
         letzterFehler = new Error(`${server} antwortete mit Status ${antwort.status}`)
