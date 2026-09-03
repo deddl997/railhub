@@ -29,6 +29,12 @@ function tageSeit(datum: string): number {
   return Math.floor(unterschied / (1000 * 60 * 60 * 24))
 }
 
+function streckennummerSortWert(nummer: string | null): number {
+  if (!nummer) return 999999
+  const zahl = parseFloat(nummer)
+  return isNaN(zahl) ? 999999 : zahl
+}
+
 export default function Streckenkunde() {
   const kartenRef = useRef<HTMLDivElement>(null)
   const kartenInstanz = useRef<L.Map | null>(null)
@@ -62,7 +68,6 @@ export default function Streckenkunde() {
     laden()
   }, [])
 
-  // Karte einmalig initialisieren
   useEffect(() => {
     if (!kartenRef.current || kartenInstanz.current) return
 
@@ -91,7 +96,6 @@ export default function Streckenkunde() {
     }
   }, [])
 
-  // Vorhandene Strecken als Linien zeichnen
   useEffect(() => {
     const karte = kartenInstanz.current
     if (!karte) return
@@ -102,14 +106,10 @@ export default function Streckenkunde() {
     strecken.forEach((strecke) => {
       if (!strecke.punkte || strecke.punkte.length < 2) return
 
-      const bekannt =
-        !!ausgewaehlterMitarbeiter &&
-        kenntnisse.some(
-          (k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter && k.strecke_id === strecke.id
-        )
       const kenntnisEintrag = kenntnisse.find(
         (k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter && k.strecke_id === strecke.id
       )
+      const bekannt = !!ausgewaehlterMitarbeiter && !!kenntnisEintrag
       const verfallen = kenntnisEintrag ? tageSeit(kenntnisEintrag.zuletzt_befahren) > VERFALL_TAGE : false
 
       let farbe = '#64748b'
@@ -134,7 +134,6 @@ export default function Streckenkunde() {
     })
   }, [strecken, kenntnisse, ausgewaehlterMitarbeiter, ausgewaehlteStrecke])
 
-  // Punkte beim Zeichnen einer neuen Strecke visualisieren
   useEffect(() => {
     const karte = kartenInstanz.current
     if (!karte) return
@@ -179,14 +178,16 @@ export default function Streckenkunde() {
     await laden()
   }
 
-  async function befahrungEintragen() {
-    if (!ausgewaehlterMitarbeiter || !ausgewaehlteStrecke) return
+  async function befahrungEintragen(mitarbeiterId?: string, streckeId?: string) {
+    const m = mitarbeiterId ?? ausgewaehlterMitarbeiter
+    const s = streckeId ?? ausgewaehlteStrecke
+    if (!m || !s) return
     const heute = new Date().toISOString().slice(0, 10)
 
     await supabase
       .from('streckenkenntnis')
       .upsert(
-        { mitarbeiter_id: ausgewaehlterMitarbeiter, strecke_id: ausgewaehlteStrecke, zuletzt_befahren: heute },
+        { mitarbeiter_id: m, strecke_id: s, zuletzt_befahren: heute },
         { onConflict: 'mitarbeiter_id,strecke_id' }
       )
     await laden()
@@ -194,6 +195,19 @@ export default function Streckenkunde() {
 
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
+
+  const streckenSortiert = [...strecken].sort(
+    (a, b) => streckennummerSortWert(a.streckennummer) - streckennummerSortWert(b.streckennummer)
+  )
+
+  function kenntnisFuer(mitarbeiterId: string, streckeId: string) {
+    return kenntnisse.find((k) => k.mitarbeiter_id === mitarbeiterId && k.strecke_id === streckeId)
+  }
+
+  function zellFarbe(eintrag: Kenntnis | undefined) {
+    if (!eintrag) return null
+    return tageSeit(eintrag.zuletzt_befahren) > VERFALL_TAGE ? '#fed7aa' : '#dcfce7'
+  }
 
   return (
     <div>
@@ -290,7 +304,7 @@ export default function Streckenkunde() {
             )}
           </div>
           {ausgewaehlterMitarbeiter && (
-            <button onClick={befahrungEintragen} style={primaerKnopfStil}>
+            <button onClick={() => befahrungEintragen()} style={primaerKnopfStil}>
               Heute als befahren eintragen
             </button>
           )}
@@ -303,41 +317,104 @@ export default function Streckenkunde() {
         <span><span style={legendenPunktStil('#94a3b8')} /> Nicht befahren</span>
       </div>
 
-      {ausgewaehlterMitarbeiter && (
-        <div style={{ marginTop: 24 }}>
-          <h4 style={{ marginBottom: 8 }}>Übersicht Streckenkenntnis</h4>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {strecken
-              .filter((s) => kenntnisseDesMitarbeiters.some((k) => k.strecke_id === s.id))
-              .map((s) => {
-                const eintrag = kenntnisseDesMitarbeiters.find((k) => k.strecke_id === s.id)!
-                const tage = tageSeit(eintrag.zuletzt_befahren)
-                const verfallen = tage > VERFALL_TAGE
-                return (
-                  <div
-                    key={s.id}
+      {mitarbeiterListe.length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <h4 style={{ marginBottom: 4 }}>Streckenkenntnis-Matrix</h4>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
+            Klick auf eine Zelle wählt Lokführer + Strecke oben aus. Grün = aktuell bekannt, Orange =
+            verfallen, leer = noch nicht befahren.
+          </p>
+
+          <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: 11, width: '100%' }}>
+              <thead>
+                <tr>
+                  <th
                     style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
+                      position: 'sticky',
+                      left: 0,
+                      top: 0,
+                      background: 'var(--card)',
+                      zIndex: 3,
                       padding: '6px 10px',
-                      background: verfallen ? '#fef3c7' : '#f0fdf4',
-                      borderRadius: 6,
-                      fontSize: 13,
+                      textAlign: 'left',
+                      borderBottom: '1px solid var(--border)',
+                      borderRight: '1px solid var(--border)',
+                      minWidth: 150,
                     }}
                   >
-                    <span>{s.name}</span>
-                    <span style={{ color: verfallen ? 'var(--warning)' : 'var(--success)' }}>
-                      {verfallen ? `Verfallen (${tage} Tage)` : `vor ${tage} Tagen`}
-                    </span>
-                  </div>
-                )
-              })}
-            {kenntnisseDesMitarbeiters.length === 0 && (
-              <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                Noch keine Streckenkenntnis erfasst - Strecke auf der Karte anklicken und "Heute als
-                befahren eintragen".
-              </p>
-            )}
+                    Lokführer
+                  </th>
+                  {streckenSortiert.map((s) => (
+                    <th
+                      key={s.id}
+                      title={s.name}
+                      style={{
+                        padding: '4px 2px',
+                        borderBottom: '1px solid var(--border)',
+                        color: 'var(--text-muted)',
+                        fontWeight: 500,
+                        minWidth: 26,
+                        writingMode: 'vertical-rl',
+                        textOrientation: 'mixed',
+                        height: 60,
+                      }}
+                    >
+                      {s.streckennummer ?? '–'}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {mitarbeiterListe.map((mitarbeiter, index) => (
+                  <tr key={mitarbeiter.id}>
+                    <td
+                      style={{
+                        position: 'sticky',
+                        left: 0,
+                        background: index % 2 === 0 ? 'var(--card)' : 'var(--bg)',
+                        zIndex: 1,
+                        padding: '4px 10px',
+                        borderRight: '1px solid var(--border)',
+                        borderBottom: '1px solid var(--border)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {mitarbeiter.name}
+                    </td>
+                    {streckenSortiert.map((s) => {
+                      const eintrag = kenntnisFuer(mitarbeiter.id, s.id)
+                      const farbe = zellFarbe(eintrag)
+                      return (
+                        <td
+                          key={s.id}
+                          title={
+                            eintrag
+                              ? `${s.name}: vor ${tageSeit(eintrag.zuletzt_befahren)} Tagen befahren`
+                              : `${s.name}: noch nicht befahren`
+                          }
+                          onClick={() => {
+                            setAusgewaehlterMitarbeiter(mitarbeiter.id)
+                            setAusgewaehlteStrecke(s.id)
+                          }}
+                          style={{
+                            borderBottom: '1px solid var(--border)',
+                            background: farbe ?? (index % 2 === 0 ? 'var(--card)' : 'var(--bg)'),
+                            height: 22,
+                            cursor: 'pointer',
+                            outline:
+                              ausgewaehlterMitarbeiter === mitarbeiter.id && ausgewaehlteStrecke === s.id
+                                ? '2px solid var(--navy)'
+                                : 'none',
+                            outlineOffset: -2,
+                          }}
+                        />
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
