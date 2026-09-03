@@ -360,27 +360,66 @@ export default function Streckenkunde() {
 
       {ausgewaehlterMitarbeiter && (
         <div style={{ marginTop: 28 }}>
-          <h4 style={{ marginBottom: 4 }}>
-            {istAdmin ? 'Strecken auswählen' : 'Meine Strecken auswählen'}
-          </h4>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
+          <style>{`
+            .strecken-zeile:hover { background: #eef2f7 !important; }
+          `}</style>
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              marginBottom: 4,
+              flexWrap: 'wrap',
+              gap: 8,
+            }}
+          >
+            <h4 style={{ margin: 0 }}>
+              {istAdmin ? 'Strecken auswählen' : 'Meine Strecken auswählen'}
+            </h4>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {kenntnisseDesMitarbeiters.length} von {strecken.length} Strecken bekannt
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 12 }}>
             Haken setzen bei jeder Strecke, die {istAdmin ? 'diese Person' : 'du'} fahren kann/kennt -
             funktioniert auch für Strecken, die noch nicht auf der Karte eingezeichnet sind.
           </p>
 
-          <input
-            placeholder="Strecke suchen (Name oder Nummer)..."
-            value={streckenSuche}
-            onChange={(e) => setStreckenSuche(e.target.value)}
-            style={{ ...eingabeStil, width: '100%', marginBottom: 10, boxSizing: 'border-box' }}
-          />
+          <div style={{ position: 'relative', marginBottom: 12 }}>
+            <span
+              style={{
+                position: 'absolute',
+                left: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-muted)',
+                fontSize: 14,
+                pointerEvents: 'none',
+              }}
+            >
+              🔍
+            </span>
+            <input
+              placeholder="Strecke suchen (Name oder Nummer)..."
+              value={streckenSuche}
+              onChange={(e) => setStreckenSuche(e.target.value)}
+              style={{
+                ...eingabeStil,
+                width: '100%',
+                paddingLeft: 34,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
 
           <div
             style={{
-              maxHeight: 320,
+              maxHeight: 340,
               overflowY: 'auto',
               border: '1px solid var(--border)',
-              borderRadius: 8,
+              borderRadius: 10,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
             }}
           >
             {streckenSortiert
@@ -392,23 +431,42 @@ export default function Streckenkunde() {
                   (s.streckennummer ?? '').toLowerCase().includes(suchtext)
                 )
               })
-              .map((s, index) => {
+              .map((s, index, gefiltert) => {
                 const eintrag = kenntnisFuer(ausgewaehlterMitarbeiter, s.id)
                 const verfallen = eintrag ? tageSeit(eintrag.zuletzt_befahren) > VERFALL_TAGE : false
+                const istLetzte = index === gefiltert.length - 1
                 return (
                   <div
                     key={s.id}
+                    className="strecken-zeile"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '8px 12px',
-                      background: index % 2 === 0 ? 'var(--card)' : 'var(--bg)',
-                      borderBottom: '1px solid var(--border)',
+                      gap: 10,
+                      padding: '9px 14px',
+                      background: eintrag
+                        ? verfallen
+                          ? '#faf5ff'
+                          : '#fdf2f8'
+                        : index % 2 === 0
+                        ? 'var(--card)'
+                        : 'var(--bg)',
+                      borderBottom: istLetzte ? 'none' : '1px solid var(--border)',
                       fontSize: 13,
+                      transition: 'background 0.1s',
                     }}
                   >
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1 }}>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        cursor: 'pointer',
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
                       <input
                         type="checkbox"
                         checked={!!eintrag}
@@ -417,11 +475,34 @@ export default function Streckenkunde() {
                             ? befahrungEintragen(ausgewaehlterMitarbeiter, s.id)
                             : wissenEntfernen(ausgewaehlterMitarbeiter, s.id)
                         }
+                        style={{ flexShrink: 0, cursor: 'pointer' }}
                       />
-                      <span style={{ color: 'var(--text-muted)', minWidth: 34 }}>
+                      <span
+                        style={{
+                          background: '#e2e8f0',
+                          color: 'var(--text-muted)',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          padding: '2px 7px',
+                          borderRadius: 5,
+                          flexShrink: 0,
+                          minWidth: 30,
+                          textAlign: 'center',
+                        }}
+                      >
                         {s.streckennummer ?? '–'}
                       </span>
-                      <span>{s.name}</span>
+                      <span
+                        title={s.name}
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          minWidth: 0,
+                        }}
+                      >
+                        {s.name}
+                      </span>
                     </label>
 
                     {eintrag && (
@@ -431,6 +512,10 @@ export default function Streckenkunde() {
                           color: verfallen ? 'var(--warning)' : 'var(--success)',
                           whiteSpace: 'nowrap',
                           marginLeft: 8,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          flexShrink: 0,
                         }}
                       >
                         {verfallen
@@ -455,13 +540,25 @@ export default function Streckenkunde() {
 
       {istAdmin && mitarbeiterListe.length > 0 && (
         <div style={{ marginTop: 28 }}>
+          <style>{`
+            .matrix-zeile:hover td { background: #eef2f7 !important; }
+          `}</style>
+
           <h4 style={{ marginBottom: 4 }}>Streckenkenntnis-Matrix</h4>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
             Klick auf eine Zelle wählt Lokführer + Strecke oben aus. Grün = aktuell bekannt, Orange =
             verfallen, leer = noch nicht befahren.
           </p>
 
-          <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+          <div
+            style={{
+              overflow: 'auto',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+              maxHeight: 480,
+            }}
+          >
             <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: 11, width: '100%' }}>
               <thead>
                 <tr>
@@ -470,13 +567,15 @@ export default function Streckenkunde() {
                       position: 'sticky',
                       left: 0,
                       top: 0,
-                      background: 'var(--card)',
+                      background: '#f1f5f9',
                       zIndex: 3,
-                      padding: '6px 10px',
+                      padding: '8px 10px',
                       textAlign: 'left',
                       borderBottom: '1px solid var(--border)',
                       borderRight: '1px solid var(--border)',
                       minWidth: 150,
+                      color: 'var(--navy)',
+                      fontWeight: 600,
                     }}
                   >
                     Lokführer
@@ -486,7 +585,10 @@ export default function Streckenkunde() {
                       key={s.id}
                       title={s.name}
                       style={{
+                        position: 'sticky',
+                        top: 0,
                         padding: '4px 2px',
+                        background: '#f1f5f9',
                         borderBottom: '1px solid var(--border)',
                         color: 'var(--text-muted)',
                         fontWeight: 500,
@@ -503,17 +605,18 @@ export default function Streckenkunde() {
               </thead>
               <tbody>
                 {mitarbeiterListe.map((mitarbeiter, index) => (
-                  <tr key={mitarbeiter.id}>
+                  <tr key={mitarbeiter.id} className="matrix-zeile">
                     <td
                       style={{
                         position: 'sticky',
                         left: 0,
                         background: index % 2 === 0 ? 'var(--card)' : 'var(--bg)',
                         zIndex: 1,
-                        padding: '4px 10px',
+                        padding: '5px 10px',
                         borderRight: '1px solid var(--border)',
                         borderBottom: '1px solid var(--border)',
                         whiteSpace: 'nowrap',
+                        fontWeight: 500,
                       }}
                     >
                       {mitarbeiter.name}
@@ -536,13 +639,14 @@ export default function Streckenkunde() {
                           style={{
                             borderBottom: '1px solid var(--border)',
                             background: farbe ?? (index % 2 === 0 ? 'var(--card)' : 'var(--bg)'),
-                            height: 22,
+                            height: 24,
                             cursor: 'pointer',
                             outline:
                               ausgewaehlterMitarbeiter === mitarbeiter.id && ausgewaehlteStrecke === s.id
                                 ? '2px solid var(--navy)'
                                 : 'none',
                             outlineOffset: -2,
+
                           }}
                         />
                       )
