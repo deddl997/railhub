@@ -17,29 +17,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Kein gültiges Overpass-Query mitgeschickt' })
   }
 
-  let letzterFehler: string | null = null
+  const fehlerListe: string[] = []
 
   for (const server of OVERPASS_SERVER) {
     try {
       const antwort = await fetch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
         body: 'data=' + encodeURIComponent(query),
       })
 
       const text = await antwort.text()
 
       if (!antwort.ok) {
-        letzterFehler = `${server} antwortete mit Status ${antwort.status}: ${text.slice(0, 300)}`
+        fehlerListe.push(`${server} -> Status ${antwort.status}: ${text.slice(0, 200)}`)
         continue
       }
 
       const daten = JSON.parse(text)
       return res.status(200).json(daten)
     } catch (error) {
-      letzterFehler = `${server}: ${String(error)}`
+      fehlerListe.push(`${server} -> ${String(error)}`)
     }
   }
 
-  return res.status(502).json({ error: 'Alle OpenStreetMap-Server nicht erreichbar', details: letzterFehler })
+  return res.status(502).json({ error: 'Alle OpenStreetMap-Server nicht erreichbar', details: fehlerListe.join(' | ') })
 }
