@@ -3,6 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from './lib/supabase'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
+import { routeUeberMehrereStationen } from './streckenRouting'
 
 const VERFALL_TAGE = 180 // Streckenkenntnis gilt 6 Monate ohne Befahrung als verfallen
 
@@ -11,6 +12,7 @@ interface Strecke {
   name: string
   streckennummer: string | null
   punkte: [number, number][] | null
+  anker_punkte: [number, number][] | null
 }
 
 interface Mitarbeiter {
@@ -50,6 +52,8 @@ export default function Streckenkunde() {
 
   const [zeichenModus, setZeichenModus] = useState(false)
   const [streckenSuche, setStreckenSuche] = useState('')
+  const [routingLaeuft, setRoutingLaeuft] = useState<string | null>(null)
+  const [routingFehler, setRoutingFehler] = useState<string | null>(null)
   const [neuePunkte, setNeuePunkte] = useState<[number, number][]>([])
   const [neuerStreckenName, setNeuerStreckenName] = useState('')
   const neuePunkteLinieRef = useRef<L.Polyline | null>(null)
@@ -58,7 +62,7 @@ export default function Streckenkunde() {
   async function laden() {
     const [{ data: streckenData }, { data: mitarbeiterData }, { data: kenntnisData }] =
       await Promise.all([
-        supabase.from('strecken').select('id, name, streckennummer, punkte').order('name'),
+        supabase.from('strecken').select('id, name, streckennummer, punkte, anker_punkte').order('name'),
         supabase.from('mitarbeiter').select('id, name, kategorie').eq('kategorie', 'Lokführer').order('name'),
         supabase.from('streckenkenntnis').select('mitarbeiter_id, strecke_id, zuletzt_befahren'),
       ])
@@ -228,6 +232,25 @@ export default function Streckenkunde() {
       .eq('mitarbeiter_id', mitarbeiterId)
       .eq('strecke_id', streckeId)
     await laden()
+  }
+
+  async function osmRouteLaden(strecke: Strecke) {
+    if (!strecke.anker_punkte || strecke.anker_punkte.length < 2) return
+    setRoutingLaeuft(strecke.id)
+    setRoutingFehler(null)
+    try {
+      const route = await routeUeberMehrereStationen(strecke.anker_punkte)
+      if (!route) {
+        setRoutingFehler(`Keine Route gefunden für "${strecke.name}". Manuell einzeichnen nötig.`)
+        return
+      }
+      await supabase.from('strecken').update({ punkte: route }).eq('id', strecke.id)
+      await laden()
+    } catch (err) {
+      setRoutingFehler('Fehler bei der OSM-Abfrage: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setRoutingLaeuft(null)
+    }
   }
 
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
@@ -515,6 +538,16 @@ export default function Streckenkunde() {
                       </span>
                     </label>
 
+                    {istAdmin && !s.punkte && s.anker_punkte && s.anker_punkte.length >= 2 && (
+                      <button
+                        onClick={() => osmRouteLaden(s)}
+                        disabled={routingLaeuft === s.id}
+                        style={{ ...aktualisierenKnopfStil, borderColor: 'var(--navy)', color: 'var(--navy)', marginRight: 8 }}
+                      >
+                        {routingLaeuft === s.id ? 'Lädt...' : '🛰️ OSM-Route laden'}
+                      </button>
+                    )}
+
                     {eintrag && (
                       <span
                         style={{
@@ -545,6 +578,9 @@ export default function Streckenkunde() {
                 )
               })}
           </div>
+          {routingFehler && (
+            <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8 }}>{routingFehler}</p>
+          )}
         </div>
       )}
 
