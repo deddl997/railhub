@@ -49,6 +49,7 @@ export default function Streckenkunde() {
   const [ausgewaehlteStrecke, setAusgewaehlteStrecke] = useState<string | null>(null)
 
   const [zeichenModus, setZeichenModus] = useState(false)
+  const [streckenSuche, setStreckenSuche] = useState('')
   const [neuePunkte, setNeuePunkte] = useState<[number, number][]>([])
   const [neuerStreckenName, setNeuerStreckenName] = useState('')
   const neuePunkteLinieRef = useRef<L.Polyline | null>(null)
@@ -204,6 +205,15 @@ export default function Streckenkunde() {
     await laden()
   }
 
+  async function wissenEntfernen(mitarbeiterId: string, streckeId: string) {
+    await supabase
+      .from('streckenkenntnis')
+      .delete()
+      .eq('mitarbeiter_id', mitarbeiterId)
+      .eq('strecke_id', streckeId)
+    await laden()
+  }
+
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
 
@@ -335,6 +345,101 @@ export default function Streckenkunde() {
         <span><span style={legendenPunktStil('#94a3b8')} /> Nicht befahren</span>
       </div>
 
+      {ausgewaehlterMitarbeiter && (
+        <div style={{ marginTop: 28 }}>
+          <h4 style={{ marginBottom: 4 }}>
+            {istAdmin ? 'Strecken auswählen' : 'Meine Strecken auswählen'}
+          </h4>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
+            Haken setzen bei jeder Strecke, die {istAdmin ? 'diese Person' : 'du'} fahren kann/kennt -
+            funktioniert auch für Strecken, die noch nicht auf der Karte eingezeichnet sind.
+          </p>
+
+          <input
+            placeholder="Strecke suchen (Name oder Nummer)..."
+            value={streckenSuche}
+            onChange={(e) => setStreckenSuche(e.target.value)}
+            style={{ ...eingabeStil, width: '100%', marginBottom: 10, boxSizing: 'border-box' }}
+          />
+
+          <div
+            style={{
+              maxHeight: 320,
+              overflowY: 'auto',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+            }}
+          >
+            {streckenSortiert
+              .filter((s) => {
+                const suchtext = streckenSuche.trim().toLowerCase()
+                if (!suchtext) return true
+                return (
+                  s.name.toLowerCase().includes(suchtext) ||
+                  (s.streckennummer ?? '').toLowerCase().includes(suchtext)
+                )
+              })
+              .map((s, index) => {
+                const eintrag = kenntnisFuer(ausgewaehlterMitarbeiter, s.id)
+                const verfallen = eintrag ? tageSeit(eintrag.zuletzt_befahren) > VERFALL_TAGE : false
+                return (
+                  <div
+                    key={s.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      background: index % 2 === 0 ? 'var(--card)' : 'var(--bg)',
+                      borderBottom: '1px solid var(--border)',
+                      fontSize: 13,
+                    }}
+                  >
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1 }}>
+                      <input
+                        type="checkbox"
+                        checked={!!eintrag}
+                        onChange={(e) =>
+                          e.target.checked
+                            ? befahrungEintragen(ausgewaehlterMitarbeiter, s.id)
+                            : wissenEntfernen(ausgewaehlterMitarbeiter, s.id)
+                        }
+                      />
+                      <span style={{ color: 'var(--text-muted)', minWidth: 34 }}>
+                        {s.streckennummer ?? '–'}
+                      </span>
+                      <span>{s.name}</span>
+                    </label>
+
+                    {eintrag && (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: verfallen ? 'var(--warning)' : 'var(--success)',
+                          whiteSpace: 'nowrap',
+                          marginLeft: 8,
+                        }}
+                      >
+                        {verfallen
+                          ? `Verfallen (${tageSeit(eintrag.zuletzt_befahren)} Tage)`
+                          : `vor ${tageSeit(eintrag.zuletzt_befahren)} Tagen`}
+                        {verfallen && (
+                          <button
+                            onClick={() => befahrungEintragen(ausgewaehlterMitarbeiter, s.id)}
+                            style={{ ...aktualisierenKnopfStil, marginLeft: 6 }}
+                          >
+                            Heute bestätigen
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      )}
+
       {istAdmin && mitarbeiterListe.length > 0 && (
         <div style={{ marginTop: 28 }}>
           <h4 style={{ marginBottom: 4 }}>Streckenkenntnis-Matrix</h4>
@@ -465,6 +570,16 @@ const sekundaerKnopfStil: React.CSSProperties = {
   borderRadius: 6,
   padding: '8px 14px',
   fontSize: 13,
+  cursor: 'pointer',
+}
+
+const aktualisierenKnopfStil: React.CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--warning)',
+  color: 'var(--warning)',
+  borderRadius: 4,
+  padding: '2px 6px',
+  fontSize: 11,
   cursor: 'pointer',
 }
 
