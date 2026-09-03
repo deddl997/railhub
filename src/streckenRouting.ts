@@ -3,34 +3,24 @@ interface Punkt {
   lon: number
 }
 
-const OVERPASS_SERVER = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://lz4.overpass-api.de/api/interpreter',
-]
-
 async function overpassAbfrage(query: string): Promise<any> {
-  let letzterFehler: unknown = null
+  const antwort = await fetch('/api/overpass-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  })
 
-  for (const server of OVERPASS_SERVER) {
-    try {
-      const antwort = await fetch(server + '?data=' + encodeURIComponent(query), {
-        method: 'GET',
-      })
-      if (!antwort.ok) {
-        letzterFehler = new Error(`${server} antwortete mit Status ${antwort.status}`)
-        continue
-      }
-      return await antwort.json()
-    } catch (err) {
-      letzterFehler = err
-    }
+  const daten = await antwort.json()
+
+  if (!antwort.ok) {
+    throw new Error(
+      daten.error
+        ? `${daten.error}${daten.details ? ': ' + daten.details : ''}`
+        : 'Unbekannter Fehler bei der Streckenabfrage'
+    )
   }
 
-  throw new Error(
-    'Alle OpenStreetMap-Server nicht erreichbar: ' +
-      (letzterFehler instanceof Error ? letzterFehler.message : String(letzterFehler))
-  )
+  return daten
 }
 
 function entfernungKm(a: Punkt, b: Punkt): number {
