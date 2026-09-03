@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from './lib/supabase'
+import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
 const VERFALL_TAGE = 180 // Streckenkenntnis gilt 6 Monate ohne Befahrung als verfallen
 
@@ -36,6 +37,7 @@ function streckennummerSortWert(nummer: string | null): number {
 }
 
 export default function Streckenkunde() {
+  const { mitarbeiter: eigenerMitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
   const kartenRef = useRef<HTMLDivElement>(null)
   const kartenInstanz = useRef<L.Map | null>(null)
   const linienRef = useRef<Map<string, L.Polyline>>(new Map())
@@ -69,21 +71,9 @@ export default function Streckenkunde() {
   }, [])
 
   useEffect(() => {
-    async function eigenenMitarbeiterVorauswaehlen() {
-      const { data: sessionData } = await supabase.auth.getSession()
-      const userId = sessionData.session?.user.id
-      if (!userId) return
-
-      const { data } = await supabase
-        .from('mitarbeiter')
-        .select('id')
-        .eq('auth_user_id', userId)
-        .maybeSingle()
-
-      if (data) setAusgewaehlterMitarbeiter(data.id)
-    }
-    eigenenMitarbeiterVorauswaehlen()
-  }, [])
+    if (!eigenerMitarbeiter) return
+    setAusgewaehlterMitarbeiter(eigenerMitarbeiter.id)
+  }, [eigenerMitarbeiter])
 
   useEffect(() => {
     if (!kartenRef.current || kartenInstanz.current) return
@@ -233,24 +223,31 @@ export default function Streckenkunde() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <select
-          value={ausgewaehlterMitarbeiter}
-          onChange={(e) => setAusgewaehlterMitarbeiter(e.target.value)}
-          style={eingabeStil}
-        >
-          <option value="">Lokführer auswählen...</option>
-          {mitarbeiterListe.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
+        {istAdmin ? (
+          <select
+            value={ausgewaehlterMitarbeiter}
+            onChange={(e) => setAusgewaehlterMitarbeiter(e.target.value)}
+            style={eingabeStil}
+          >
+            <option value="">Lokführer auswählen...</option>
+            {mitarbeiterListe.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div style={{ fontWeight: 600, fontSize: 15 }}>
+            {eigenerMitarbeiter?.name ?? 'Meine Strecken'}
+          </div>
+        )}
 
-        {!zeichenModus ? (
+        {istAdmin && !zeichenModus && (
           <button onClick={zeichnenStarten} style={sekundaerKnopfStil}>
             + Neue Strecke einzeichnen
           </button>
-        ) : (
+        )}
+        {istAdmin && zeichenModus && (
           <span style={{ fontSize: 13, color: 'var(--warning)', fontWeight: 500 }}>
             Zeichenmodus aktiv - klicke Punkte entlang der Strecke auf der Karte
           </span>
@@ -338,7 +335,7 @@ export default function Streckenkunde() {
         <span><span style={legendenPunktStil('#94a3b8')} /> Nicht befahren</span>
       </div>
 
-      {mitarbeiterListe.length > 0 && (
+      {istAdmin && mitarbeiterListe.length > 0 && (
         <div style={{ marginTop: 28 }}>
           <h4 style={{ marginBottom: 4 }}>Streckenkenntnis-Matrix</h4>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>

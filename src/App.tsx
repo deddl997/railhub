@@ -5,26 +5,29 @@ import Kopfzeile from './Kopfzeile'
 import Anmeldung from './Anmeldung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
+import MeineEigenenAntraege from './MeineEigenenAntraege'
 import Kalender from './Kalender'
 import MitarbeiterVerwaltung from './MitarbeiterVerwaltung'
 import Streckenkunde from './Streckenkunde'
+import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
-const TABS = [
-  { id: 'antrag', label: 'Antrag einreichen' },
-  { id: 'kalender', label: 'Personalplanung' },
-  { id: 'antraege', label: 'Anträge' },
-  { id: 'mitarbeiter', label: 'Mitarbeiter' },
-  { id: 'streckenkunde', label: 'Streckenkunde' },
+const ALLE_TABS = [
+  { id: 'antrag', label: 'Antrag einreichen', nurAdmin: false },
+  { id: 'kalender', label: 'Personalplanung', nurAdmin: true },
+  { id: 'antraege', label: 'Anträge', nurAdmin: false },
+  { id: 'mitarbeiter', label: 'Mitarbeiter', nurAdmin: true },
+  { id: 'streckenkunde', label: 'Streckenkunde', nurAdmin: false },
 ] as const
 
-type TabId = (typeof TABS)[number]['id']
+type TabId = (typeof ALLE_TABS)[number]['id']
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [ladeSession, setLadeSession] = useState(true)
-  const [angemeldeterName, setAngemeldeterName] = useState<string | null>(null)
   const [neuLadenAuslöser, setNeuLadenAuslöser] = useState(0)
   const [aktiverTab, setAktiverTab] = useState<TabId>('antrag')
+
+  const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -38,19 +41,6 @@ function App() {
 
     return () => listener.subscription.unsubscribe()
   }, [])
-
-  useEffect(() => {
-    if (!session) {
-      setAngemeldeterName(null)
-      return
-    }
-    supabase
-      .from('mitarbeiter')
-      .select('name')
-      .eq('auth_user_id', session.user.id)
-      .maybeSingle()
-      .then(({ data }) => setAngemeldeterName(data?.name ?? null))
-  }, [session])
 
   function neuLaden() {
     setNeuLadenAuslöser((n) => n + 1)
@@ -70,9 +60,17 @@ function App() {
     return <Anmeldung />
   }
 
+  if (ladeRolle) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>Lädt...</div>
+    )
+  }
+
+  const sichtbareTabs = ALLE_TABS.filter((tab) => !tab.nurAdmin || istAdmin)
+
   return (
     <div>
-      <Kopfzeile angemeldeterName={angemeldeterName} onAbmelden={abmelden} />
+      <Kopfzeile angemeldeterName={mitarbeiter?.name ?? null} onAbmelden={abmelden} />
 
       <nav
         style={{
@@ -84,7 +82,7 @@ function App() {
           overflowX: 'auto',
         }}
       >
-        {TABS.map((tab) => (
+        {sichtbareTabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setAktiverTab(tab.id)}
@@ -121,7 +119,7 @@ function App() {
           </div>
         )}
 
-        {aktiverTab === 'kalender' && (
+        {aktiverTab === 'kalender' && istAdmin && (
           <div
             style={{
               background: 'var(--card)',
@@ -137,12 +135,18 @@ function App() {
 
         {aktiverTab === 'antraege' && (
           <div>
-            <h3 style={{ marginTop: 0, marginBottom: 12 }}>Eingereichte Anträge</h3>
-            <MeineAntraege neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>
+              {istAdmin ? 'Eingereichte Anträge' : 'Meine Anträge'}
+            </h3>
+            {istAdmin ? (
+              <MeineAntraege neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />
+            ) : (
+              <MeineEigenenAntraege />
+            )}
           </div>
         )}
 
-        {aktiverTab === 'mitarbeiter' && (
+        {aktiverTab === 'mitarbeiter' && istAdmin && (
           <div
             style={{
               background: 'var(--card)',
@@ -165,7 +169,7 @@ function App() {
               padding: 24,
             }}
           >
-            <h3 style={{ marginTop: 0 }}>Streckenkunde-Überwachung</h3>
+            <h3 style={{ marginTop: 0 }}>Streckenkunde{istAdmin ? '-Überwachung' : ''}</h3>
             <Streckenkunde />
           </div>
         )}

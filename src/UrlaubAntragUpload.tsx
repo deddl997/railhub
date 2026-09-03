@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { namensSignatur } from './namensAbgleich'
+import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
 interface GemeinsameFelder {
   jahr: number | null
@@ -124,6 +125,7 @@ const beschriftungStil: React.CSSProperties = {
 type Modus = 'auswahl' | 'upload' | 'manuell'
 
 export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: () => void }) {
+  const { mitarbeiter: eigenerMitarbeiter, istAdmin } = useAktuellerMitarbeiter()
   const [modus, setModus] = useState<Modus>('auswahl')
   const [ladeVorgang, setLadeVorgang] = useState(false)
   const [fehler, setFehler] = useState<string | null>(null)
@@ -191,7 +193,10 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     setFehler(null)
     setHochgeladeneDatei(null)
     setAusgelesenerAntrag({
-      gemeinsam: { ...LEERE_GEMEINSAME_FELDER },
+      gemeinsam: {
+        ...LEERE_GEMEINSAME_FELDER,
+        name: istAdmin ? null : eigenerMitarbeiter?.name ?? null,
+      },
       zeitraeume: [{ erster_tag: null, letzter_tag: null, anzahl_tage: null }],
     })
   }
@@ -226,6 +231,9 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     try {
       if (istExcel) {
         const ergebnis = await excelAuswerten(datei)
+        if (!istAdmin && eigenerMitarbeiter) {
+          ergebnis.gemeinsam.name = eigenerMitarbeiter.name
+        }
         setAusgelesenerAntrag(ergebnis)
       } else {
         const base64 = await dateiZuBase64(datei)
@@ -239,6 +247,9 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
 
+        if (!istAdmin && eigenerMitarbeiter) {
+          data.gemeinsam.name = eigenerMitarbeiter.name
+        }
         setAusgelesenerAntrag(data)
       }
     } catch (err) {
@@ -318,10 +329,22 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
         if (uploadFehler) throw new Error('Upload: ' + uploadFehler.message)
       }
 
+      let mitarbeiterId: string | null = eigenerMitarbeiter?.id ?? null
+      if (istAdmin) {
+        const name = ausgelesenerAntrag.gemeinsam.name
+        if (name) {
+          const { data: alleMitarbeiter } = await supabase.from('mitarbeiter').select('id, name')
+          const signatur = namensSignatur(name)
+          const treffer = (alleMitarbeiter ?? []).find((m) => namensSignatur(m.name) === signatur)
+          mitarbeiterId = treffer?.id ?? null
+        }
+      }
+
       const gruppeId = crypto.randomUUID()
 
       const zeilen = gueltigeZeitraeume.map((z) => ({
         ...ausgelesenerAntrag.gemeinsam,
+        mitarbeiter_id: mitarbeiterId,
         erster_tag: z.erster_tag,
         letzter_tag: z.letzter_tag,
         anzahl_tage: z.anzahl_tage,
@@ -410,10 +433,11 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
           <label style={beschriftungStil}>
             Name
             <input
-              style={eingabeStil}
+              style={{ ...eingabeStil, background: istAdmin ? undefined : '#f1f5f9' }}
               value={ausgelesenerAntrag.gemeinsam.name ?? ''}
               onChange={(e) => gemeinsamesFeldAendern('name', e.target.value)}
               placeholder="Vor- und Nachname"
+              readOnly={!istAdmin}
             />
           </label>
 
