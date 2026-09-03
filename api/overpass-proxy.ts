@@ -26,6 +26,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           Accept: 'application/json',
+          'User-Agent': 'RBL-Urlaubsplan-Streckenkunde/1.0 (internes Firmentool, Rail Bavaria Logistik)',
         },
         body: 'data=' + encodeURIComponent(query),
       })
