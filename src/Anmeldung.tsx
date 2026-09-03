@@ -54,7 +54,11 @@ export default function Anmeldung() {
     }
 
     setLadeVorgang(true)
-    const { data, error } = await supabase.auth.signUp({ email, password: passwort })
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: passwort,
+      options: { data: { mitarbeiter_id: ausgewaehlteMitarbeiterId } },
+    })
 
     if (error) {
       setFehler('Registrierung fehlgeschlagen: ' + error.message)
@@ -62,7 +66,7 @@ export default function Anmeldung() {
       return
     }
 
-    if (data.user) {
+    if (data.session && data.user) {
       await supabase
         .from('mitarbeiter')
         .update({ auth_user_id: data.user.id })
