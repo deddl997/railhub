@@ -54,6 +54,10 @@ export default function Streckenkunde() {
   const [streckenSuche, setStreckenSuche] = useState('')
   const [routingLaeuft, setRoutingLaeuft] = useState<string | null>(null)
   const [routingFehler, setRoutingFehler] = useState<string | null>(null)
+  const [batchLaeuft, setBatchLaeuft] = useState(false)
+  const [batchAbbrechenAngefragt, setBatchAbbrechen] = useState(false)
+  const [batchFortschritt, setBatchFortschritt] = useState<{ erledigt: number; gesamt: number } | null>(null)
+  const batchAbbrechenRef = useRef(false)
   const [neuePunkte, setNeuePunkte] = useState<[number, number][]>([])
   const [neuerStreckenName, setNeuerStreckenName] = useState('')
   const neuePunkteLinieRef = useRef<L.Polyline | null>(null)
@@ -253,6 +257,62 @@ export default function Streckenkunde() {
     }
   }
 
+  function warten(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  async function alleFehlendenLaden() {
+    const zuLaden = strecken.filter(
+      (s) => !s.punkte && s.anker_punkte && s.anker_punkte.length >= 2
+    )
+    if (zuLaden.length === 0) return
+
+    setBatchLaeuft(true)
+    setBatchAbbrechen(false)
+    batchAbbrechenRef.current = false
+    setBatchFortschritt({ erledigt: 0, gesamt: zuLaden.length })
+    setRoutingFehler(null)
+
+    let erfolgreich = 0
+    let fehlgeschlagen = 0
+
+    for (let i = 0; i < zuLaden.length; i++) {
+      if (batchAbbrechenRef.current) break
+
+      const strecke = zuLaden[i]
+      setRoutingLaeuft(strecke.id)
+      try {
+        const route = await routeUeberMehrereStationen(strecke.anker_punkte!)
+        if (route) {
+          await supabase.from('strecken').update({ punkte: route }).eq('id', strecke.id)
+          erfolgreich++
+        } else {
+          fehlgeschlagen++
+        }
+      } catch {
+        fehlgeschlagen++
+      }
+      setBatchFortschritt({ erledigt: i + 1, gesamt: zuLaden.length })
+
+      // Bewusste Pause zwischen Anfragen, um die kostenlose Overpass-API fair zu nutzen
+      if (i < zuLaden.length - 1 && !batchAbbrechenRef.current) {
+        await warten(3000)
+      }
+    }
+
+    setRoutingLaeuft(null)
+    setBatchLaeuft(false)
+    setRoutingFehler(
+      `Batch-Import fertig: ${erfolgreich} erfolgreich, ${fehlgeschlagen} ohne Route gefunden.`
+    )
+    await laden()
+  }
+
+  function batchAbbrechen() {
+    batchAbbrechenRef.current = true
+    setBatchAbbrechen(true)
+  }
+
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
 
@@ -419,6 +479,39 @@ export default function Streckenkunde() {
             funktioniert auch für Strecken, die noch nicht auf der Karte eingezeichnet sind.
           </p>
 
+          {istAdmin && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginBottom: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              {!batchLaeuft ? (
+                <button
+                  onClick={alleFehlendenLaden}
+                  style={{ ...sekundaerKnopfStil, borderColor: 'var(--navy)' }}
+                >
+                  🛰️ Alle fehlenden Strecken von OSM laden (mit Pause)
+                </button>
+              ) : (
+                <>
+                  <span style={{ fontSize: 13, color: 'var(--navy)' }}>
+                    Lädt {batchFortschritt?.erledigt} von {batchFortschritt?.gesamt}...
+                  </span>
+                  <button onClick={batchAbbrechen} disabled={batchAbbrechenAngefragt} style={aktualisierenKnopfStil}>
+                    {batchAbbrechenAngefragt ? 'Wird gestoppt...' : 'Abbrechen'}
+                  </button>
+                </>
+              )}
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                (ca. 3 Sek. Pause pro Strecke, um die kostenlose OSM-API fair zu nutzen)
+              </span>
+            </div>
+          )}
+
           <div style={{ position: 'relative', marginBottom: 12 }}>
             <span
               style={{
@@ -541,7 +634,7 @@ export default function Streckenkunde() {
                     {istAdmin && !s.punkte && s.anker_punkte && s.anker_punkte.length >= 2 && (
                       <button
                         onClick={() => osmRouteLaden(s)}
-                        disabled={routingLaeuft === s.id}
+                        disabled={routingLaeuft === s.id || batchLaeuft}
                         style={{ ...aktualisierenKnopfStil, borderColor: 'var(--navy)', color: 'var(--navy)', marginRight: 8 }}
                       >
                         {routingLaeuft === s.id ? 'Lädt...' : '🛰️ OSM-Route laden'}
