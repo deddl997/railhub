@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import { supabase } from './lib/supabase'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 import { routeUeberMehrereStationen } from './streckenRouting'
+import { ladeAlleBenanntenBahnPunkte, findeBenannteOrteInText } from './streckenNamensSuche'
 
 const VERFALL_TAGE = 180 // Streckenkenntnis gilt 6 Monate ohne Befahrung als verfallen
 
@@ -79,6 +80,7 @@ export default function Streckenkunde() {
   const [batchAbbrechenAngefragt, setBatchAbbrechen] = useState(false)
   const [batchFortschritt, setBatchFortschritt] = useState<{ erledigt: number; gesamt: number } | null>(null)
   const batchAbbrechenRef = useRef(false)
+  const [erweiterteSucheLaeuft, setErweiterteSucheLaeuft] = useState(false)
   const [neuePunkte, setNeuePunkte] = useState<[number, number][]>([])
   const [neuerStreckenName, setNeuerStreckenName] = useState('')
   const neuePunkteLinieRef = useRef<L.Polyline | null>(null)
@@ -392,6 +394,43 @@ export default function Streckenkunde() {
     setBatchAbbrechen(true)
   }
 
+  async function erweiterteSucheStarten() {
+    const ohneAnker = strecken.filter((s) => !s.anker_punkte || s.anker_punkte.length < 2)
+    if (ohneAnker.length === 0) return
+
+    setErweiterteSucheLaeuft(true)
+    setRoutingFehler(null)
+    try {
+      const benanntePunkte = await ladeAlleBenanntenBahnPunkte()
+      let gefunden = 0
+
+      for (const strecke of ohneAnker) {
+        const treffer = findeBenannteOrteInText(strecke.name, benanntePunkte)
+        if (treffer.length < 2) continue
+
+        gefunden++
+        await supabase
+          .from('strecken')
+          .update({
+            anker_punkte: treffer.map((t) => [t.lat, t.lon]),
+            anker_stationen: treffer.map((t) => ({ name: t.name, lat: t.lat, lon: t.lon })),
+          })
+          .eq('id', strecke.id)
+      }
+
+      setRoutingFehler(
+        `Erweiterte Suche fertig: ${gefunden} von ${ohneAnker.length} bisher unbekannten Strecken haben jetzt Ankerpunkte gefunden. Nutze jetzt "Alle fehlenden Strecken von OSM laden", um daraus Linien zu berechnen.`
+      )
+      await laden()
+    } catch (err) {
+      setRoutingFehler(
+        'Fehler bei der erweiterten Suche: ' + (err instanceof Error ? err.message : String(err))
+      )
+    } finally {
+      setErweiterteSucheLaeuft(false)
+    }
+  }
+
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
 
@@ -605,6 +644,15 @@ export default function Streckenkunde() {
                   </button>
                 </>
               )}
+              <button
+                onClick={erweiterteSucheStarten}
+                disabled={erweiterteSucheLaeuft || batchLaeuft}
+                style={{ ...sekundaerKnopfStil, borderColor: 'var(--navy)' }}
+              >
+                {erweiterteSucheLaeuft
+                  ? 'Suche läuft (kann 30-60 Sek. dauern)...'
+                  : '🔍 Erweiterte OSM-Suche für Strecken ohne Bahnhöfe (Beta)'}
+              </button>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 (ca. 3 Sek. Pause pro Strecke, um die kostenlose OSM-API fair zu nutzen)
               </span>
