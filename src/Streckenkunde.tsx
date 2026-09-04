@@ -7,12 +7,19 @@ import { routeUeberMehrereStationen } from './streckenRouting'
 
 const VERFALL_TAGE = 180 // Streckenkenntnis gilt 6 Monate ohne Befahrung als verfallen
 
+interface AnkerStation {
+  name: string
+  lat: number
+  lon: number
+}
+
 interface Strecke {
   id: string
   name: string
   streckennummer: string | null
   punkte: [number, number][] | null
   anker_punkte: [number, number][] | null
+  anker_stationen: AnkerStation[] | null
 }
 
 interface Mitarbeiter {
@@ -80,7 +87,7 @@ export default function Streckenkunde() {
   async function laden() {
     const [{ data: streckenData }, { data: mitarbeiterData }, { data: kenntnisData }] =
       await Promise.all([
-        supabase.from('strecken').select('id, name, streckennummer, punkte, anker_punkte').order('name'),
+        supabase.from('strecken').select('id, name, streckennummer, punkte, anker_punkte, anker_stationen').order('name'),
         supabase.from('mitarbeiter').select('id, name, kategorie').eq('kategorie', 'Lokführer').order('name'),
         supabase.from('streckenkenntnis').select('mitarbeiter_id, strecke_id, zuletzt_befahren, bis_index'),
       ])
@@ -209,7 +216,33 @@ export default function Streckenkunde() {
         )
       }
 
-      linienRef.current.set(strecke.id, L.layerGroup([rand, ...linien]))
+      const marker: L.CircleMarker[] = []
+      if (ausgewaehlterMitarbeiter && strecke.anker_stationen && strecke.punkte) {
+        for (const station of strecke.anker_stationen) {
+          const index = naechsterPunktIndex(strecke.punkte, L.latLng(station.lat, station.lon))
+          const bereitsBekanntBis =
+            kenntnisEintrag?.bis_index != null ? kenntnisEintrag.bis_index >= index : bekannt
+
+          const punkt = L.circleMarker(strecke.punkte[index], {
+            radius: istAusgewaehlt ? 6 : 5,
+            color: '#ffffff',
+            weight: 2,
+            fillColor: bereitsBekanntBis ? farbeBekannt : '#94a3b8',
+            fillOpacity: 1,
+          })
+            .bindTooltip(station.name, { permanent: false, direction: 'top' })
+            .on('click', (e) => {
+              L.DomEvent.stopPropagation(e)
+              setAusgewaehlteStrecke(strecke.id)
+              setStreckenSuche(strecke.streckennummer ?? strecke.name)
+              befahrungEintragen(ausgewaehlterMitarbeiter, strecke.id, index)
+            })
+            .addTo(karte)
+          marker.push(punkt)
+        }
+      }
+
+      linienRef.current.set(strecke.id, L.layerGroup([rand, ...linien, ...marker]))
     })
   }, [strecken, kenntnisse, ausgewaehlterMitarbeiter, ausgewaehlteStrecke])
 
@@ -502,10 +535,11 @@ export default function Streckenkunde() {
         </div>
       )}
 
-      {ausgewaehlterMitarbeiter && ausgewaehlteStrecke && (
+      {ausgewaehlterMitarbeiter && (
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-          Tipp: Klicke gezielt auf einen bestimmten Punkt der Linie, um nur "kundig bis dort" statt der
-          ganzen Strecke einzutragen.
+          Tipp: Auf den Strecken erscheinen kleine Punkte an den bekannten Bahnhöfen (Name beim
+          Draufhalten sichtbar). Klick auf einen Bahnhofs-Punkt trägt "kundig bis genau hierher" ein –
+          präziser als ein Klick irgendwo auf die Linie.
         </p>
       )}
 
