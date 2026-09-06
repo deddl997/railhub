@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
+import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
 interface Jahresdaten {
   id: string
@@ -16,6 +17,7 @@ interface Zeile {
   name: string
   kategorie: string | null
   lokTypen: string[]
+  rolle: string
   jahresdatenId: string | null
   urlaubsanspruch: number | null
   resturlaub: number | null
@@ -24,6 +26,7 @@ interface Zeile {
 }
 
 export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
+  const { mitarbeiter: eigenerMitarbeiter } = useAktuellerMitarbeiter()
   const [jahr, setJahr] = useState(() => new Date().getFullYear())
   const [verfuegbareJahre, setVerfuegbareJahre] = useState<number[]>([])
   const [zeilen, setZeilen] = useState<Zeile[]>([])
@@ -38,7 +41,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     const [{ data: mitarbeiterListe }, { data: alleJahresdaten }, { data: genehmigteAntraege }] =
       await Promise.all([
-        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen, rolle').order('name'),
         supabase.from('mitarbeiter_jahresdaten').select('jahr'),
         supabase
           .from('urlaubsantraege')
@@ -72,6 +75,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         name: m.name,
         kategorie: m.kategorie,
         lokTypen: m.lok_typen ?? [],
+        rolle: m.rolle ?? 'mitarbeiter',
         jahresdatenId: jd?.id ?? null,
         urlaubsanspruch: jd ? jd.urlaubsanspruch : 30,
         resturlaub: jd ? jd.resturlaub : 30,
@@ -167,6 +171,21 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
       vorher.map((z) => (z.mitarbeiterId === zeile.mitarbeiterId ? { ...z, lokTypen: neueTypen } : z))
     )
     await supabase.from('mitarbeiter').update({ lok_typen: neueTypen }).eq('id', zeile.mitarbeiterId)
+  }
+
+  async function rolleAendern(zeile: Zeile, neueRolle: string) {
+    const istEigenerAccount = zeile.mitarbeiterId === eigenerMitarbeiter?.id
+    if (istEigenerAccount && neueRolle !== 'admin') {
+      const bestaetigt = window.confirm(
+        'Du entziehst dir selbst die Admin-Rechte. Danach siehst du nur noch den eingeschränkten Mitarbeiter-Bereich und kannst diese Einstellung nicht mehr selbst rückgängig machen. Fortfahren?'
+      )
+      if (!bestaetigt) return
+    }
+
+    setZeilen((vorher) =>
+      vorher.map((z) => (z.mitarbeiterId === zeile.mitarbeiterId ? { ...z, rolle: neueRolle } : z))
+    )
+    await supabase.from('mitarbeiter').update({ rolle: neueRolle }).eq('id', zeile.mitarbeiterId)
   }
 
   async function mitarbeiterHinzufuegen() {
@@ -267,6 +286,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           <thead>
             <tr>
               <th style={kopfZelleStil}>Name</th>
+              <th style={kopfZelleStil}>Rolle</th>
               <th style={kopfZelleStil}>Qualifikation</th>
               <th style={kopfZelleStil}>Lok-Typen</th>
               <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
@@ -281,6 +301,21 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             {zeilen.map((zeile) => (
               <tr key={zeile.mitarbeiterId}>
                 <td style={zellStil}>{zeile.name}</td>
+                <td style={zellStil}>
+                  <select
+                    value={zeile.rolle}
+                    onChange={(e) => rolleAendern(zeile, e.target.value)}
+                    style={{
+                      ...eingabeStil,
+                      width: 110,
+                      fontWeight: zeile.rolle === 'admin' ? 600 : 400,
+                      color: zeile.rolle === 'admin' ? 'var(--navy)' : undefined,
+                    }}
+                  >
+                    <option value="mitarbeiter">Mitarbeiter</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </td>
                 <td style={zellStil}>
                   <select
                     value={zeile.kategorie ?? ''}
