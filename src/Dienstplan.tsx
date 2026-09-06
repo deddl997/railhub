@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
+import { KATEGORIEN } from './qualifikationen'
 
 interface Mitarbeiter {
   id: string
   name: string
+  kategorie: string | null
 }
 
 interface Schichtvorlage {
@@ -138,7 +140,7 @@ export default function Dienstplan() {
 
     const [{ data: mitarbeiterData }, { data: vorlagenData }, { data: eintraegeData }, { data: urlaubeData }] =
       await Promise.all([
-        supabase.from('mitarbeiter').select('id, name').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
         supabase
           .from('dienstplan_eintraege')
@@ -153,7 +155,15 @@ export default function Dienstplan() {
           .gte('letzter_tag', startIso),
       ])
 
-    setMitarbeiterListe(mitarbeiterData ?? [])
+    const sortierteMitarbeiter = [...(mitarbeiterData ?? [])].sort((a, b) => {
+      const rangA = a.kategorie ? KATEGORIEN.indexOf(a.kategorie) : 999
+      const rangB = b.kategorie ? KATEGORIEN.indexOf(b.kategorie) : 999
+      const bereinigtA = rangA === -1 ? 998 : rangA
+      const bereinigtB = rangB === -1 ? 998 : rangB
+      if (bereinigtA !== bereinigtB) return bereinigtA - bereinigtB
+      return a.name.localeCompare(b.name)
+    })
+    setMitarbeiterListe(sortierteMitarbeiter)
     setVorlagen(vorlagenData ?? [])
     setEintraege(eintraegeData ?? [])
     setUrlaube((urlaubeData ?? []).filter((u) => u.mitarbeiter_id))
@@ -329,8 +339,32 @@ export default function Dienstplan() {
             </tr>
           </thead>
           <tbody>
-            {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => (
-              <tr key={mitarbeiter.id} style={{ background: zeilenIndex % 2 === 0 ? '#ffffff' : '#fafbfc' }}>
+            {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => {
+              const vorherigeKategorie = zeilenIndex > 0 ? mitarbeiterListe[zeilenIndex - 1].kategorie : null
+              const neueGruppe = mitarbeiter.kategorie !== vorherigeKategorie
+              return (
+                <Fragment key={mitarbeiter.id}>
+                  {neueGruppe && (
+                    <tr key={`gruppe-${mitarbeiter.kategorie ?? 'ohne'}`}>
+                      <td
+                        colSpan={9}
+                        style={{
+                          background: '#eef2f7',
+                          color: 'var(--navy)',
+                          fontWeight: 700,
+                          fontSize: 11,
+                          padding: '6px 16px',
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.4,
+                          borderBottom: '1px solid var(--border)',
+                          borderTop: zeilenIndex > 0 ? '1px solid var(--border)' : undefined,
+                        }}
+                      >
+                        {mitarbeiter.kategorie ?? 'Ohne Qualifikation'}
+                      </td>
+                    </tr>
+                  )}
+                  <tr key={mitarbeiter.id} style={{ background: zeilenIndex % 2 === 0 ? '#ffffff' : '#fafbfc' }}>
                 <td style={{ ...zellBasisStil, padding: '8px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div
@@ -436,7 +470,9 @@ export default function Dienstplan() {
                   </div>
                 </td>
               </tr>
-            ))}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
