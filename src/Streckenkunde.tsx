@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import { supabase } from './lib/supabase'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 import { routeUeberMehrereStationen } from './streckenRouting'
+import { erstelleStreckenkenntnisPdf } from './streckenkenntnisPdf'
 import { ladeAlleBenanntenBahnPunkte, findeBenannteOrteInText, ladeStationenEntlangRoute } from './streckenNamensSuche'
 
 const VERFALL_TAGE = 180 // Streckenkenntnis gilt 6 Monate ohne Befahrung als verfallen
@@ -517,6 +518,35 @@ export default function Streckenkunde() {
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
 
+  function pdfNachweisErstellen() {
+    const mitarbeiter =
+      mitarbeiterListe.find((m) => m.id === ausgewaehlterMitarbeiter) ??
+      (eigenerMitarbeiter?.id === ausgewaehlterMitarbeiter ? eigenerMitarbeiter : null)
+    if (!mitarbeiter || kenntnisseDesMitarbeiters.length === 0) return
+
+    const eintraege = kenntnisseDesMitarbeiters
+      .map((k) => {
+        const strecke = strecken.find((s) => s.id === k.strecke_id)
+        if (!strecke) return null
+        const verfallen = tageSeit(k.zuletzt_befahren) > VERFALL_TAGE
+        const teilInfo =
+          k.bis_index != null && strecke.punkte && k.bis_index < strecke.punkte.length - 1
+            ? `(bis ca. ${Math.round(((k.bis_index + 1) / strecke.punkte.length) * 100)}%)`
+            : null
+        return {
+          streckennummer: strecke.streckennummer,
+          name: strecke.name,
+          zuletzt_befahren: k.zuletzt_befahren,
+          verfallen,
+          teilInfo,
+        }
+      })
+      .filter((e): e is NonNullable<typeof e> => e !== null)
+      .sort((a, b) => streckennummerSortWert(a.streckennummer) - streckennummerSortWert(b.streckennummer))
+
+    erstelleStreckenkenntnisPdf(mitarbeiter.name, eintraege)
+  }
+
   const streckenSortiert = [...strecken].sort(
     (a, b) => streckennummerSortWert(a.streckennummer) - streckennummerSortWert(b.streckennummer)
   )
@@ -783,9 +813,16 @@ export default function Streckenkunde() {
             <h4 style={{ margin: 0 }}>
               {istAdmin ? 'Strecken auswählen' : 'Meine Strecken auswählen'}
             </h4>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              {kenntnisseDesMitarbeiters.length} von {strecken.length} Strecken bekannt
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {kenntnisseDesMitarbeiters.length} von {strecken.length} Strecken bekannt
+              </span>
+              {kenntnisseDesMitarbeiters.length > 0 && (
+                <button onClick={pdfNachweisErstellen} style={sekundaerKnopfStil}>
+                  📄 PDF-Nachweis
+                </button>
+              )}
+            </div>
           </div>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0, marginBottom: 12 }}>
             Haken setzen bei jeder Strecke, die {istAdmin ? 'diese Person' : 'du'} fahren kann/kennt -
