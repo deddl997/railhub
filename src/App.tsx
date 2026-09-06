@@ -9,6 +9,8 @@ import MeineEigenenAntraege from './MeineEigenenAntraege'
 import Kalender from './Kalender'
 import MitarbeiterVerwaltung from './MitarbeiterVerwaltung'
 import Streckenkunde from './Streckenkunde'
+import Dienstplan from './Dienstplan'
+import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
 const ALLE_TABS = [
@@ -17,6 +19,8 @@ const ALLE_TABS = [
   { id: 'antraege', label: 'Anträge', nurAdmin: false },
   { id: 'mitarbeiter', label: 'Mitarbeiter', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', nurAdmin: false },
+  { id: 'dienstplan', label: 'Dienstplan', nurAdmin: true },
+  { id: 'schichtvorlagen', label: 'Schichtvorlagen', nurAdmin: true },
 ] as const
 
 type TabId = (typeof ALLE_TABS)[number]['id']
@@ -171,6 +175,34 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Streckenkunde{istAdmin ? '-Überwachung' : ''}</h3>
             <Streckenkunde />
+          </div>
+        )}
+
+        {aktiverTab === 'dienstplan' && istAdmin && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Dienstplan</h3>
+            <Dienstplan />
+          </div>
+        )}
+
+        {aktiverTab === 'schichtvorlagen' && istAdmin && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Schichtvorlagen</h3>
+            <SchichtvorlagenVerwaltung />
           </div>
         )}
       </main>
