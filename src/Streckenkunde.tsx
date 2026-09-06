@@ -534,43 +534,118 @@ export default function Streckenkunde() {
             border: '1px solid var(--border)',
             borderRadius: 8,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 8,
+            flexDirection: 'column',
+            gap: 10,
           }}
         >
-          <div>
-            <strong>{ausgewaehlteStreckeName}</strong>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 8,
+            }}
+          >
+            <div>
+              <strong>{ausgewaehlteStreckeName}</strong>
+              {ausgewaehlterMitarbeiter && (
+                <span style={{ marginLeft: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+                  {(() => {
+                    const eintrag = kenntnisseDesMitarbeiters.find((k) => k.strecke_id === ausgewaehlteStrecke)
+                    if (!eintrag) return 'Noch nicht befahren'
+                    const tage = tageSeit(eintrag.zuletzt_befahren)
+                    const ausgewaehlteStreckeDaten = strecken.find((s) => s.id === ausgewaehlteStrecke)
+                    const teilInfo =
+                      eintrag.bis_index != null &&
+                      ausgewaehlteStreckeDaten?.punkte &&
+                      eintrag.bis_index < ausgewaehlteStreckeDaten.punkte.length - 1
+                        ? ` - teilweise bekannt (bis ca. ${Math.round(
+                            ((eintrag.bis_index + 1) / ausgewaehlteStreckeDaten.punkte.length) * 100
+                          )}%)`
+                        : ''
+                    return (
+                      (tage > VERFALL_TAGE
+                        ? `Verfallen (zuletzt vor ${tage} Tagen)`
+                        : `Zuletzt vor ${tage} Tagen befahren`) + teilInfo
+                    )
+                  })()}
+                </span>
+              )}
+            </div>
             {ausgewaehlterMitarbeiter && (
-              <span style={{ marginLeft: 8, fontSize: 13, color: 'var(--text-muted)' }}>
-                {(() => {
-                  const eintrag = kenntnisseDesMitarbeiters.find((k) => k.strecke_id === ausgewaehlteStrecke)
-                  if (!eintrag) return 'Noch nicht befahren'
-                  const tage = tageSeit(eintrag.zuletzt_befahren)
-                  const ausgewaehlteStreckeDaten = strecken.find((s) => s.id === ausgewaehlteStrecke)
-                  const teilInfo =
-                    eintrag.bis_index != null &&
-                    ausgewaehlteStreckeDaten?.punkte &&
-                    eintrag.bis_index < ausgewaehlteStreckeDaten.punkte.length - 1
-                      ? ` - teilweise bekannt (bis ca. ${Math.round(
-                          ((eintrag.bis_index + 1) / ausgewaehlteStreckeDaten.punkte.length) * 100
-                        )}%)`
-                      : ''
-                  return (
-                    (tage > VERFALL_TAGE
-                      ? `Verfallen (zuletzt vor ${tage} Tagen)`
-                      : `Zuletzt vor ${tage} Tagen befahren`) + teilInfo
-                  )
-                })()}
-              </span>
+              <button onClick={() => befahrungEintragen()} style={primaerKnopfStil}>
+                Heute erneut bestätigen
+              </button>
             )}
           </div>
-          {ausgewaehlterMitarbeiter && (
-            <button onClick={() => befahrungEintragen()} style={primaerKnopfStil}>
-              Heute erneut bestätigen
-            </button>
-          )}
+
+          {ausgewaehlterMitarbeiter &&
+            (() => {
+              const ausgewaehlteStreckeDaten = strecken.find((s) => s.id === ausgewaehlteStrecke)
+              if (
+                !ausgewaehlteStreckeDaten?.anker_stationen ||
+                ausgewaehlteStreckeDaten.anker_stationen.length === 0 ||
+                !ausgewaehlteStreckeDaten.punkte
+              ) {
+                return null
+              }
+
+              const eintrag = kenntnisseDesMitarbeiters.find((k) => k.strecke_id === ausgewaehlteStrecke)
+              const punkte = ausgewaehlteStreckeDaten.punkte
+
+              // Fuer jede Station den Index auf der Linie ermitteln
+              const stationenMitIndex = ausgewaehlteStreckeDaten.anker_stationen.map((station) => ({
+                name: station.name,
+                index: naechsterPunktIndex(punkte, L.latLng(station.lat, station.lon)),
+              }))
+
+              // Aktuell ausgewaehlte Station: die naeheste an eintrag.bis_index (oder leer)
+              let ausgewaehlterWert = ''
+              if (eintrag?.bis_index != null) {
+                let besteDiff = Infinity
+                for (const s of stationenMitIndex) {
+                  const diff = Math.abs(s.index - eintrag.bis_index)
+                  if (diff < besteDiff) {
+                    besteDiff = diff
+                    ausgewaehlterWert = s.name
+                  }
+                }
+              } else if (eintrag) {
+                ausgewaehlterWert = 'ganze'
+              }
+
+              return (
+                <label style={{ ...beschriftungStil, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  Kundig bis Bahnhof
+                  <select
+                    value={ausgewaehlterWert}
+                    onChange={(e) => {
+                      if (!ausgewaehlterMitarbeiter) return
+                      if (e.target.value === '') {
+                        wissenEntfernen(ausgewaehlterMitarbeiter, ausgewaehlteStreckeDaten.id)
+                      } else if (e.target.value === 'ganze') {
+                        befahrungEintragen(ausgewaehlterMitarbeiter, ausgewaehlteStreckeDaten.id, null)
+                      } else {
+                        const treffer = stationenMitIndex.find((s) => s.name === e.target.value)
+                        if (treffer) {
+                          befahrungEintragen(ausgewaehlterMitarbeiter, ausgewaehlteStreckeDaten.id, treffer.index)
+                        }
+                      }
+                    }}
+                    style={{ ...eingabeStil, maxWidth: 320 }}
+                  >
+                    <option value="">– nicht befahren –</option>
+                    {stationenMitIndex.map((s) => (
+                      <option key={s.name} value={s.name}>
+                        bis {s.name}
+                      </option>
+                    ))}
+                    <option value="ganze">Ganze Strecke</option>
+                  </select>
+                </label>
+              )
+            })()}
         </div>
       )}
 
@@ -959,6 +1034,12 @@ const eingabeStil: React.CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 6,
   fontSize: 14,
+}
+
+const beschriftungStil: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 500,
+  color: 'var(--text-muted)',
 }
 
 const primaerKnopfStil: React.CSSProperties = {
