@@ -82,6 +82,10 @@ export default function Streckenkunde() {
   const batchAbbrechenRef = useRef(false)
   const [erweiterteSucheLaeuft, setErweiterteSucheLaeuft] = useState(false)
   const [bahnhoefeNachladenLaeuft, setBahnhoefeNachladenLaeuft] = useState<string | null>(null)
+  const [bahnhoefeBatchLaeuft, setBahnhoefeBatchLaeuft] = useState(false)
+  const [bahnhoefeBatchAbbrechenAngefragt, setBahnhoefeBatchAbbrechen] = useState(false)
+  const [bahnhoefeBatchFortschritt, setBahnhoefeBatchFortschritt] = useState<{ erledigt: number; gesamt: number } | null>(null)
+  const bahnhoefeBatchAbbrechenRef = useRef(false)
   const [neuePunkte, setNeuePunkte] = useState<[number, number][]>([])
   const [neuerStreckenName, setNeuerStreckenName] = useState('')
   const neuePunkteLinieRef = useRef<L.Polyline | null>(null)
@@ -458,6 +462,58 @@ export default function Streckenkunde() {
     }
   }
 
+  async function alleBahnhoefeNachladen() {
+    const zuBearbeiten = strecken.filter((s) => s.punkte && s.punkte.length >= 2)
+    if (zuBearbeiten.length === 0) return
+
+    setBahnhoefeBatchLaeuft(true)
+    setBahnhoefeBatchAbbrechen(false)
+    bahnhoefeBatchAbbrechenRef.current = false
+    setBahnhoefeBatchFortschritt({ erledigt: 0, gesamt: zuBearbeiten.length })
+    setRoutingFehler(null)
+
+    let gesamtNeueBahnhoefe = 0
+
+    for (let i = 0; i < zuBearbeiten.length; i++) {
+      if (bahnhoefeBatchAbbrechenRef.current) break
+
+      const strecke = zuBearbeiten[i]
+      setBahnhoefeNachladenLaeuft(strecke.id)
+      try {
+        const gefunden = await ladeStationenEntlangRoute(strecke.punkte!)
+        const bestehende = strecke.anker_stationen ?? []
+        const gesehen = new Set(bestehende.map((s) => s.name))
+        const neue = gefunden.filter((s) => !gesehen.has(s.name))
+        if (neue.length > 0) {
+          gesamtNeueBahnhoefe += neue.length
+          await supabase
+            .from('strecken')
+            .update({ anker_stationen: [...bestehende, ...neue] })
+            .eq('id', strecke.id)
+        }
+      } catch {
+        // Einzelne Fehler ignorieren, Batch laeuft weiter
+      }
+      setBahnhoefeBatchFortschritt({ erledigt: i + 1, gesamt: zuBearbeiten.length })
+
+      if (i < zuBearbeiten.length - 1 && !bahnhoefeBatchAbbrechenRef.current) {
+        await warten(3000)
+      }
+    }
+
+    setBahnhoefeNachladenLaeuft(null)
+    setBahnhoefeBatchLaeuft(false)
+    setRoutingFehler(
+      `Bahnhofs-Import fertig: ${gesamtNeueBahnhoefe} zusätzliche Bahnhöfe über alle Strecken hinweg gefunden.`
+    )
+    await laden()
+  }
+
+  function bahnhoefeBatchAbbrechen() {
+    bahnhoefeBatchAbbrechenRef.current = true
+    setBahnhoefeBatchAbbrechen(true)
+  }
+
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
 
@@ -772,6 +828,28 @@ export default function Streckenkunde() {
                   ? 'Suche läuft (kann 30-60 Sek. dauern)...'
                   : '🔍 Erweiterte OSM-Suche für Strecken ohne Bahnhöfe (Beta)'}
               </button>
+
+              {!bahnhoefeBatchLaeuft ? (
+                <button
+                  onClick={alleBahnhoefeNachladen}
+                  style={{ ...sekundaerKnopfStil, borderColor: 'var(--navy)' }}
+                >
+                  🔍 Bahnhöfe für alle eingezeichneten Strecken nachladen (mit Pause)
+                </button>
+              ) : (
+                <>
+                  <span style={{ fontSize: 13, color: 'var(--navy)' }}>
+                    Lädt {bahnhoefeBatchFortschritt?.erledigt} von {bahnhoefeBatchFortschritt?.gesamt}...
+                  </span>
+                  <button
+                    onClick={bahnhoefeBatchAbbrechen}
+                    disabled={bahnhoefeBatchAbbrechenAngefragt}
+                    style={aktualisierenKnopfStil}
+                  >
+                    {bahnhoefeBatchAbbrechenAngefragt ? 'Wird gestoppt...' : 'Abbrechen'}
+                  </button>
+                </>
+              )}
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 (ca. 3 Sek. Pause pro Strecke, um die kostenlose OSM-API fair zu nutzen)
               </span>
