@@ -482,154 +482,178 @@ export default function Dienstplan() {
 
       {ausgewaehlteZelle && (
         <div
+          onClick={() => setAusgewaehlteZelle(null)}
           style={{
-            marginTop: 16,
-            padding: 16,
-            background: '#f8fafc',
-            border: '1px solid var(--border)',
-            borderRadius: 10,
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <strong>
-              {mitarbeiterListe.find((m) => m.id === ausgewaehlteZelle.mitarbeiterId)?.name} –{' '}
-              {ausgewaehlteZelle.datum}
-            </strong>
-            <button onClick={() => setAusgewaehlteZelle(null)} style={sekundaerKnopfStil}>
-              Schließen
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-            <select
-              value={gewaehlteVorlage}
-              onChange={(e) => setGewaehlteVorlage(e.target.value)}
-              style={eingabeStil}
-            >
-              <option value="">Bestandsschicht wählen...</option>
-              {(() => {
-                const wochentagDerZelle = new Date(ausgewaehlteZelle.datum).getDay()
-                const passend = vorlagen.filter((v) =>
-                  (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
-                )
-                const unpassend = vorlagen.filter(
-                  (v) => !(v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
-                )
-                return (
-                  <>
-                    {passend.length > 0 && (
-                      <optgroup label="Für diesen Wochentag vorgesehen">
-                        {passend.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {unpassend.length > 0 && (
-                      <optgroup label="⚠ Normalerweise nicht an diesem Tag">
-                        {unpassend.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </>
-                )
-              })()}
-            </select>
-            <button onClick={vorlageZuweisen} disabled={!gewaehlteVorlage} style={primaerKnopfStil}>
-              Zuweisen
-            </button>
-
-            <button onClick={() => setSpotFormularOffen(!spotFormularOffen)} style={sekundaerKnopfStil}>
-              {spotFormularOffen ? 'Spotschicht abbrechen' : '+ Spotschicht anlegen'}
-            </button>
-
-            <button onClick={() => statusSetzen('ruhe')} style={sekundaerKnopfStil}>
-              Ruhe
-            </button>
-            <button onClick={() => statusSetzen('frei')} style={sekundaerKnopfStil}>
-              Frei
-            </button>
-            <button onClick={eintragLoeschen} style={loeschenKnopfStil}>
-              Eintrag leeren
-            </button>
-          </div>
-
-          {spotFormularOffen && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-                gap: 10,
-                padding: 12,
-                background: '#ffffff',
-                border: '1px solid var(--border)',
-                borderRadius: 6,
-              }}
-            >
-              <label style={beschriftungStil}>
-                Name
-                <input
-                  value={spotDaten.name}
-                  onChange={(e) => setSpotDaten({ ...spotDaten, name: e.target.value })}
-                  style={eingabeStil}
-                  placeholder="z.B. Kessel Dienstantritt NRH"
-                />
-              </label>
-              <label style={beschriftungStil}>
-                Beginn
-                <input
-                  type="time"
-                  value={spotDaten.beginn_zeit}
-                  onChange={(e) => setSpotDaten({ ...spotDaten, beginn_zeit: e.target.value })}
-                  style={eingabeStil}
-                />
-              </label>
-              <label style={beschriftungStil}>
-                Ende
-                <input
-                  type="time"
-                  value={spotDaten.ende_zeit}
-                  onChange={(e) => setSpotDaten({ ...spotDaten, ende_zeit: e.target.value })}
-                  style={eingabeStil}
-                />
-              </label>
-              <label style={beschriftungStil}>
-                Pause (Min.)
-                <input
-                  type="number"
-                  value={spotDaten.pause_minuten}
-                  onChange={(e) => setSpotDaten({ ...spotDaten, pause_minuten: Number(e.target.value) })}
-                  style={eingabeStil}
-                />
-              </label>
-              <label style={beschriftungStil}>
-                Dienstort
-                <input
-                  value={spotDaten.dienstort}
-                  onChange={(e) => setSpotDaten({ ...spotDaten, dienstort: e.target.value })}
-                  style={eingabeStil}
-                />
-              </label>
-              <label style={beschriftungStil}>
-                Farbe
-                <input
-                  type="color"
-                  value={spotDaten.farbe}
-                  onChange={(e) => setSpotDaten({ ...spotDaten, farbe: e.target.value })}
-                  style={{ ...eingabeStil, padding: 2, height: 36 }}
-                />
-              </label>
-              <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                <button onClick={spotschichtAnlegen} style={primaerKnopfStil}>
-                  Anlegen
-                </button>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: 12,
+              padding: 20,
+              width: 480,
+              maxWidth: '100%',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)' }}>
+                  {mitarbeiterListe.find((m) => m.id === ausgewaehlteZelle.mitarbeiterId)?.name}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{ausgewaehlteZelle.datum}</div>
               </div>
+              <button
+                onClick={() => setAusgewaehlteZelle(null)}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
+              >
+                ✕
+              </button>
             </div>
-          )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+              <select
+                value={gewaehlteVorlage}
+                onChange={(e) => setGewaehlteVorlage(e.target.value)}
+                style={{ ...eingabeStil, width: '100%' }}
+              >
+                <option value="">Bestandsschicht wählen...</option>
+                {(() => {
+                  const wochentagDerZelle = new Date(ausgewaehlteZelle.datum).getDay()
+                  const passend = vorlagen.filter((v) =>
+                    (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
+                  )
+                  const unpassend = vorlagen.filter(
+                    (v) => !(v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
+                  )
+                  return (
+                    <>
+                      {passend.length > 0 && (
+                        <optgroup label="Für diesen Wochentag vorgesehen">
+                          {passend.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {unpassend.length > 0 && (
+                        <optgroup label="⚠ Normalerweise nicht an diesem Tag">
+                          {unpassend.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
+                  )
+                })()}
+              </select>
+              <button onClick={vorlageZuweisen} disabled={!gewaehlteVorlage} style={{ ...primaerKnopfStil, width: '100%' }}>
+                Zuweisen
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <button onClick={() => setSpotFormularOffen(!spotFormularOffen)} style={sekundaerKnopfStil}>
+                {spotFormularOffen ? 'Spotschicht abbrechen' : '+ Spotschicht anlegen'}
+              </button>
+              <button onClick={() => statusSetzen('ruhe')} style={sekundaerKnopfStil}>
+                Ruhe
+              </button>
+              <button onClick={() => statusSetzen('frei')} style={sekundaerKnopfStil}>
+                Frei
+              </button>
+              <button onClick={eintragLoeschen} style={loeschenKnopfStil}>
+                Eintrag leeren
+              </button>
+            </div>
+
+            {spotFormularOffen && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                  gap: 10,
+                  padding: 12,
+                  background: '#f8fafc',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                }}
+              >
+                <label style={beschriftungStil}>
+                  Name
+                  <input
+                    value={spotDaten.name}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, name: e.target.value })}
+                    style={eingabeStil}
+                    placeholder="z.B. Kessel Dienstantritt NRH"
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Beginn
+                  <input
+                    type="time"
+                    value={spotDaten.beginn_zeit}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, beginn_zeit: e.target.value })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Ende
+                  <input
+                    type="time"
+                    value={spotDaten.ende_zeit}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, ende_zeit: e.target.value })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Pause (Min.)
+                  <input
+                    type="number"
+                    value={spotDaten.pause_minuten}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, pause_minuten: Number(e.target.value) })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Dienstort
+                  <input
+                    value={spotDaten.dienstort}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, dienstort: e.target.value })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Farbe
+                  <input
+                    type="color"
+                    value={spotDaten.farbe}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, farbe: e.target.value })}
+                    style={{ ...eingabeStil, padding: 2, height: 36 }}
+                  />
+                </label>
+                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <button onClick={spotschichtAnlegen} style={primaerKnopfStil}>
+                    Anlegen
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
