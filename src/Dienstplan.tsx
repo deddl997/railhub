@@ -20,6 +20,7 @@ interface Schichtvorlage {
   dienstort: string | null
   farbe: string
   aktiv: boolean
+  benoetigte_wochentage: number[] | null
 }
 
 interface DienstplanEintrag {
@@ -506,11 +507,37 @@ export default function Dienstplan() {
               style={eingabeStil}
             >
               <option value="">Bestandsschicht wählen...</option>
-              {vorlagen.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
+              {(() => {
+                const wochentagDerZelle = new Date(ausgewaehlteZelle.datum).getDay()
+                const passend = vorlagen.filter((v) =>
+                  (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
+                )
+                const unpassend = vorlagen.filter(
+                  (v) => !(v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
+                )
+                return (
+                  <>
+                    {passend.length > 0 && (
+                      <optgroup label="Für diesen Wochentag vorgesehen">
+                        {passend.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {unpassend.length > 0 && (
+                      <optgroup label="⚠ Normalerweise nicht an diesem Tag">
+                        {unpassend.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </>
+                )
+              })()}
             </select>
             <button onClick={vorlageZuweisen} disabled={!gewaehlteVorlage} style={primaerKnopfStil}>
               Zuweisen

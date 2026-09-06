@@ -12,7 +12,12 @@ interface Schichtvorlage {
   dienstort: string | null
   farbe: string
   aktiv: boolean
+  benoetigte_wochentage: number[]
 }
+
+// JS-Wochentag-Zahlen (0=Sonntag ... 6=Samstag) in Mo-So Anzeigereihenfolge
+export const WOCHENTAGE_JS_REIHENFOLGE = [1, 2, 3, 4, 5, 6, 0]
+export const WOCHENTAGE_LABEL = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
 
 const LEERE_VORLAGE = {
   name: '',
@@ -23,6 +28,7 @@ const LEERE_VORLAGE = {
   pause_bis: '12:45',
   dienstort: '',
   farbe: '#94a3b8',
+  benoetigte_wochentage: [0, 1, 2, 3, 4, 5, 6],
 }
 
 export default function SchichtvorlagenVerwaltung() {
@@ -166,6 +172,13 @@ export default function SchichtvorlagenVerwaltung() {
               style={{ ...eingabeStil, padding: 2, height: 36 }}
             />
           </label>
+          <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+            Benötigt an
+            <WochentagCheckboxen
+              ausgewaehlt={neueVorlage.benoetigte_wochentage}
+              onAendern={(tage) => setNeueVorlage({ ...neueVorlage, benoetigte_wochentage: tage })}
+            />
+          </label>
           <div style={{ display: 'flex', alignItems: 'flex-end' }}>
             <button onClick={vorlageSpeichern} style={primaerKnopfStil}>
               Speichern
@@ -184,6 +197,7 @@ export default function SchichtvorlagenVerwaltung() {
               <th style={kopfZelleStil}>Ende</th>
               <th style={kopfZelleStil}>Pause</th>
               <th style={kopfZelleStil}>Dienstort</th>
+              <th style={kopfZelleStil}>Benötigt an</th>
               <th style={kopfZelleStil}>Aktiv</th>
               <th style={kopfZelleStil}></th>
             </tr>
@@ -238,6 +252,13 @@ export default function SchichtvorlagenVerwaltung() {
                   />
                 </td>
                 <td style={zellStil}>
+                  <WochentagCheckboxen
+                    ausgewaehlt={vorlage.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]}
+                    onAendern={(tage) => vorlageAktualisieren(vorlage, { benoetigte_wochentage: tage })}
+                    kompakt
+                  />
+                </td>
+                <td style={zellStil}>
                   <input
                     type="checkbox"
                     checked={vorlage.aktiv}
@@ -254,6 +275,51 @@ export default function SchichtvorlagenVerwaltung() {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function WochentagCheckboxen({
+  ausgewaehlt,
+  onAendern,
+  kompakt,
+}: {
+  ausgewaehlt: number[]
+  onAendern: (tage: number[]) => void
+  kompakt?: boolean
+}) {
+  function umschalten(tag: number) {
+    const neu = ausgewaehlt.includes(tag) ? ausgewaehlt.filter((t) => t !== tag) : [...ausgewaehlt, tag]
+    onAendern(neu)
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: kompakt ? 3 : 6 }}>
+      {WOCHENTAGE_JS_REIHENFOLGE.map((tag, i) => {
+        const aktiv = ausgewaehlt.includes(tag)
+        return (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => umschalten(tag)}
+            title={WOCHENTAGE_LABEL[i]}
+            style={{
+              width: kompakt ? 22 : 30,
+              height: kompakt ? 22 : 30,
+              borderRadius: 5,
+              border: '1px solid ' + (aktiv ? 'var(--navy)' : 'var(--border)'),
+              background: aktiv ? 'var(--navy)' : '#ffffff',
+              color: aktiv ? '#ffffff' : 'var(--text-muted)',
+              fontSize: kompakt ? 9 : 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          >
+            {WOCHENTAGE_LABEL[i]}
+          </button>
+        )
+      })}
     </div>
   )
 }
