@@ -92,3 +92,75 @@ export function findeBenannteOrteInText(
   treffer.sort((a, b) => a.pos - b.pos)
   return treffer.map((t) => t.punkt)
 }
+
+function entfernungKm(a: { lat: number; lon: number }, b: [number, number]): number {
+  const erdradius = 6371
+  const dLat = ((b[0] - a.lat) * Math.PI) / 180
+  const dLon = ((b[1] - a.lon) * Math.PI) / 180
+  const lat1 = (a.lat * Math.PI) / 180
+  const lat2 = (b[0] * Math.PI) / 180
+  const h = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2)
+  return 2 * erdradius * Math.asin(Math.sqrt(h))
+}
+
+/**
+ * Laedt alle Bahnhoefe/Haltepunkte aus OpenStreetMap, die tatsaechlich in der
+ * Naehe der uebergebenen Streckenlinie liegen (max. 1,5 km Abstand), sortiert
+ * in der Reihenfolge, in der sie entlang der Strecke liegen. Deutlich
+ * vollstaendiger als die reine Namens-Erkennung aus dem Streckentitel, da
+ * auch kleine Zwischenhalte erfasst werden, die im offiziellen Streckennamen
+ * nicht auftauchen.
+ */
+export async function ladeStationenEntlangRoute(
+  punkte: [number, number][]
+): Promise<BenannterPunkt[]> {
+  const lats = punkte.map((p) => p[0])
+  const lons = punkte.map((p) => p[1])
+  const padding = 0.03
+  const sued = Math.min(...lats) - padding
+  const west = Math.min(...lons) - padding
+  const nord = Math.max(...lats) + padding
+  const ost = Math.max(...lons) + padding
+
+  const query = `
+    [out:json][timeout:30];
+    node["railway"~"^(station|halt)$"]["name"](${sued},${west},${nord},${ost});
+    out body;
+  `
+  const daten = await overpassAbfrage(query)
+
+  const kandidaten: BenannterPunkt[] = []
+  for (const el of daten.elements) {
+    if (el.type === 'node' && el.tags?.name && el.lat && el.lon) {
+      kandidaten.push({ name: el.tags.name.trim(), lat: el.lat, lon: el.lon })
+    }
+  }
+
+  const mitIndex: { punkt: BenannterPunkt; index: number; distanz: number }[] = []
+  for (const kandidat of kandidaten) {
+    let besterIndex = 0
+    let besteDistanz = Infinity
+    punkte.forEach((p, i) => {
+      const d = entfernungKm(kandidat, p)
+      if (d < besteDistanz) {
+        besteDistanz = d
+        besterIndex = i
+      }
+    })
+    if (besteDistanz <= 1.5) {
+      mitIndex.push({ punkt: kandidat, index: besterIndex, distanz: besteDistanz })
+    }
+  }
+
+  mitIndex.sort((a, b) => a.index - b.index)
+
+  const gesehen = new Set<string>()
+  const ergebnis: BenannterPunkt[] = []
+  for (const eintrag of mitIndex) {
+    if (gesehen.has(eintrag.punkt.name)) continue
+    gesehen.add(eintrag.punkt.name)
+    ergebnis.push(eintrag.punkt)
+  }
+
+  return ergebnis
+}

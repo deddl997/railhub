@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import { supabase } from './lib/supabase'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 import { routeUeberMehrereStationen } from './streckenRouting'
-import { ladeAlleBenanntenBahnPunkte, findeBenannteOrteInText } from './streckenNamensSuche'
+import { ladeAlleBenanntenBahnPunkte, findeBenannteOrteInText, ladeStationenEntlangRoute } from './streckenNamensSuche'
 
 const VERFALL_TAGE = 180 // Streckenkenntnis gilt 6 Monate ohne Befahrung als verfallen
 
@@ -81,6 +81,7 @@ export default function Streckenkunde() {
   const [batchFortschritt, setBatchFortschritt] = useState<{ erledigt: number; gesamt: number } | null>(null)
   const batchAbbrechenRef = useRef(false)
   const [erweiterteSucheLaeuft, setErweiterteSucheLaeuft] = useState(false)
+  const [bahnhoefeNachladenLaeuft, setBahnhoefeNachladenLaeuft] = useState<string | null>(null)
   const [neuePunkte, setNeuePunkte] = useState<[number, number][]>([])
   const [neuerStreckenName, setNeuerStreckenName] = useState('')
   const neuePunkteLinieRef = useRef<L.Polyline | null>(null)
@@ -431,6 +432,32 @@ export default function Streckenkunde() {
     }
   }
 
+  async function bahnhoefeEntlangStreckeNachladen(strecke: Strecke) {
+    if (!strecke.punkte || strecke.punkte.length < 2) return
+    setBahnhoefeNachladenLaeuft(strecke.id)
+    setRoutingFehler(null)
+    try {
+      const gefunden = await ladeStationenEntlangRoute(strecke.punkte)
+      const bestehende = strecke.anker_stationen ?? []
+      const gesehen = new Set(bestehende.map((s) => s.name))
+      const kombiniert = [...bestehende, ...gefunden.filter((s) => !gesehen.has(s.name))]
+
+      await supabase.from('strecken').update({ anker_stationen: kombiniert }).eq('id', strecke.id)
+      setRoutingFehler(
+        gefunden.length > 0
+          ? `${gefunden.length} Bahnhöfe entlang der Strecke gefunden, ${kombiniert.length} insgesamt jetzt auswählbar.`
+          : 'Keine zusätzlichen Bahnhöfe entlang dieser Strecke gefunden.'
+      )
+      await laden()
+    } catch (err) {
+      setRoutingFehler(
+        'Fehler beim Nachladen der Bahnhöfe: ' + (err instanceof Error ? err.message : String(err))
+      )
+    } finally {
+      setBahnhoefeNachladenLaeuft(null)
+    }
+  }
+
   const kenntnisseDesMitarbeiters = kenntnisse.filter((k) => k.mitarbeiter_id === ausgewaehlterMitarbeiter)
   const ausgewaehlteStreckeName = strecken.find((s) => s.id === ausgewaehlteStrecke)?.name
 
@@ -579,6 +606,23 @@ export default function Streckenkunde() {
               </button>
             )}
           </div>
+
+          {istAdmin &&
+            (() => {
+              const daten = strecken.find((s) => s.id === ausgewaehlteStrecke)
+              if (!daten?.punkte || daten.punkte.length < 2) return null
+              return (
+                <button
+                  onClick={() => bahnhoefeEntlangStreckeNachladen(daten)}
+                  disabled={bahnhoefeNachladenLaeuft === daten.id}
+                  style={{ ...sekundaerKnopfStil, alignSelf: 'flex-start' }}
+                >
+                  {bahnhoefeNachladenLaeuft === daten.id
+                    ? 'Lädt...'
+                    : '🔍 Bahnhöfe entlang der Strecke nachladen (Beta)'}
+                </button>
+              )
+            })()}
 
           {ausgewaehlterMitarbeiter &&
             (() => {
