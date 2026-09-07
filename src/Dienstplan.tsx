@@ -116,7 +116,7 @@ export default function Dienstplan() {
   const [ladeVorgang, setLadeVorgang] = useState(true)
 
   const [ausgewaehlteZelle, setAusgewaehlteZelle] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
-  const [gezogeneVorlage, setGezogeneVorlage] = useState<string | null>(null)
+  const [gezogeneVorlage, setGezogeneVorlage] = useState<{ vorlageId: string; tagDatum: string } | null>(null)
   const [gezogenerEintrag, setGezogenerEintrag] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
   const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
@@ -344,6 +344,15 @@ export default function Dienstplan() {
     return minutenAlsText(summe)
   }
 
+  function offeneVorlagenFuerTag(datumIso: string, wochentag: number): Schichtvorlage[] {
+    return vorlagen.filter((v) => {
+      const benoetigt = (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentag)
+      if (!benoetigt) return false
+      const bereitsVergeben = eintraege.some((e) => e.schichtvorlage_id === v.id && e.datum === datumIso)
+      return !bereitsVergeben
+    })
+  }
+
   if (ladeVorgang) {
     return <p style={{ color: 'var(--text-muted)' }}>Lade Dienstplan...</p>
   }
@@ -496,13 +505,14 @@ export default function Dienstplan() {
                   }
 
                   const zielSchluessel = `${mitarbeiter.id}-${datumIso}`
+                  const falscherTagBeimZiehen = !!gezogeneVorlage && gezogeneVorlage.tagDatum !== datumIso
 
                   return (
                     <td
                       key={datumIso}
                       onClick={() => !urlaub && zelleOeffnen(mitarbeiter.id, datumIso)}
                       onDragOver={(e) => {
-                        if (urlaub) return
+                        if (urlaub || falscherTagBeimZiehen) return
                         e.preventDefault()
                         setHoverZiel(zielSchluessel)
                       }}
@@ -511,8 +521,8 @@ export default function Dienstplan() {
                         e.preventDefault()
                         setHoverZiel(null)
                         if (urlaub) return
-                        if (gezogeneVorlage) {
-                          schichtDirektZuweisen(gezogeneVorlage, mitarbeiter.id, datumIso)
+                        if (gezogeneVorlage && gezogeneVorlage.tagDatum === datumIso) {
+                          schichtDirektZuweisen(gezogeneVorlage.vorlageId, mitarbeiter.id, datumIso)
                           setGezogeneVorlage(null)
                         } else if (gezogenerEintrag) {
                           eintragVerschieben(gezogenerEintrag, mitarbeiter.id, datumIso)
@@ -521,6 +531,7 @@ export default function Dienstplan() {
                       }}
                       style={{
                         ...zellBasisStil,
+                        opacity: falscherTagBeimZiehen ? 0.5 : 1,
                         background:
                           hoverZiel === zielSchluessel
                             ? '#e0f2fe'
@@ -585,7 +596,7 @@ export default function Dienstplan() {
 
         <div
           style={{
-            width: 190,
+            width: 210,
             flexShrink: 0,
             background: '#f8fafc',
             border: '1px solid var(--border)',
@@ -593,37 +604,75 @@ export default function Dienstplan() {
             padding: 12,
             position: 'sticky',
             top: 12,
+            maxHeight: '80vh',
+            overflowY: 'auto',
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8, color: 'var(--navy)' }}>
-            Schichten (ziehen zum Zuweisen)
+          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: 'var(--navy)' }}>
+            Noch offene Schichten
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {vorlagen.map((vorlage) => (
-              <div
-                key={vorlage.id}
-                draggable
-                onDragStart={() => setGezogeneVorlage(vorlage.id)}
-                onDragEnd={() => setGezogeneVorlage(null)}
-                style={{
-                  background: vorlage.farbe,
-                  color: '#ffffff',
-                  borderRadius: 8,
-                  padding: '6px 8px',
-                  cursor: 'grab',
-                  fontSize: 11,
-                  fontWeight: 600,
-                }}
-              >
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {vorlage.name}
+          <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
+            Pro Tag, was noch nicht vergeben ist. Auf die passende Spalte ziehen.
+          </p>
+
+          {tage.map((tag) => {
+            const datumIso = datumZuISO(tag)
+            const offene = offeneVorlagenFuerTag(datumIso, tag.getDay())
+            return (
+              <div key={datumIso} style={{ marginBottom: 14 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: istHeute(tag) ? 'var(--navy)' : '#475569',
+                    borderBottom: '1px solid var(--border)',
+                    paddingBottom: 3,
+                    marginBottom: 6,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>
+                    {WOCHENTAGE_KURZ[(tag.getDay() + 6) % 7]} {datumKurz(tag)}
+                  </span>
+                  <span style={{ color: offene.length > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                    {offene.length === 0 ? '✓' : offene.length}
+                  </span>
                 </div>
-                <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
-                  {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
-                </div>
+
+                {offene.length === 0 ? (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Alles besetzt</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {offene.map((vorlage) => (
+                      <div
+                        key={vorlage.id}
+                        draggable
+                        onDragStart={() => setGezogeneVorlage({ vorlageId: vorlage.id, tagDatum: datumIso })}
+                        onDragEnd={() => setGezogeneVorlage(null)}
+                        style={{
+                          background: vorlage.farbe,
+                          color: '#ffffff',
+                          borderRadius: 8,
+                          padding: '5px 7px',
+                          cursor: 'grab',
+                          fontSize: 10,
+                          fontWeight: 600,
+                        }}
+                      >
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {vorlage.name}
+                        </div>
+                        <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
+                          {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+            )
+          })}
         </div>
       </div>
 
