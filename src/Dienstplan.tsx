@@ -116,6 +116,9 @@ export default function Dienstplan() {
   const [ladeVorgang, setLadeVorgang] = useState(true)
 
   const [ausgewaehlteZelle, setAusgewaehlteZelle] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
+  const [gezogeneVorlage, setGezogeneVorlage] = useState<string | null>(null)
+  const [gezogenerEintrag, setGezogenerEintrag] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
+  const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
   const [spotFormularOffen, setSpotFormularOffen] = useState(false)
   const [spotDaten, setSpotDaten] = useState({
@@ -190,6 +193,67 @@ export default function Dienstplan() {
     setAusgewaehlteZelle({ mitarbeiterId, datum: datumIso })
     setGewaehlteVorlage('')
     setSpotFormularOffen(false)
+  }
+
+  async function schichtDirektZuweisen(vorlageId: string, mitarbeiterId: string, datumIso: string) {
+    const bestehend = eintragFuer(mitarbeiterId, datumIso)
+    if (bestehend) {
+      const bestaetigt = window.confirm(
+        'Für diesen Tag ist bereits ein Eintrag vorhanden. Überschreiben?'
+      )
+      if (!bestaetigt) return
+    }
+    await supabase.from('dienstplan_eintraege').upsert(
+      {
+        mitarbeiter_id: mitarbeiterId,
+        datum: datumIso,
+        schichtvorlage_id: vorlageId,
+        ist_spotschicht: false,
+        status: null,
+      },
+      { onConflict: 'mitarbeiter_id,datum' }
+    )
+    await laden()
+  }
+
+  async function eintragVerschieben(
+    quelle: { mitarbeiterId: string; datum: string },
+    zielMitarbeiterId: string,
+    zielDatumIso: string
+  ) {
+    if (quelle.mitarbeiterId === zielMitarbeiterId && quelle.datum === zielDatumIso) return
+    const quellEintrag = eintragFuer(quelle.mitarbeiterId, quelle.datum)
+    if (!quellEintrag) return
+
+    const zielBestehend = eintragFuer(zielMitarbeiterId, zielDatumIso)
+    if (zielBestehend) {
+      const bestaetigt = window.confirm('Der Zieltag hat bereits einen Eintrag. Überschreiben?')
+      if (!bestaetigt) return
+    }
+
+    await supabase
+      .from('dienstplan_eintraege')
+      .delete()
+      .eq('mitarbeiter_id', quelle.mitarbeiterId)
+      .eq('datum', quelle.datum)
+
+    await supabase.from('dienstplan_eintraege').upsert(
+      {
+        mitarbeiter_id: zielMitarbeiterId,
+        datum: zielDatumIso,
+        schichtvorlage_id: quellEintrag.schichtvorlage_id,
+        ist_spotschicht: quellEintrag.ist_spotschicht,
+        spot_name: quellEintrag.spot_name,
+        spot_beginn_zeit: quellEintrag.spot_beginn_zeit,
+        spot_ende_zeit: quellEintrag.spot_ende_zeit,
+        spot_pause_minuten: quellEintrag.spot_pause_minuten,
+        spot_dienstort: quellEintrag.spot_dienstort,
+        spot_farbe: quellEintrag.spot_farbe,
+        status: quellEintrag.status,
+      },
+      { onConflict: 'mitarbeiter_id,datum' }
+    )
+    await laden()
   }
 
   async function vorlageZuweisen() {
@@ -304,6 +368,8 @@ export default function Dienstplan() {
         </button>
       </div>
 
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
       <div
         style={{
           border: '1px solid var(--border)',
@@ -429,23 +495,61 @@ export default function Dienstplan() {
                     }
                   }
 
+                  const zielSchluessel = `${mitarbeiter.id}-${datumIso}`
+
                   return (
                     <td
                       key={datumIso}
                       onClick={() => !urlaub && zelleOeffnen(mitarbeiter.id, datumIso)}
+                      onDragOver={(e) => {
+                        if (urlaub) return
+                        e.preventDefault()
+                        setHoverZiel(zielSchluessel)
+                      }}
+                      onDragLeave={() => setHoverZiel((z) => (z === zielSchluessel ? null : z))}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setHoverZiel(null)
+                        if (urlaub) return
+                        if (gezogeneVorlage) {
+                          schichtDirektZuweisen(gezogeneVorlage, mitarbeiter.id, datumIso)
+                          setGezogeneVorlage(null)
+                        } else if (gezogenerEintrag) {
+                          eintragVerschieben(gezogenerEintrag, mitarbeiter.id, datumIso)
+                          setGezogenerEintrag(null)
+                        }
+                      }}
                       style={{
                         ...zellBasisStil,
-                        background: spalteBetont
-                          ? istHeute(tag)
-                            ? '#f3f7fd'
-                            : '#fafbfc'
-                          : undefined,
+                        background:
+                          hoverZiel === zielSchluessel
+                            ? '#e0f2fe'
+                            : spalteBetont
+                            ? istHeute(tag)
+                              ? '#f3f7fd'
+                              : '#fafbfc'
+                            : undefined,
                         cursor: urlaub ? 'default' : 'pointer',
                         boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
                         padding: 5,
                       }}
                     >
-                      {karte ?? (
+                      {karte && eintrag && !urlaub && !eintrag.status ? (
+                        <div
+                          draggable
+                          onDragStart={(e) => {
+                            e.stopPropagation()
+                            setGezogenerEintrag({ mitarbeiterId: mitarbeiter.id, datum: datumIso })
+                          }}
+                          onDragEnd={() => setGezogenerEintrag(null)}
+                          style={{ cursor: 'grab' }}
+                        >
+                          {karte}
+                        </div>
+                      ) : (
+                        karte
+                      )}
+                      {!karte && (
                         <div
                           className="dienstplan-leerzelle"
                           style={{
@@ -476,6 +580,51 @@ export default function Dienstplan() {
             })}
           </tbody>
         </table>
+      </div>
+        </div>
+
+        <div
+          style={{
+            width: 190,
+            flexShrink: 0,
+            background: '#f8fafc',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            padding: 12,
+            position: 'sticky',
+            top: 12,
+          }}
+        >
+          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8, color: 'var(--navy)' }}>
+            Schichten (ziehen zum Zuweisen)
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {vorlagen.map((vorlage) => (
+              <div
+                key={vorlage.id}
+                draggable
+                onDragStart={() => setGezogeneVorlage(vorlage.id)}
+                onDragEnd={() => setGezogeneVorlage(null)}
+                style={{
+                  background: vorlage.farbe,
+                  color: '#ffffff',
+                  borderRadius: 8,
+                  padding: '6px 8px',
+                  cursor: 'grab',
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {vorlage.name}
+                </div>
+                <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
+                  {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <style>{`.dienstplan-leerzelle:hover { border-color: var(--navy) !important; color: var(--navy) !important; }`}</style>
