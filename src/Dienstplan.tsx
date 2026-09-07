@@ -322,6 +322,15 @@ export default function Dienstplan() {
     await laden()
   }
 
+  async function eintragLoeschenExtern(ziel: { mitarbeiterId: string; datum: string }) {
+    await supabase
+      .from('dienstplan_eintraege')
+      .delete()
+      .eq('mitarbeiter_id', ziel.mitarbeiterId)
+      .eq('datum', ziel.datum)
+    await laden()
+  }
+
   function wochenArbeitszeit(mitarbeiterId: string): string {
     let summe = 0
     for (const tag of tage) {
@@ -377,8 +386,6 @@ export default function Dienstplan() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
       <div
         style={{
           border: '1px solid var(--border)',
@@ -415,6 +422,84 @@ export default function Dienstplan() {
             </tr>
           </thead>
           <tbody>
+            <tr>
+              <td
+                style={{
+                  ...zellBasisStil,
+                  padding: '6px 16px',
+                  background: '#fff7ed',
+                  fontWeight: 700,
+                  fontSize: 11,
+                  color: '#9a3412',
+                }}
+              >
+                Offene Schichten
+              </td>
+              {tage.map((tag) => {
+                const datumIso = datumZuISO(tag)
+                const offene = offeneVorlagenFuerTag(datumIso, tag.getDay())
+                const zielSchluessel = `offen-${datumIso}`
+                return (
+                  <td
+                    key={datumIso}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setHoverZiel(zielSchluessel)
+                    }}
+                    onDragLeave={() => setHoverZiel((z) => (z === zielSchluessel ? null : z))}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setHoverZiel(null)
+                      // Zurueck in den Offen-Pool: bereits zugewiesene Schicht wieder freigeben
+                      if (gezogenerEintrag) {
+                        eintragLoeschenExtern(gezogenerEintrag)
+                        setGezogenerEintrag(null)
+                      }
+                    }}
+                    style={{
+                      ...zellBasisStil,
+                      background: hoverZiel === zielSchluessel ? '#ffedd5' : '#fff7ed',
+                      padding: 5,
+                    }}
+                  >
+                    {offene.length === 0 ? (
+                      <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--success)' }}>
+                        ✓ besetzt
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {offene.map((vorlage) => (
+                          <div
+                            key={vorlage.id}
+                            draggable
+                            onDragStart={() => setGezogeneVorlage({ vorlageId: vorlage.id, tagDatum: datumIso })}
+                            onDragEnd={() => setGezogeneVorlage(null)}
+                            title="Nach unten auf die Person ziehen"
+                            style={{
+                              background: vorlage.farbe,
+                              color: '#ffffff',
+                              borderRadius: 6,
+                              padding: '4px 6px',
+                              cursor: 'grab',
+                              fontSize: 10,
+                              fontWeight: 600,
+                            }}
+                          >
+                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {vorlage.name}
+                            </div>
+                            <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
+                              {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                )
+              })}
+              <td style={{ ...zellBasisStil, background: '#fff7ed' }} />
+            </tr>
             {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => {
               const vorherigeKategorie = zeilenIndex > 0 ? mitarbeiterListe[zeilenIndex - 1].kategorie : null
               const neueGruppe = mitarbeiter.kategorie !== vorherigeKategorie
@@ -591,89 +676,6 @@ export default function Dienstplan() {
             })}
           </tbody>
         </table>
-      </div>
-        </div>
-
-        <div
-          style={{
-            width: 210,
-            flexShrink: 0,
-            background: '#f8fafc',
-            border: '1px solid var(--border)',
-            borderRadius: 10,
-            padding: 12,
-            position: 'sticky',
-            top: 12,
-            maxHeight: '80vh',
-            overflowY: 'auto',
-          }}
-        >
-          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: 'var(--navy)' }}>
-            Noch offene Schichten
-          </div>
-          <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 0, marginBottom: 10 }}>
-            Pro Tag, was noch nicht vergeben ist. Auf die passende Spalte ziehen.
-          </p>
-
-          {tage.map((tag) => {
-            const datumIso = datumZuISO(tag)
-            const offene = offeneVorlagenFuerTag(datumIso, tag.getDay())
-            return (
-              <div key={datumIso} style={{ marginBottom: 14 }}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: istHeute(tag) ? 'var(--navy)' : '#475569',
-                    borderBottom: '1px solid var(--border)',
-                    paddingBottom: 3,
-                    marginBottom: 6,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <span>
-                    {WOCHENTAGE_KURZ[(tag.getDay() + 6) % 7]} {datumKurz(tag)}
-                  </span>
-                  <span style={{ color: offene.length > 0 ? 'var(--danger)' : 'var(--success)' }}>
-                    {offene.length === 0 ? '✓' : offene.length}
-                  </span>
-                </div>
-
-                {offene.length === 0 ? (
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Alles besetzt</div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {offene.map((vorlage) => (
-                      <div
-                        key={vorlage.id}
-                        draggable
-                        onDragStart={() => setGezogeneVorlage({ vorlageId: vorlage.id, tagDatum: datumIso })}
-                        onDragEnd={() => setGezogeneVorlage(null)}
-                        style={{
-                          background: vorlage.farbe,
-                          color: '#ffffff',
-                          borderRadius: 8,
-                          padding: '5px 7px',
-                          cursor: 'grab',
-                          fontSize: 10,
-                          fontWeight: 600,
-                        }}
-                      >
-                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {vorlage.name}
-                        </div>
-                        <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
-                          {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
       </div>
 
       <style>{`.dienstplan-leerzelle:hover { border-color: var(--navy) !important; color: var(--navy) !important; }`}</style>
