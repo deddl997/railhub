@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
+import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { erstelleUrlaubsantragPdf } from './pdfErstellung'
 
 interface Antrag {
   id: string
+  mitarbeiter_id: string | null
   name: string | null
   vorgesetzter: string | null
   funktion_bereich: string | null
@@ -92,18 +94,24 @@ export default function MeineAntraege({
 }) {
   const [antraege, setAntraege] = useState<Antrag[]>([])
   const [ladeVorgang, setLadeVorgang] = useState(true)
+  const [fehler, setFehler] = useState<string | null>(null)
 
   const [pdfDialogSchluessel, setPdfDialogSchluessel] = useState<string | null>(null)
   const [pdfBearbeitetVon, setPdfBearbeitetVon] = useState('')
   const [pdfDatum, setPdfDatum] = useState('')
   const [pdfAblehnungBegruendung, setPdfAblehnungBegruendung] = useState('')
 
+  const [zeitraumDialogSchluessel, setZeitraumDialogSchluessel] = useState<string | null>(null)
+  const [neuerZeitraumVon, setNeuerZeitraumVon] = useState('')
+  const [neuerZeitraumBis, setNeuerZeitraumBis] = useState('')
+  const [zeitraumWirdGespeichert, setZeitraumWirdGespeichert] = useState(false)
+
   async function laden() {
     setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
       .select(
-        'id, name, vorgesetzter, funktion_bereich, urlaubsart, urlaubsart_begruendung, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, datum_antragsteller, bearbeitet_von, datum_bearbeiter, ablehnung_begruendung, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
+        'id, mitarbeiter_id, name, vorgesetzter, funktion_bereich, urlaubsart, urlaubsart_begruendung, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, datum_antragsteller, bearbeitet_von, datum_bearbeiter, ablehnung_begruendung, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
       )
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
@@ -272,6 +280,97 @@ export default function MeineAntraege({
     await laden()
   }
 
+  function zeitraumDialogOeffnen(gruppe: Gruppe) {
+    setZeitraumDialogSchluessel(gruppe.schluessel)
+    setNeuerZeitraumVon('')
+    setNeuerZeitraumBis('')
+    setFehler(null)
+  }
+
+  const neuerZeitraumTage = berechneBrauchbareTage(
+    neuerZeitraumVon || null,
+    neuerZeitraumBis || null
+  )
+
+  async function zeitraumHinzufuegen(gruppe: Gruppe) {
+    if (!neuerZeitraumVon || !neuerZeitraumBis) {
+      setFehler('Bitte Von- und Bis-Datum angeben.')
+      return
+    }
+    if (neuerZeitraumBis < neuerZeitraumVon) {
+      setFehler('Das Bis-Datum liegt vor dem Von-Datum.')
+      return
+    }
+
+    setZeitraumWirdGespeichert(true)
+    setFehler(null)
+
+    try {
+      const erste = gruppe.zeilen[0]
+      const brauchbareTage = berechneBrauchbareTage(neuerZeitraumVon, neuerZeitraumBis) ?? 0
+
+      const { data: neueZeile, error: einfuegenFehler } = await supabase
+        .from('urlaubsantraege')
+        .insert({
+          mitarbeiter_id: erste.mitarbeiter_id,
+          name: erste.name,
+          vorgesetzter: erste.vorgesetzter,
+          funktion_bereich: erste.funktion_bereich,
+          urlaubsart: erste.urlaubsart,
+          urlaubsart_begruendung: erste.urlaubsart_begruendung,
+          jahr: erste.jahr,
+          urlaubsanspruch: erste.urlaubsanspruch,
+          verplant: erste.verplant,
+          rest: erste.rest,
+          resturlaub_vorjahr: erste.resturlaub_vorjahr,
+          datum_antragsteller: erste.datum_antragsteller,
+          bearbeitet_von: erste.bearbeitet_von,
+          datum_bearbeiter: erste.datum_bearbeiter,
+          ablehnung_begruendung: erste.ablehnung_begruendung,
+          erster_tag: neuerZeitraumVon,
+          letzter_tag: neuerZeitraumBis,
+          anzahl_tage: null,
+          brauchbare_tage: brauchbareTage,
+          status: gruppe.status,
+          dokument_url: null,
+          gruppe_id: gruppe.schluessel,
+          abzug_vorjahr: 0,
+          abzug_aktuell: 0,
+        })
+        .select('id')
+        .single()
+
+      if (einfuegenFehler) throw new Error('Speichern: ' + einfuegenFehler.message)
+
+      if (gruppe.status === 'genehmigt' && gruppe.name && brauchbareTage > 0) {
+        const jahr = jahrDerGruppe(gruppe)
+        const jahresdaten = await holeOderErstelleJahresdaten(gruppe.name, jahr)
+
+        if (jahresdaten) {
+          await supabase
+            .from('mitarbeiter_jahresdaten')
+            .update({ resturlaub: (jahresdaten.resturlaub ?? 0) - brauchbareTage })
+            .eq('id', jahresdaten.id)
+
+          await supabase
+            .from('urlaubsantraege')
+            .update({ abzug_aktuell: brauchbareTage })
+            .eq('id', neueZeile.id)
+        }
+      }
+
+      setZeitraumDialogSchluessel(null)
+      setNeuerZeitraumVon('')
+      setNeuerZeitraumBis('')
+      await laden()
+      onGeaendert()
+    } catch (err) {
+      setFehler(err instanceof Error ? err.message : 'Fehler beim Hinzufügen')
+    } finally {
+      setZeitraumWirdGespeichert(false)
+    }
+  }
+
   if (ladeVorgang) {
     return <p style={{ color: 'var(--text-muted)' }}>Lade Anträge...</p>
   }
@@ -345,14 +444,12 @@ export default function MeineAntraege({
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                         {gruppe.zeilen.map((z) => (
                           <div key={z.id}>
-                            {z.erster_tag} – {z.letzter_tag} ({z.brauchbare_tage ?? z.anzahl_tage} Arbeitstage)
+                            {z.erster_tag} – {z.letzter_tag} ({z.brauchbare_tage ?? z.anzahl_tage ?? '–'} Arbeitstage)
                           </div>
                         ))}
-                        {gruppe.zeilen.length > 1 && (
-                          <div style={{ fontWeight: 500, marginTop: 2 }}>
-                            Gesamt: {gesamtTage(gruppe)} Arbeitstage
-                          </div>
-                        )}
+                        <div style={{ fontWeight: 500, marginTop: 2 }}>
+                          Gesamt: {gesamtTage(gruppe)} Arbeitstage
+                        </div>
                       </div>
                     </div>
                     <button
@@ -373,7 +470,7 @@ export default function MeineAntraege({
                   </div>
 
                   {spalte.status === 'offen' && (
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                       <button
                         onClick={() => statusAendern(gruppe, 'genehmigt')}
                         style={aktionsKnopfStil('var(--success)')}
@@ -385,6 +482,12 @@ export default function MeineAntraege({
                         style={aktionsKnopfStil('var(--danger)')}
                       >
                         Ablehnen
+                      </button>
+                      <button
+                        onClick={() => zeitraumDialogOeffnen(gruppe)}
+                        style={aktionsKnopfStil('var(--navy)')}
+                      >
+                        + Zeitraum
                       </button>
                     </div>
                   )}
@@ -403,6 +506,83 @@ export default function MeineAntraege({
                       >
                         📄 PDF erstellen
                       </button>
+                      <button
+                        onClick={() => zeitraumDialogOeffnen(gruppe)}
+                        style={aktionsKnopfStil('var(--navy)')}
+                      >
+                        + Zeitraum
+                      </button>
+                    </div>
+                  )}
+
+                  {zeitraumDialogSchluessel === gruppe.schluessel && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 10,
+                        background: '#f8fafc',
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <label style={{ ...beschriftungStil, flex: 1 }}>
+                          Von
+                          <input
+                            type="date"
+                            value={neuerZeitraumVon}
+                            onChange={(e) => setNeuerZeitraumVon(e.target.value)}
+                            style={eingabeStil}
+                          />
+                        </label>
+                        <label style={{ ...beschriftungStil, flex: 1 }}>
+                          Bis
+                          <input
+                            type="date"
+                            value={neuerZeitraumBis}
+                            onChange={(e) => setNeuerZeitraumBis(e.target.value)}
+                            style={eingabeStil}
+                          />
+                        </label>
+                      </div>
+                      {neuerZeitraumVon && neuerZeitraumBis && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                          Berechnete Arbeitstage: <strong>{neuerZeitraumTage ?? '–'}</strong>
+                          {spalte.status === 'genehmigt' && (
+                            <> – wird sofort vom Resturlaub abgezogen</>
+                          )}
+                        </div>
+                      )}
+                      {fehler && <div style={{ color: 'var(--danger)', fontSize: 12 }}>{fehler}</div>}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => zeitraumHinzufuegen(gruppe)}
+                          disabled={zeitraumWirdGespeichert}
+                          style={{
+                            background: 'var(--navy)',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: 6,
+                            padding: '6px 12px',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Hinzufügen
+                        </button>
+                        <button
+                          onClick={() => {
+                            setZeitraumDialogSchluessel(null)
+                            setFehler(null)
+                          }}
+                          style={aktionsKnopfStil('var(--text-muted)')}
+                        >
+                          Abbrechen
+                        </button>
+                      </div>
                     </div>
                   )}
 
