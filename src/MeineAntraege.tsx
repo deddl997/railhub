@@ -6,17 +6,19 @@ import { erstelleUrlaubsantragPdf } from './pdfErstellung'
 interface Antrag {
   id: string
   name: string | null
-  kategorie: string | null
+  vorgesetzter: string | null
+  funktion_bereich: string | null
+  urlaubsart: string | null
+  urlaubsart_begruendung: string | null
   jahr: number | null
   urlaubsanspruch: number | null
   verplant: number | null
   rest: number | null
   resturlaub_vorjahr: number | null
-  ort_antragsteller: string | null
   datum_antragsteller: string | null
   bearbeitet_von: string | null
-  ort_bearbeiter: string | null
   datum_bearbeiter: string | null
+  ablehnung_begruendung: string | null
   erster_tag: string | null
   letzter_tag: string | null
   anzahl_tage: number | null
@@ -93,15 +95,15 @@ export default function MeineAntraege({
 
   const [pdfDialogSchluessel, setPdfDialogSchluessel] = useState<string | null>(null)
   const [pdfBearbeitetVon, setPdfBearbeitetVon] = useState('')
-  const [pdfOrt, setPdfOrt] = useState('')
   const [pdfDatum, setPdfDatum] = useState('')
+  const [pdfAblehnungBegruendung, setPdfAblehnungBegruendung] = useState('')
 
   async function laden() {
     setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
       .select(
-        'id, name, kategorie, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, ort_antragsteller, datum_antragsteller, bearbeitet_von, ort_bearbeiter, datum_bearbeiter, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
+        'id, name, vorgesetzter, funktion_bereich, urlaubsart, urlaubsart_begruendung, jahr, urlaubsanspruch, verplant, rest, resturlaub_vorjahr, datum_antragsteller, bearbeitet_von, datum_bearbeiter, ablehnung_begruendung, erster_tag, letzter_tag, anzahl_tage, brauchbare_tage, status, dokument_url, abzug_vorjahr, abzug_aktuell, gruppe_id'
       )
       .order('erstellt_am', { ascending: false })
     setAntraege(data ?? [])
@@ -225,18 +227,20 @@ export default function MeineAntraege({
     const erste = gruppe.zeilen[0]
     setPdfDialogSchluessel(gruppe.schluessel)
     setPdfBearbeitetVon(erste.bearbeitet_von ?? '')
-    setPdfOrt(erste.ort_bearbeiter ?? '')
     setPdfDatum(erste.datum_bearbeiter ?? new Date().toISOString().slice(0, 10))
+    setPdfAblehnungBegruendung(erste.ablehnung_begruendung ?? '')
   }
 
   async function pdfGenerieren(gruppe: Gruppe) {
     const ids = gruppe.zeilen.map((z) => z.id)
+    const istAbgelehnt = gruppe.status === 'abgelehnt'
+
     await supabase
       .from('urlaubsantraege')
       .update({
         bearbeitet_von: pdfBearbeitetVon,
-        ort_bearbeiter: pdfOrt,
         datum_bearbeiter: pdfDatum,
+        ablehnung_begruendung: istAbgelehnt ? pdfAblehnungBegruendung : null,
       })
       .in('id', ids)
 
@@ -244,17 +248,24 @@ export default function MeineAntraege({
     erstelleUrlaubsantragPdf(
       {
         name: gruppe.name,
-        kategorie: erste.kategorie,
+        vorgesetzter: erste.vorgesetzter,
+        funktion_bereich: erste.funktion_bereich,
+        urlaubsart: erste.urlaubsart,
+        urlaubsart_begruendung: erste.urlaubsart_begruendung,
         jahr: erste.jahr,
         urlaubsanspruch: erste.urlaubsanspruch,
         verplant: erste.verplant,
         rest: erste.rest,
         resturlaub_vorjahr: erste.resturlaub_vorjahr,
-        ort_antragsteller: erste.ort_antragsteller,
         datum_antragsteller: erste.datum_antragsteller,
         zeilen: gruppe.zeilen,
       },
-      { bearbeitetVon: pdfBearbeitetVon, ort: pdfOrt, datum: pdfDatum }
+      {
+        genehmigt: !istAbgelehnt,
+        bearbeitetVon: pdfBearbeitetVon,
+        datum: pdfDatum,
+        ablehnungBegruendung: istAbgelehnt ? pdfAblehnungBegruendung : '',
+      }
     )
 
     setPdfDialogSchluessel(null)
@@ -326,6 +337,11 @@ export default function MeineAntraege({
                   >
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 500 }}>{gruppe.name ?? 'Ohne Namen'}</div>
+                      {gruppe.zeilen[0].urlaubsart && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                          {gruppe.zeilen[0].urlaubsart}
+                        </div>
+                      )}
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                         {gruppe.zeilen.map((z) => (
                           <div key={z.id}>
@@ -381,14 +397,12 @@ export default function MeineAntraege({
                       >
                         Zurücksetzen
                       </button>
-                      {spalte.status === 'genehmigt' && (
-                        <button
-                          onClick={() => pdfDialogOeffnen(gruppe)}
-                          style={aktionsKnopfStil('var(--navy)')}
-                        >
-                          📄 PDF erstellen
-                        </button>
-                      )}
+                      <button
+                        onClick={() => pdfDialogOeffnen(gruppe)}
+                        style={aktionsKnopfStil('var(--navy)')}
+                      >
+                        📄 PDF erstellen
+                      </button>
                     </div>
                   )}
 
@@ -406,20 +420,12 @@ export default function MeineAntraege({
                       }}
                     >
                       <label style={beschriftungStil}>
-                        Bearbeitet von
+                        Name in Blockbuchstaben (Vorgesetzter)
                         <input
                           value={pdfBearbeitetVon}
                           onChange={(e) => setPdfBearbeitetVon(e.target.value)}
                           style={eingabeStil}
-                          placeholder="Name des Genehmigers"
-                        />
-                      </label>
-                      <label style={beschriftungStil}>
-                        Ort
-                        <input
-                          value={pdfOrt}
-                          onChange={(e) => setPdfOrt(e.target.value)}
-                          style={eingabeStil}
+                          placeholder="Name des Genehmigers/Ablehnenden"
                         />
                       </label>
                       <label style={beschriftungStil}>
@@ -431,6 +437,16 @@ export default function MeineAntraege({
                           style={eingabeStil}
                         />
                       </label>
+                      {spalte.status === 'abgelehnt' && (
+                        <label style={beschriftungStil}>
+                          Begründung bei Ablehnung
+                          <textarea
+                            value={pdfAblehnungBegruendung}
+                            onChange={(e) => setPdfAblehnungBegruendung(e.target.value)}
+                            style={{ ...eingabeStil, minHeight: 60, resize: 'vertical' }}
+                          />
+                        </label>
+                      )}
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button
                           onClick={() => pdfGenerieren(gruppe)}

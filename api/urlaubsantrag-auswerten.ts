@@ -11,6 +11,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Bild fehlt' })
   }
 
+  const istPdf = mediaType === 'application/pdf'
+
+  const inhaltsBlock = istPdf
+    ? {
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: bildBase64,
+        },
+      }
+    : {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mediaType,
+          data: bildBase64,
+        },
+      }
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -26,32 +46,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             role: 'user',
             content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: mediaType,
-                  data: bildBase64,
-                },
-              },
+              inhaltsBlock,
               {
                 type: 'text',
-                text: `Das ist ein Foto/Scan eines "Urlaubsantrag - Betriebsdienst" Formulars von Rail Bavaria Logistik. Das Formular kann MEHRERE Urlaubszeiträume enthalten (Tabelle mit Spalten Von/Bis/Anzahl Tage, bis zu 6 Zeilen). Lies alle Felder aus und antworte AUSSCHLIESSLICH mit einem JSON-Objekt in genau dieser Struktur, ohne Markdown-Codeblock, ohne weiteren Text:
+                text: `Das ist ein Foto/Scan eines "Urlaubsantrag" Formulars von Rail Bavaria Logistik (Personalwesen, Version 01). Das Formular kann MEHRERE Urlaubszeiträume enthalten (Tabelle mit Spalten Von/Bis, bis zu 4 Zeilen). Lies alle Felder aus und antworte AUSSCHLIESSLICH mit einem JSON-Objekt in genau dieser Struktur, ohne Markdown-Codeblock, ohne weiteren Text:
 
 {
   "gemeinsam": {
-    "jahr": Zahl oder null,
-    "name": Text oder null,
-    "kategorie": Text (Lokführer/Dienstleister/Wagenmeister/Disposition/Betriebsleitung - welche Option ausgewählt/angekreuzt ist) oder null,
-    "urlaubsanspruch": Zahl oder null,
-    "verplant": Zahl oder null,
-    "rest": Zahl oder null,
-    "resturlaub_vorjahr": Zahl oder null,
-    "ort_antragsteller": Text oder null,
-    "datum_antragsteller": Datum im Format YYYY-MM-DD oder null,
-    "bearbeitet_von": Text - falls im Bereich "Bearbeitung" bereits ein Name/Vermerk eingetragen ist, sonst null,
-    "ort_bearbeiter": Text - Ort im Bearbeitungsbereich, falls vorhanden, sonst null,
-    "datum_bearbeiter": Datum im Format YYYY-MM-DD - Datum im Bearbeitungsbereich, falls vorhanden, sonst null
+    "jahr": Zahl oder null (aus den Urlaubsdaten abgeleitetes Jahr, falls nicht explizit angegeben),
+    "name": Text - Vorname und Nachname zusammen, oder null,
+    "vorgesetzter": Text - Name des eingetragenen Vorgesetzten, oder null,
+    "funktion_bereich": Text aus dem Feld "Funktion / Bereich", oder null,
+    "urlaubsart": EXAKT eine dieser Optionen, je nachdem welche Checkbox angekreuzt ist: "Erholungsurlaub", "Sonderurlaub", "Bildungsurlaub", "Unbezahlter Urlaub", "Sonstiges" - oder null falls keine angekreuzt,
+    "urlaubsart_begruendung": Text - falls bei Sonderurlaub oder Sonstiges eine Begründung/Angabe eingetragen ist, sonst null,
+    "urlaubsanspruch": Zahl aus "Urlaubsanspruch laufendes Jahr" oder null,
+    "verplant": Zahl aus "Davon bereits genommen" oder null,
+    "rest": Zahl aus "Verbleibender Resturlaub" oder null,
+    "resturlaub_vorjahr": Zahl aus "Resturlaub Vorjahr" oder null,
+    "datum_antragsteller": Datum im Format YYYY-MM-DD aus "Datum, Unterschrift Mitarbeiter" (Abschnitt 5), oder null,
+    "bearbeitet_von": Text - Name des Vorgesetzten aus "Name in Blockbuchstaben" unter "Datum, Unterschrift Vorgesetzter" (Abschnitt 5), falls bereits ausgefüllt, sonst null,
+    "datum_bearbeiter": Datum im Format YYYY-MM-DD aus "Datum, Unterschrift Vorgesetzter" (Abschnitt 5), falls bereits ausgefüllt, sonst null
   },
   "zeitraeume": [
     {
@@ -62,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   ]
 }
 
-Gib in "zeitraeume" ein Array-Element PRO ausgefüllter Zeile der Zeitraum-Tabelle zurück (ignoriere leere Zeilen, es können bis zu 6 sein). Falls nur ein einzelner Zeitraum im Formular steht, enthält das Array genau ein Element.`,
+Gib in "zeitraeume" ein Array-Element PRO ausgefüllter Zeile der Von/Bis-Tabelle zurück (ignoriere leere Zeilen, es können bis zu 4 sein). Falls nur ein einzelner Zeitraum im Formular steht, enthält das Array genau ein Element.`,
               },
             ],
           },
