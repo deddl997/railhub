@@ -10,7 +10,6 @@ import Kalender from './Kalender'
 import MitarbeiterVerwaltung from './MitarbeiterVerwaltung'
 import Streckenkunde from './Streckenkunde'
 import Dienstplan from './Dienstplan'
-import SchichtAnsicht from './SchichtAnsicht'
 import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
@@ -21,7 +20,6 @@ const ALLE_TABS = [
   { id: 'mitarbeiter', label: 'Mitarbeiter', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', nurAdmin: true },
-  { id: 'schichtansicht', label: 'Schichtplan', nurAdmin: true },
   { id: 'schichtvorlagen', label: 'Schichtvorlagen', nurAdmin: true },
 ] as const
 
@@ -110,7 +108,13 @@ function App() {
         ))}
       </nav>
 
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 20px' }}>
+      <main
+        style={{
+          maxWidth: aktiverTab === 'dienstplan' ? 1600 : 1100,
+          margin: '0 auto',
+          padding: '32px 20px',
+        }}
+      >
         {aktiverTab === 'antrag' && (
           <div
             style={{
@@ -191,20 +195,6 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Dienstplan</h3>
             <Dienstplan />
-          </div>
-        )}
-
-        {aktiverTab === 'schichtansicht' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Schichtplan - offene Dienste</h3>
-            <SchichtAnsicht />
           </div>
         )}
 
