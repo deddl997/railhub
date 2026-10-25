@@ -38,7 +38,7 @@ interface OffeneSpot {
 }
 
 interface Warnung {
-  art: 'ueberschneidung' | 'ruhezeit'
+  art: 'ueberschneidung' | 'ruhezeit' | 'urlaub'
   kurz: string
   lang: string
 }
@@ -630,6 +630,7 @@ export default function Dienstplan() {
   function wochenMinuten(mitarbeiterId: string): number {
     let summe = 0
     for (const tag of tage) {
+      if (istUrlaub(mitarbeiterId, datumZuISO(tag))) continue
       const info = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(tag)))
       if (info) summe += info.ende - info.beginn
     }
@@ -642,7 +643,19 @@ export default function Dienstplan() {
 
   // Warnungen fuer eine Person an einem Tag (Ueberschneidung / zu kurze Ruhezeit)
   function warnungenFuer(mitarbeiterId: string, datum: Date): Warnung[] {
-    if (istUrlaub(mitarbeiterId, datumZuISO(datum))) return []
+    if (istUrlaub(mitarbeiterId, datumZuISO(datum))) {
+      // Urlaub genehmigt, aber noch eine Schicht eingetragen
+      if (schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(datum)))) {
+        return [
+          {
+            art: 'urlaub',
+            kurz: 'Urlaub, aber Schicht eingetragen',
+            lang: 'Urlaub ist genehmigt, es ist aber noch eine Schicht eingetragen. Zelle anklicken und "Eintrag leeren" wählen, dann ist die Schicht wieder offen.',
+          },
+        ]
+      }
+      return []
+    }
     const vortag = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(addTage(datum, -1))))
     const heute = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(datum)))
     if (!vortag || !heute) return []
@@ -679,7 +692,10 @@ export default function Dienstplan() {
       if ((v.bereich ?? 'Lokführer') !== bereich) return false
       const benoetigt = (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentag)
       if (!benoetigt) return false
-      const bereitsVergeben = eintraege.some((e) => e.schichtvorlage_id === v.id && e.datum === datumIso)
+      // Wer im Urlaub ist, belegt die Schicht nicht: sie bleibt offen
+      const bereitsVergeben = eintraege.some(
+        (e) => e.schichtvorlage_id === v.id && e.datum === datumIso && !istUrlaub(e.mitarbeiter_id, datumIso)
+      )
       return !bereitsVergeben
     })
   }
@@ -1010,7 +1026,8 @@ export default function Dienstplan() {
                         (e) =>
                           e.datum === ausgewaehlteZelle.datum &&
                           e.schichtvorlage_id &&
-                          e.mitarbeiter_id !== ausgewaehlteZelle.mitarbeiterId
+                          e.mitarbeiter_id !== ausgewaehlteZelle.mitarbeiterId &&
+                          !istUrlaub(e.mitarbeiter_id, e.datum)
                       )
                       .map((e) => e.schichtvorlage_id)
                   )
@@ -1488,7 +1505,7 @@ export default function Dienstplan() {
                       </div>
 
                       <div
-                        onClick={() => !urlaub && zelleOeffnen(mitarbeiter.id, datumIso)}
+                        onClick={() => (!urlaub || !!eintrag) && zelleOeffnen(mitarbeiter.id, datumIso)}
                         onDragOver={(e) => {
                           if (urlaub) return
                           e.preventDefault()
@@ -1511,7 +1528,7 @@ export default function Dienstplan() {
                           flex: 1,
                           position: 'relative',
                           height: 52,
-                          cursor: urlaub ? 'default' : 'pointer',
+                          cursor: urlaub && !eintrag ? 'default' : 'pointer',
                           background: hoverZiel === zielSchluessel ? '#e0f2fe' : undefined,
                           boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
                           ...raster,
@@ -2049,7 +2066,7 @@ export default function Dienstplan() {
                       return (
                         <td
                           key={datumIso}
-                          onClick={() => !urlaub && zelleOeffnen(mitarbeiter.id, datumIso)}
+                          onClick={() => (!urlaub || !!eintrag) && zelleOeffnen(mitarbeiter.id, datumIso)}
                           onDragOver={(e) => {
                             if (urlaub || falscherTagBeimZiehen) return
                             e.preventDefault()
@@ -2080,7 +2097,7 @@ export default function Dienstplan() {
                                   : '#fafbfc'
                                 : undefined,
                             position: 'relative',
-                            cursor: urlaub ? 'default' : 'pointer',
+                            cursor: urlaub && !eintrag ? 'default' : 'pointer',
                             boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
                             padding: 5,
                           }}
