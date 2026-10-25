@@ -5,6 +5,8 @@ import { datumZuISO } from './datumUtils'
 
 // Dienstbeginn liegt so viele Minuten vor der Abfahrt aus der Bestellung
 const VORLAUF_MINUTEN = 60
+// Eine Schicht dauert mindestens so lange, auch wenn die Fahrt in der Bestellung kuerzer ist
+const MINDEST_DAUER_MINUTEN = 8 * 60
 const SPOT_FARBE = '#8b1a1a'
 
 interface Fahrt {
@@ -35,6 +37,7 @@ interface Zeile {
   info: string
   hinweise: string[]
   doppelt: boolean
+  verlaengertVon: string | null
 }
 
 function zeitInMinuten(zeit: string): number {
@@ -123,19 +126,29 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
       datum = tagVorher(datum)
     }
     const nummer = f.referenznummer ? ` (${f.referenznummer})` : ''
+    // Dauer der Schicht von Dienstbeginn bis Ankunft (ueber Mitternacht moeglich)
+    let dauer = zeitInMinuten(f.nach_zeit) - beginnMin
+    if (dauer <= 0) dauer += 1440
+    let ende = f.nach_zeit
+    let verlaengertVon: string | null = null
+    if (dauer < MINDEST_DAUER_MINUTEN) {
+      ende = minutenAlsZeit((beginnMin + MINDEST_DAUER_MINUTEN) % 1440)
+      verlaengertVon = f.nach_zeit
+    }
     return {
       id: i,
       aktiv: !f.tf_hinweis,
       name: `${f.referenz} ${f.von}–${f.nach}`,
       datum,
       beginn: minutenAlsZeit(beginnMin),
-      ende: f.nach_zeit,
+      ende,
       dienstort: f.von,
       info:
         `Zug ${f.referenz}${nummer}: ${f.von} ${f.von_zeit} → ${f.nach} ${f.nach_zeit}.` +
         (f.lok ? ` Geplante Lok: ${f.lok}.` : ''),
       hinweise,
       doppelt: false,
+      verlaengertVon,
     }
   })
 
@@ -318,7 +331,7 @@ export default function BestellungImport({
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 14px' }}>
               Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Fahrt wird eine
-              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit.
+              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer.
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
             <label
@@ -395,6 +408,9 @@ export default function BestellungImport({
                       </td>
                       <td style={{ padding: '5px 6px' }}>
                         <input type="time" value={z.ende} onChange={(e) => zeileAendern(z.id, { ende: e.target.value })} style={eingabe} />
+                        {z.verlaengertVon && (
+                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>auf 8 Std. verlängert (Bestellung: {z.verlaengertVon})</div>
+                        )}
                       </td>
                       <td style={{ padding: '5px 6px' }}>
                         <input value={z.dienstort} onChange={(e) => zeileAendern(z.id, { dienstort: e.target.value })} style={{ ...eingabe, width: 90 }} />
