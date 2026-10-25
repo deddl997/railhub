@@ -132,8 +132,7 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
       ende: f.nach_zeit,
       dienstort: f.von,
       info:
-        `Zug ${f.referenz}${nummer}: ${f.von} ${f.von_zeit} → ${f.nach} ${f.nach_zeit}. ` +
-        `Dienstbeginn ${VORLAUF_MINUTEN} Min. vor Abfahrt.` +
+        `Zug ${f.referenz}${nummer}: ${f.von} ${f.von_zeit} → ${f.nach} ${f.nach_zeit}.` +
         (f.lok ? ` Geplante Lok: ${f.lok}.` : ''),
       hinweise,
       doppelt: false,
