@@ -21,6 +21,26 @@ interface Schichtvorlage {
   farbe: string
   aktiv: boolean
   benoetigte_wochentage: number[] | null
+  bereich?: string | null
+}
+
+interface OffeneSpot {
+  id: string
+  datum: string
+  bereich: string
+  name: string
+  beginn_zeit: string
+  ende_zeit: string
+  pause_minuten: number | null
+  dienstort: string | null
+  farbe: string | null
+}
+
+interface OffenesElement {
+  art: 'vorlage' | 'spot'
+  id: string
+  tagDatum: string
+  bereich: string
 }
 
 interface DienstplanEintrag {
@@ -61,6 +81,12 @@ interface Balken {
   bis: number
   vortag: boolean // Nachtschicht vom Vortag
   weiter: boolean // laeuft in den Folgetag
+}
+
+const BEREICHE = ['Lokführer', 'Wagenmeister'] as const
+
+function bereichVonKategorie(kategorie: string | null): string {
+  return (kategorie ?? '').toLowerCase().includes('wagen') ? 'Wagenmeister' : 'Lokführer'
 }
 
 const WOCHENTAGE_KURZ = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
@@ -152,7 +178,19 @@ export default function Dienstplan() {
   const [erstesLaden, setErstesLaden] = useState(true)
 
   const [ausgewaehlteZelle, setAusgewaehlteZelle] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
-  const [gezogeneVorlage, setGezogeneVorlage] = useState<{ vorlageId: string; tagDatum: string } | null>(null)
+  const [offeneSpots, setOffeneSpots] = useState<OffeneSpot[]>([])
+  const [gezogeneVorlage, setGezogeneVorlage] = useState<OffenesElement | null>(null)
+  const [offenSpotDialogOffen, setOffenSpotDialogOffen] = useState(false)
+  const [offenSpotDaten, setOffenSpotDaten] = useState({
+    datum: '',
+    bereich: 'Lokführer',
+    name: '',
+    beginn_zeit: '06:00',
+    ende_zeit: '18:00',
+    pause_minuten: 0,
+    dienstort: '',
+    farbe: '#8b1a1a',
+  })
   const [gezogenerEintrag, setGezogenerEintrag] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
   const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
@@ -178,8 +216,13 @@ export default function Dienstplan() {
     const endeIso = datumZuISO(tage[6])
     const urlaubStartIso = datumZuISO(wochenStart)
 
-    const [{ data: mitarbeiterData }, { data: vorlagenData }, { data: eintraegeData }, { data: urlaubeData }] =
-      await Promise.all([
+    const [
+      { data: mitarbeiterData },
+      { data: vorlagenData },
+      { data: eintraegeData },
+      { data: urlaubeData },
+      { data: spotsData },
+    ] = await Promise.all([
         supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
         supabase
@@ -193,7 +236,12 @@ export default function Dienstplan() {
           .eq('status', 'genehmigt')
           .lte('erster_tag', endeIso)
           .gte('letzter_tag', urlaubStartIso),
-      ])
+        supabase
+          .from('offene_spotschichten')
+          .select('*')
+          .gte('datum', urlaubStartIso)
+          .lte('datum', endeIso),
+    ])
 
     const sortierteMitarbeiter = [...(mitarbeiterData ?? [])].sort((a, b) => {
       const rangA = a.kategorie ? KATEGORIEN.indexOf(a.kategorie) : 999
@@ -207,6 +255,7 @@ export default function Dienstplan() {
     setVorlagen(vorlagenData ?? [])
     setEintraege(eintraegeData ?? [])
     setUrlaube((urlaubeData ?? []).filter((u) => u.mitarbeiter_id))
+    setOffeneSpots((spotsData ?? []) as OffeneSpot[])
     setLadeVorgang(false)
     setErstesLaden(false)
   }
@@ -421,12 +470,100 @@ export default function Dienstplan() {
     await laden()
   }
 
+  // Zuweisung zurueck in den "Offen"-Pool: normale Schichten werden einfach geleert,
+  // Spotschichten werden wieder zu offenen Spotschichten.
   async function eintragLoeschenExtern(ziel: { mitarbeiterId: string; datum: string }) {
+    const eintrag = eintragFuer(ziel.mitarbeiterId, ziel.datum)
+    if (eintrag?.ist_spotschicht && eintrag.spot_beginn_zeit && eintrag.spot_ende_zeit) {
+      const person = mitarbeiterListe.find((m) => m.id === ziel.mitarbeiterId)
+      await supabase.from('offene_spotschichten').insert({
+        datum: ziel.datum,
+        bereich: bereichVonKategorie(person?.kategorie ?? null),
+        name: eintrag.spot_name ?? 'Spotschicht',
+        beginn_zeit: eintrag.spot_beginn_zeit,
+        ende_zeit: eintrag.spot_ende_zeit,
+        pause_minuten: eintrag.spot_pause_minuten ?? 0,
+        dienstort: eintrag.spot_dienstort,
+        farbe: eintrag.spot_farbe,
+      })
+    }
     await supabase
       .from('dienstplan_eintraege')
       .delete()
       .eq('mitarbeiter_id', ziel.mitarbeiterId)
       .eq('datum', ziel.datum)
+    await laden()
+  }
+
+  async function spotZuweisen(spotId: string, mitarbeiterId: string, datumIso: string) {
+    const spot = offeneSpots.find((x) => x.id === spotId)
+    if (!spot) return
+    if (eintragFuer(mitarbeiterId, datumIso)) {
+      const bestaetigt = window.confirm('Für diesen Tag ist bereits ein Eintrag vorhanden. Überschreiben?')
+      if (!bestaetigt) return
+    }
+    await supabase.from('dienstplan_eintraege').upsert(
+      {
+        mitarbeiter_id: mitarbeiterId,
+        datum: datumIso,
+        schichtvorlage_id: null,
+        ist_spotschicht: true,
+        spot_name: spot.name,
+        spot_beginn_zeit: spot.beginn_zeit,
+        spot_ende_zeit: spot.ende_zeit,
+        spot_pause_minuten: spot.pause_minuten ?? 0,
+        spot_dienstort: spot.dienstort,
+        spot_farbe: spot.farbe,
+        status: null,
+      },
+      { onConflict: 'mitarbeiter_id,datum' }
+    )
+    await supabase.from('offene_spotschichten').delete().eq('id', spotId)
+    await laden()
+  }
+
+  // Zentrale Zuweisung per Drag & Drop (Vorlage oder offene Spotschicht)
+  async function offenesZuweisen(quelle: OffenesElement, mitarbeiterId: string, datumIso: string) {
+    const person = mitarbeiterListe.find((m) => m.id === mitarbeiterId)
+    const personBereich = bereichVonKategorie(person?.kategorie ?? null)
+    if (quelle.bereich !== personBereich) {
+      const ok = window.confirm(
+        `Diese Schicht gehört zum Bereich ${quelle.bereich}, ${person?.name ?? 'die Person'} ist ${personBereich}. Trotzdem zuweisen?`
+      )
+      if (!ok) return
+    }
+    if (quelle.art === 'vorlage') {
+      await schichtDirektZuweisen(quelle.id, mitarbeiterId, datumIso)
+    } else {
+      await spotZuweisen(quelle.id, mitarbeiterId, datumIso)
+    }
+  }
+
+  function offenSpotDialogOeffnen() {
+    setOffenSpotDaten((alt) => ({ ...alt, datum: tagIso }))
+    setOffenSpotDialogOffen(true)
+  }
+
+  async function offeneSpotschichtAnlegen() {
+    if (!offenSpotDaten.name.trim() || !offenSpotDaten.datum) return
+    await supabase.from('offene_spotschichten').insert({
+      datum: offenSpotDaten.datum,
+      bereich: offenSpotDaten.bereich,
+      name: offenSpotDaten.name.trim(),
+      beginn_zeit: offenSpotDaten.beginn_zeit,
+      ende_zeit: offenSpotDaten.ende_zeit,
+      pause_minuten: offenSpotDaten.pause_minuten,
+      dienstort: offenSpotDaten.dienstort || null,
+      farbe: offenSpotDaten.farbe,
+    })
+    setOffenSpotDialogOffen(false)
+    setOffenSpotDaten((alt) => ({ ...alt, name: '', dienstort: '' }))
+    await laden()
+  }
+
+  async function offeneSpotschichtLoeschen(spot: OffeneSpot) {
+    if (!window.confirm(`Offene Spotschicht "${spot.name}" wirklich löschen?`)) return
+    await supabase.from('offene_spotschichten').delete().eq('id', spot.id)
     await laden()
   }
 
@@ -445,13 +582,34 @@ export default function Dienstplan() {
     return minutenAlsText(info.ende - info.beginn - info.pause)
   }
 
-  function offeneVorlagenFuerTag(datumIso: string, wochentag: number): Schichtvorlage[] {
+  function offeneVorlagenFuerTag(datumIso: string, wochentag: number, bereich: string): Schichtvorlage[] {
     return vorlagen.filter((v) => {
+      if ((v.bereich ?? 'Lokführer') !== bereich) return false
       const benoetigt = (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentag)
       if (!benoetigt) return false
       const bereitsVergeben = eintraege.some((e) => e.schichtvorlage_id === v.id && e.datum === datumIso)
       return !bereitsVergeben
     })
+  }
+
+  function offeneSpotsFuerTag(datumIso: string, bereich: string): OffeneSpot[] {
+    return offeneSpots.filter((x) => x.datum === datumIso && x.bereich === bereich)
+  }
+
+  function infoAusSpot(x: OffeneSpot): SchichtInfo {
+    const beginn = zeitInMinuten(x.beginn_zeit)
+    let ende = zeitInMinuten(x.ende_zeit)
+    if (ende <= beginn) ende += 1440
+    return {
+      titel: x.name,
+      farbe: x.farbe ?? '#8b1a1a',
+      beginn,
+      ende,
+      pause: x.pause_minuten ?? 0,
+      pauseVon: null,
+      pauseBis: null,
+      ort: x.dienstort,
+    }
   }
 
   function navigieren(richtung: -1 | 1) {
@@ -494,6 +652,10 @@ export default function Dienstplan() {
           </button>
         </div>
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
+          + Offene Spotschicht
+        </button>
         <div style={{ display: 'flex', border: '1px solid var(--navy)', borderRadius: 6, overflow: 'hidden' }}>
           {(['tag', 'woche'] as const).map((a) => (
             <button
@@ -512,6 +674,7 @@ export default function Dienstplan() {
               {a === 'tag' ? 'Tag' : 'Woche'}
             </button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -544,6 +707,145 @@ export default function Dienstplan() {
       {ansicht === 'tag' ? renderTagesansicht() : renderWochenansicht()}
 
       <style>{`.dienstplan-leerzelle:hover { border-color: var(--navy) !important; color: var(--navy) !important; }`}</style>
+
+      {offenSpotDialogOffen && (
+        <div
+          onClick={() => setOffenSpotDialogOffen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: 12,
+              padding: 20,
+              width: 520,
+              maxWidth: '100%',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)' }}>Offene Spotschicht anlegen</div>
+              <button
+                onClick={() => setOffenSpotDialogOffen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+              Die Schicht erscheint oben bei den offenen Schichten und kann per Drag &amp; Drop einer Person zugewiesen werden.
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                gap: 10,
+              }}
+            >
+              <label style={beschriftungStil}>
+                Datum
+                <input
+                  type="date"
+                  value={offenSpotDaten.datum}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, datum: e.target.value })}
+                  style={eingabeStil}
+                />
+              </label>
+              <label style={beschriftungStil}>
+                Bereich
+                <select
+                  value={offenSpotDaten.bereich}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, bereich: e.target.value })}
+                  style={eingabeStil}
+                >
+                  {BEREICHE.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+                Name
+                <input
+                  value={offenSpotDaten.name}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, name: e.target.value })}
+                  style={eingabeStil}
+                  placeholder="z.B. Kessel Dienstantritt NRH"
+                />
+              </label>
+              <label style={beschriftungStil}>
+                Beginn
+                <input
+                  type="time"
+                  value={offenSpotDaten.beginn_zeit}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, beginn_zeit: e.target.value })}
+                  style={eingabeStil}
+                />
+              </label>
+              <label style={beschriftungStil}>
+                Ende
+                <input
+                  type="time"
+                  value={offenSpotDaten.ende_zeit}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, ende_zeit: e.target.value })}
+                  style={eingabeStil}
+                />
+              </label>
+              <label style={beschriftungStil}>
+                Pause (Min.)
+                <input
+                  type="number"
+                  value={offenSpotDaten.pause_minuten}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, pause_minuten: Number(e.target.value) })}
+                  style={eingabeStil}
+                />
+              </label>
+              <label style={beschriftungStil}>
+                Dienstort
+                <input
+                  value={offenSpotDaten.dienstort}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, dienstort: e.target.value })}
+                  style={eingabeStil}
+                />
+              </label>
+              <label style={beschriftungStil}>
+                Farbe
+                <input
+                  type="color"
+                  value={offenSpotDaten.farbe}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, farbe: e.target.value })}
+                  style={{ ...eingabeStil, padding: 2, height: 36 }}
+                />
+              </label>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button onClick={() => setOffenSpotDialogOffen(false)} style={sekundaerKnopfStil}>
+                Abbrechen
+              </button>
+              <button
+                onClick={offeneSpotschichtAnlegen}
+                disabled={!offenSpotDaten.name.trim() || !offenSpotDaten.datum}
+                style={primaerKnopfStil}
+              >
+                Anlegen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {ausgewaehlteZelle && (
         <div
@@ -596,16 +898,18 @@ export default function Dienstplan() {
                 <option value="">Bestandsschicht wählen...</option>
                 {(() => {
                   const wochentagDerZelle = new Date(ausgewaehlteZelle.datum).getDay()
-                  const passend = vorlagen.filter((v) =>
+                  const person = mitarbeiterListe.find((m) => m.id === ausgewaehlteZelle.mitarbeiterId)
+                  const personBereich = bereichVonKategorie(person?.kategorie ?? null)
+                  const imBereich = vorlagen.filter((v) => (v.bereich ?? 'Lokführer') === personBereich)
+                  const andererBereich = vorlagen.filter((v) => (v.bereich ?? 'Lokführer') !== personBereich)
+                  const passt = (v: Schichtvorlage) =>
                     (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
-                  )
-                  const unpassend = vorlagen.filter(
-                    (v) => !(v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
-                  )
+                  const passend = imBereich.filter(passt)
+                  const unpassend = imBereich.filter((v) => !passt(v))
                   return (
                     <>
                       {passend.length > 0 && (
-                        <optgroup label="Für diesen Wochentag vorgesehen">
+                        <optgroup label={`Für diesen Wochentag vorgesehen (${personBereich})`}>
                           {passend.map((v) => (
                             <option key={v.id} value={v.id}>
                               {v.name}
@@ -616,6 +920,15 @@ export default function Dienstplan() {
                       {unpassend.length > 0 && (
                         <optgroup label="⚠ Normalerweise nicht an diesem Tag">
                           {unpassend.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {andererBereich.length > 0 && (
+                        <optgroup label="⚠ Anderer Bereich">
+                          {andererBereich.map((v) => (
                             <option key={v.id} value={v.id}>
                               {v.name}
                             </option>
@@ -729,7 +1042,9 @@ export default function Dienstplan() {
   // ---------------------------------------------------------------------------
   function renderTagesansicht() {
     const datumIso = tagIso
-    const offene = offeneVorlagenFuerTag(datumIso, bezugsdatum.getDay())
+    const offeneVorlagenTag = BEREICHE.flatMap((b) => offeneVorlagenFuerTag(datumIso, bezugsdatum.getDay(), b))
+    const offeneSpotsTag = offeneSpots.filter((x) => x.datum === datumIso)
+    const offeneNamen = [...offeneVorlagenTag.map((v) => v.name), ...offeneSpotsTag.map((x) => x.name)]
     const jetzt = new Date()
     const jetztMinuten = jetzt.getHours() * 60 + jetzt.getMinutes()
     const zeigeJetzt = istHeute(bezugsdatum)
@@ -804,94 +1119,168 @@ export default function Dienstplan() {
                 </div>
               </div>
 
-              {/* Offene Schichten */}
-              <div
-                style={{ display: 'flex', background: '#fff7ed', borderBottom: '1px solid var(--border)' }}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setHoverZiel('offen')
-                }}
-                onDragLeave={() => setHoverZiel((z) => (z === 'offen' ? null : z))}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  setHoverZiel(null)
-                  if (gezogenerEintrag) {
-                    eintragLoeschenExtern(gezogenerEintrag)
-                    setGezogenerEintrag(null)
-                  }
-                }}
-              >
-                <div
-                  style={{
-                    ...linkeSpalte,
-                    display: 'flex',
-                    alignItems: 'center',
-                    fontWeight: 700,
-                    fontSize: 11,
-                    color: '#9a3412',
-                  }}
-                >
-                  Offene Schichten
-                </div>
-                <div
-                  style={{
-                    flex: 1,
-                    position: 'relative',
-                    minHeight: 40,
-                    padding: '5px 0',
-                    background: hoverZiel === 'offen' ? '#ffedd5' : undefined,
-                    ...raster,
-                  }}
-                >
-                  {offene.length === 0 ? (
-                    <div style={{ padding: '10px 8px', fontSize: 11, color: 'var(--success)' }}>
-                      ✓ Alle Schichten für diesen Tag besetzt
+              {/* Offene Schichten, getrennt nach Bereich */}
+              {BEREICHE.map((bereich) => {
+                const offeneV = offeneVorlagenFuerTag(datumIso, bezugsdatum.getDay(), bereich)
+                const offeneS = offeneSpotsFuerTag(datumIso, bereich)
+                const poolSchluessel = `offen-${bereich}`
+                return (
+                  <div
+                    key={bereich}
+                    style={{ display: 'flex', background: '#fff7ed', borderBottom: '1px solid var(--border)' }}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setHoverZiel(poolSchluessel)
+                    }}
+                    onDragLeave={() => setHoverZiel((z) => (z === poolSchluessel ? null : z))}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setHoverZiel(null)
+                      if (gezogenerEintrag) {
+                        eintragLoeschenExtern(gezogenerEintrag)
+                        setGezogenerEintrag(null)
+                      }
+                    }}
+                  >
+                    <div
+                      style={{
+                        ...linkeSpalte,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'center',
+                        gap: 1,
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 11, color: '#9a3412' }}>Offene Schichten</div>
+                      <div style={{ fontWeight: 600, fontSize: 11, color: 'var(--navy)' }}>{bereich}</div>
                     </div>
-                  ) : (
-                    offene.map((v) => {
-                      const info = infoAusVorlage(v)
-                      const bis = Math.min(info.ende, 1440)
-                      return (
-                        <div key={v.id} style={{ position: 'relative', height: 30, marginBottom: 4 }}>
-                          <div
-                            draggable
-                            onDragStart={() => setGezogeneVorlage({ vorlageId: v.id, tagDatum: datumIso })}
-                            onDragEnd={() => setGezogeneVorlage(null)}
-                            title="Auf eine Person ziehen, um die Schicht zuzuweisen"
-                            style={{
-                              position: 'absolute',
-                              left: `${(info.beginn / 1440) * 100}%`,
-                              width: `${((bis - info.beginn) / 1440) * 100}%`,
-                              top: 0,
-                              height: 30,
-                              boxSizing: 'border-box',
-                              border: `2px dashed ${v.farbe}`,
-                              background: '#ffffff',
-                              color: v.farbe,
-                              borderRadius: 6,
-                              padding: '0 8px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              cursor: 'grab',
-                              overflow: 'hidden',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {v.name}
-                            <span style={{ fontWeight: 400, opacity: 0.85 }}>
-                              {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
-                            </span>
-                          </div>
+                    <div
+                      style={{
+                        flex: 1,
+                        position: 'relative',
+                        minHeight: 40,
+                        padding: '5px 0',
+                        background: hoverZiel === poolSchluessel ? '#ffedd5' : undefined,
+                        ...raster,
+                      }}
+                    >
+                      {offeneV.length === 0 && offeneS.length === 0 ? (
+                        <div style={{ padding: '10px 8px', fontSize: 11, color: 'var(--success)' }}>
+                          ✓ Alle Schichten besetzt
                         </div>
-                      )
-                    })
-                  )}
-                </div>
-                <div style={rechteSpalte} />
-              </div>
+                      ) : (
+                        <>
+                          {offeneV.map((v) => {
+                            const info = infoAusVorlage(v)
+                            const bis = Math.min(info.ende, 1440)
+                            return (
+                              <div key={v.id} style={{ position: 'relative', height: 30, marginBottom: 4 }}>
+                                <div
+                                  draggable
+                                  onDragStart={() =>
+                                    setGezogeneVorlage({ art: 'vorlage', id: v.id, tagDatum: datumIso, bereich })
+                                  }
+                                  onDragEnd={() => setGezogeneVorlage(null)}
+                                  title="Auf eine Person ziehen, um die Schicht zuzuweisen"
+                                  style={{
+                                    position: 'absolute',
+                                    left: `${(info.beginn / 1440) * 100}%`,
+                                    width: `${((bis - info.beginn) / 1440) * 100}%`,
+                                    top: 0,
+                                    height: 30,
+                                    boxSizing: 'border-box',
+                                    border: `2px dashed ${v.farbe}`,
+                                    background: '#ffffff',
+                                    color: v.farbe,
+                                    borderRadius: 6,
+                                    padding: '0 8px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    cursor: 'grab',
+                                    overflow: 'hidden',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {v.name}
+                                  <span style={{ fontWeight: 400, opacity: 0.85 }}>
+                                    {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {offeneS.map((x) => {
+                            const info = infoAusSpot(x)
+                            const bis = Math.min(info.ende, 1440)
+                            return (
+                              <div key={x.id} style={{ position: 'relative', height: 30, marginBottom: 4 }}>
+                                <div
+                                  draggable
+                                  onDragStart={() =>
+                                    setGezogeneVorlage({ art: 'spot', id: x.id, tagDatum: datumIso, bereich })
+                                  }
+                                  onDragEnd={() => setGezogeneVorlage(null)}
+                                  title="Offene Spotschicht: auf eine Person ziehen"
+                                  style={{
+                                    position: 'absolute',
+                                    left: `${(info.beginn / 1440) * 100}%`,
+                                    width: `${((bis - info.beginn) / 1440) * 100}%`,
+                                    top: 0,
+                                    height: 30,
+                                    boxSizing: 'border-box',
+                                    background: info.farbe,
+                                    color: '#ffffff',
+                                    borderRadius: 6,
+                                    padding: '0 8px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    cursor: 'grab',
+                                    overflow: 'hidden',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: 4, padding: '1px 5px', fontSize: 9 }}>
+                                    SPOT
+                                  </span>
+                                  {x.name}
+                                  <span style={{ fontWeight: 400, opacity: 0.9 }}>
+                                    {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      offeneSpotschichtLoeschen(x)
+                                    }}
+                                    title="Offene Spotschicht löschen"
+                                    style={{
+                                      marginLeft: 'auto',
+                                      background: 'none',
+                                      border: 'none',
+                                      color: '#ffffff',
+                                      cursor: 'pointer',
+                                      fontSize: 12,
+                                      lineHeight: 1,
+                                    }}
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </>
+                      )}
+                    </div>
+                    <div style={rechteSpalte} />
+                  </div>
+                )
+              })}
 
               {/* Mitarbeiterzeilen */}
               {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => {
@@ -969,7 +1358,7 @@ export default function Dienstplan() {
                           setHoverZiel(null)
                           if (urlaub) return
                           if (gezogeneVorlage) {
-                            schichtDirektZuweisen(gezogeneVorlage.vorlageId, mitarbeiter.id, datumIso)
+                            offenesZuweisen(gezogeneVorlage, mitarbeiter.id, datumIso)
                             setGezogeneVorlage(null)
                           } else if (gezogenerEintrag) {
                             eintragVerschieben(gezogenerEintrag, mitarbeiter.id, datumIso)
@@ -1200,12 +1589,12 @@ export default function Dienstplan() {
           }}
         >
           <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>Prüfung für diesen Tag</div>
-          {hinweise.length === 0 && offene.length === 0 && (
+          {hinweise.length === 0 && offeneNamen.length === 0 && (
             <div style={{ color: 'var(--success)' }}>✓ Alles in Ordnung: keine offenen Schichten, Ruhezeiten eingehalten.</div>
           )}
-          {offene.length > 0 && (
+          {offeneNamen.length > 0 && (
             <div style={{ color: '#b45309', marginBottom: 4 }}>
-              ⚠ {offene.length} offene Schicht{offene.length === 1 ? '' : 'en'}: {offene.map((v) => v.name).join(', ')}
+              ⚠ {offeneNamen.length} offene Schicht{offeneNamen.length === 1 ? '' : 'en'}: {offeneNamen.join(', ')}
             </div>
           )}
           {hinweise.map((h, i) => (
@@ -1213,7 +1602,7 @@ export default function Dienstplan() {
               ⚠ {h}
             </div>
           ))}
-          {hinweise.length === 0 && (offene.length > 0) && (
+          {hinweise.length === 0 && offeneNamen.length > 0 && (
             <div style={{ color: 'var(--success)' }}>✓ Ruhezeiten (mind. 11 Std.) eingehalten.</div>
           )}
         </div>
@@ -1268,84 +1657,141 @@ export default function Dienstplan() {
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td
-                style={{
-                  ...zellBasisStil,
-                  padding: '6px 16px',
-                  background: '#fff7ed',
-                  fontWeight: 700,
-                  fontSize: 11,
-                  color: '#9a3412',
-                }}
-              >
-                Offene Schichten
-              </td>
-              {tage.map((tag) => {
-                const datumIso = datumZuISO(tag)
-                const offene = offeneVorlagenFuerTag(datumIso, tag.getDay())
-                const zielSchluessel = `offen-${datumIso}`
-                return (
-                  <td
-                    key={datumIso}
-                    onDragOver={(e) => {
-                      e.preventDefault()
-                      setHoverZiel(zielSchluessel)
-                    }}
-                    onDragLeave={() => setHoverZiel((z) => (z === zielSchluessel ? null : z))}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      setHoverZiel(null)
-                      // Zurueck in den Offen-Pool: bereits zugewiesene Schicht wieder freigeben
-                      if (gezogenerEintrag) {
-                        eintragLoeschenExtern(gezogenerEintrag)
-                        setGezogenerEintrag(null)
-                      }
-                    }}
-                    style={{
-                      ...zellBasisStil,
-                      background: hoverZiel === zielSchluessel ? '#ffedd5' : '#fff7ed',
-                      padding: 5,
-                    }}
-                  >
-                    {offene.length === 0 ? (
-                      <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--success)' }}>
-                        ✓ besetzt
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        {offene.map((vorlage) => (
-                          <div
-                            key={vorlage.id}
-                            draggable
-                            onDragStart={() => setGezogeneVorlage({ vorlageId: vorlage.id, tagDatum: datumIso })}
-                            onDragEnd={() => setGezogeneVorlage(null)}
-                            title="Nach unten auf die Person ziehen"
-                            style={{
-                              background: vorlage.farbe,
-                              color: '#ffffff',
-                              borderRadius: 6,
-                              padding: '4px 6px',
-                              cursor: 'grab',
-                              fontSize: 10,
-                              fontWeight: 600,
-                            }}
-                          >
-                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {vorlage.name}
+            {BEREICHE.map((bereich) => (
+              <tr key={`offen-${bereich}`}>
+                <td
+                  style={{
+                    ...zellBasisStil,
+                    padding: '6px 16px',
+                    background: '#fff7ed',
+                    borderBottom: '1px solid #fed7aa',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 11, color: '#9a3412' }}>Offene Schichten</div>
+                  <div style={{ fontWeight: 600, fontSize: 11, color: 'var(--navy)' }}>{bereich}</div>
+                </td>
+                {tage.map((tag) => {
+                  const datumIso = datumZuISO(tag)
+                  const offeneV = offeneVorlagenFuerTag(datumIso, tag.getDay(), bereich)
+                  const offeneS = offeneSpotsFuerTag(datumIso, bereich)
+                  const zielSchluessel = `offen-${bereich}-${datumIso}`
+                  return (
+                    <td
+                      key={datumIso}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setHoverZiel(zielSchluessel)
+                      }}
+                      onDragLeave={() => setHoverZiel((z) => (z === zielSchluessel ? null : z))}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setHoverZiel(null)
+                        // Zurueck in den Offen-Pool: bereits zugewiesene Schicht wieder freigeben
+                        if (gezogenerEintrag) {
+                          eintragLoeschenExtern(gezogenerEintrag)
+                          setGezogenerEintrag(null)
+                        }
+                      }}
+                      style={{
+                        ...zellBasisStil,
+                        background: hoverZiel === zielSchluessel ? '#ffedd5' : '#fff7ed',
+                        borderBottom: '1px solid #fed7aa',
+                        padding: 5,
+                        verticalAlign: 'top',
+                      }}
+                    >
+                      {offeneV.length === 0 && offeneS.length === 0 ? (
+                        <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--success)' }}>
+                          ✓ besetzt
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {offeneV.map((vorlage) => (
+                            <div
+                              key={vorlage.id}
+                              draggable
+                              onDragStart={() =>
+                                setGezogeneVorlage({ art: 'vorlage', id: vorlage.id, tagDatum: datumIso, bereich })
+                              }
+                              onDragEnd={() => setGezogeneVorlage(null)}
+                              title="Nach unten auf die Person ziehen"
+                              style={{
+                                background: vorlage.farbe,
+                                color: '#ffffff',
+                                borderRadius: 6,
+                                padding: '4px 6px',
+                                cursor: 'grab',
+                                fontSize: 10,
+                                fontWeight: 600,
+                              }}
+                            >
+                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {vorlage.name}
+                              </div>
+                              <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
+                                {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
+                              </div>
                             </div>
-                            <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
-                              {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
+                          ))}
+                          {offeneS.map((x) => (
+                            <div
+                              key={x.id}
+                              draggable
+                              onDragStart={() =>
+                                setGezogeneVorlage({ art: 'spot', id: x.id, tagDatum: datumIso, bereich })
+                              }
+                              onDragEnd={() => setGezogeneVorlage(null)}
+                              title="Offene Spotschicht: nach unten auf die Person ziehen"
+                              style={{
+                                background: x.farbe ?? '#8b1a1a',
+                                color: '#ffffff',
+                                borderRadius: 6,
+                                padding: '4px 6px',
+                                cursor: 'grab',
+                                fontSize: 10,
+                                fontWeight: 600,
+                                position: 'relative',
+                              }}
+                            >
+                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 14 }}>
+                                <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: 3, padding: '0 4px', fontSize: 8, marginRight: 4 }}>
+                                  SPOT
+                                </span>
+                                {x.name}
+                              </div>
+                              <div style={{ fontSize: 9, opacity: 0.9, fontWeight: 400 }}>
+                                {zeitKurz(x.beginn_zeit)}–{zeitKurz(x.ende_zeit)}
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  offeneSpotschichtLoeschen(x)
+                                }}
+                                title="Offene Spotschicht löschen"
+                                style={{
+                                  position: 'absolute',
+                                  top: 2,
+                                  right: 4,
+                                  background: 'none',
+                                  border: 'none',
+                                  color: '#ffffff',
+                                  cursor: 'pointer',
+                                  fontSize: 11,
+                                  lineHeight: 1,
+                                }}
+                              >
+                                ✕
+                              </button>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                )
-              })}
-              <td style={{ ...zellBasisStil, background: '#fff7ed' }} />
-            </tr>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  )
+                })}
+                <td style={{ ...zellBasisStil, background: '#fff7ed', borderBottom: '1px solid #fed7aa' }} />
+              </tr>
+            ))}
             {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => {
               const vorherigeKategorie = zeilenIndex > 0 ? mitarbeiterListe[zeilenIndex - 1].kategorie : null
               const neueGruppe = mitarbeiter.kategorie !== vorherigeKategorie
@@ -1461,7 +1907,7 @@ export default function Dienstplan() {
                             setHoverZiel(null)
                             if (urlaub) return
                             if (gezogeneVorlage && gezogeneVorlage.tagDatum === datumIso) {
-                              schichtDirektZuweisen(gezogeneVorlage.vorlageId, mitarbeiter.id, datumIso)
+                              offenesZuweisen(gezogeneVorlage, mitarbeiter.id, datumIso)
                               setGezogeneVorlage(null)
                             } else if (gezogenerEintrag) {
                               eintragVerschieben(gezogenerEintrag, mitarbeiter.id, datumIso)
