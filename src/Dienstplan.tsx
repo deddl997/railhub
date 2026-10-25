@@ -900,8 +900,20 @@ export default function Dienstplan() {
                   const wochentagDerZelle = new Date(ausgewaehlteZelle.datum).getDay()
                   const person = mitarbeiterListe.find((m) => m.id === ausgewaehlteZelle.mitarbeiterId)
                   const personBereich = bereichVonKategorie(person?.kategorie ?? null)
-                  const imBereich = vorlagen.filter((v) => (v.bereich ?? 'Lokführer') === personBereich)
-                  const andererBereich = vorlagen.filter((v) => (v.bereich ?? 'Lokführer') !== personBereich)
+                  // Schichten, die an diesem Tag schon an jemand anderen vergeben sind, nicht mehr anbieten
+                  const bereitsVergeben = new Set(
+                    eintraege
+                      .filter(
+                        (e) =>
+                          e.datum === ausgewaehlteZelle.datum &&
+                          e.schichtvorlage_id &&
+                          e.mitarbeiter_id !== ausgewaehlteZelle.mitarbeiterId
+                      )
+                      .map((e) => e.schichtvorlage_id)
+                  )
+                  const freieVorlagen = vorlagen.filter((v) => !bereitsVergeben.has(v.id))
+                  const imBereich = freieVorlagen.filter((v) => (v.bereich ?? 'Lokführer') === personBereich)
+                  const andererBereich = freieVorlagen.filter((v) => (v.bereich ?? 'Lokführer') !== personBereich)
                   const passt = (v: Schichtvorlage) =>
                     (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
                   const passend = imBereich.filter(passt)
