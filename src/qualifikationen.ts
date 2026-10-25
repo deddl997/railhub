@@ -6,4 +6,4 @@ export const KATEGORIEN = [
   'Betriebsleitung',
 ]
 
-export const LOK_TYPEN = ['DE 18', '185', '193', 'V90', 'V60', 'G1206']
+export const LOK_TYPEN: string[] = ['DE 18', '111', '185', '193', 'V90', 'V60', 'G1206']
