@@ -244,6 +244,7 @@ export default function Dienstplan() {
   const [ansicht, setAnsicht] = useState<Ansicht>('tag')
   const [ausgewaehlterBalken, setAusgewaehlterBalken] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
   const [tauschenOffen, setTauschenOffen] = useState(false)
+  const [freigegebeneWochen, setFreigegebeneWochen] = useState<string[]>([])
   const [tauschZiel, setTauschZiel] = useState('')
   const [mindestbesetzung, setMindestbesetzung] = useState(() => {
     try {
@@ -317,6 +318,7 @@ export default function Dienstplan() {
       { data: eintraegeData },
       { data: urlaubeData },
       { data: spotsData },
+      { data: freigabenData },
     ] = await Promise.all([
         supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
@@ -336,6 +338,7 @@ export default function Dienstplan() {
           .select('*')
           .gte('datum', urlaubStartIso)
           .lte('datum', endeIso),
+        supabase.from('dienstplan_freigaben').select('woche_start'),
     ])
 
     const sortierteMitarbeiter = [...(mitarbeiterData ?? [])].sort((a, b) => {
@@ -351,6 +354,7 @@ export default function Dienstplan() {
     setEintraege(eintraegeData ?? [])
     setUrlaube((urlaubeData ?? []).filter((u) => u.mitarbeiter_id))
     setOffeneSpots((spotsData ?? []) as OffeneSpot[])
+    setFreigegebeneWochen((freigabenData ?? []).map((f) => String(f.woche_start)))
     setLadeVorgang(false)
     setErstesLaden(false)
   }
@@ -929,6 +933,26 @@ export default function Dienstplan() {
     return { dienste, offen }
   }
 
+  async function wocheVeroeffentlichen() {
+    const bestaetigt = window.confirm(
+      `Woche ${datumKurz(tage[0])} – ${datumKurz(tage[6])} für alle Mitarbeiter veröffentlichen? Jeder sieht dann seinen eigenen Dienstplan dieser Woche. Spätere Änderungen sind sofort sichtbar.`
+    )
+    if (!bestaetigt) return
+    const { error } = await supabase.from('dienstplan_freigaben').upsert({ woche_start: wochenStartIso })
+    if (error) window.alert('Veröffentlichen fehlgeschlagen: ' + error.message)
+    await laden()
+  }
+
+  async function wocheZurueckziehen() {
+    const bestaetigt = window.confirm(
+      'Veröffentlichung zurückziehen? Die Mitarbeiter sehen diese Woche dann nicht mehr.'
+    )
+    if (!bestaetigt) return
+    const { error } = await supabase.from('dienstplan_freigaben').delete().eq('woche_start', wochenStartIso)
+    if (error) window.alert('Zurückziehen fehlgeschlagen: ' + error.message)
+    await laden()
+  }
+
   function auswahlZuruecksetzen() {
     setAusgewaehlterBalken(null)
     setTauschenOffen(false)
@@ -1043,6 +1067,43 @@ export default function Dienstplan() {
             Offen
           </span>
         </div>
+
+        {ansicht !== 'monat' &&
+          (freigegebeneWochen.includes(wochenStartIso) ? (
+            <button
+              onClick={wocheZurueckziehen}
+              title="Diese Woche ist für die Mitarbeiter sichtbar. Klicken zum Zurückziehen."
+              style={{
+                background: '#dcfce7',
+                color: '#166534',
+                border: '1px solid #86efac',
+                borderRadius: 6,
+                padding: '8px 14px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              ✓ Woche veröffentlicht
+            </button>
+          ) : (
+            <button
+              onClick={wocheVeroeffentlichen}
+              title="Diese Woche ist für die Mitarbeiter noch nicht sichtbar."
+              style={{
+                background: '#ffffff',
+                color: '#166534',
+                border: '1px solid #16a34a',
+                borderRadius: 6,
+                padding: '8px 14px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Woche veröffentlichen
+            </button>
+          ))}
 
         <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
           + Offene Spotschicht

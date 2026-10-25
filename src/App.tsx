@@ -9,10 +9,12 @@ import Kalender from './Kalender'
 import MitarbeiterVerwaltung from './MitarbeiterVerwaltung'
 import Streckenkunde from './Streckenkunde'
 import Dienstplan from './Dienstplan'
+import MeinDienstplan from './MeinDienstplan'
 import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
 const ALLE_TABS = [
+  { id: 'meinplan', label: 'Mein Dienstplan', nurAdmin: false },
   { id: 'antrag', label: 'Antrag einreichen', nurAdmin: false },
   { id: 'kalender', label: 'Personalplanung', nurAdmin: true },
   { id: 'antraege', label: 'Anträge', nurAdmin: false },
@@ -32,6 +34,15 @@ function App() {
   const [logoFehler, setLogoFehler] = useState(false)
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
+  const [startTabGesetzt, setStartTabGesetzt] = useState(false)
+
+  // Mitarbeiter starten direkt in ihrem Dienstplan
+  useEffect(() => {
+    if (!ladeRolle && !startTabGesetzt) {
+      if (mitarbeiter && !istAdmin) setAktiverTab('meinplan')
+      setStartTabGesetzt(true)
+    }
+  }, [ladeRolle, mitarbeiter, istAdmin, startTabGesetzt])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -70,7 +81,9 @@ function App() {
     )
   }
 
-  const sichtbareTabs = ALLE_TABS.filter((tab) => !tab.nurAdmin || istAdmin)
+  const sichtbareTabs = ALLE_TABS.filter((tab) =>
+    tab.id === 'meinplan' ? !istAdmin : !tab.nurAdmin || istAdmin
+  )
 
   return (
     <div style={{ background: '#f1f4f9', minHeight: '100vh' }}>
@@ -171,6 +184,22 @@ function App() {
           padding: '32px 20px',
         }}
       >
+        {aktiverTab === 'meinplan' && !istAdmin && mitarbeiter && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 720,
+              margin: '0 auto',
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Mein Dienstplan</h3>
+            <MeinDienstplan mitarbeiterId={mitarbeiter.id} />
+          </div>
+        )}
+
         {aktiverTab === 'antrag' && (
           <div
             style={{
