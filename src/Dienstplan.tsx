@@ -122,13 +122,6 @@ function minutenAlsUhrzeit(minuten: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 
-function schichtDauerMinuten(beginn: string, ende: string, pauseMinuten: number): number {
-  const start = zeitInMinuten(beginn)
-  let end = zeitInMinuten(ende)
-  if (end <= start) end += 24 * 60
-  return end - start - pauseMinuten
-}
-
 function minutenAlsText(minuten: number): string {
   const stunden = Math.floor(minuten / 60)
   const rest = minuten % 60
