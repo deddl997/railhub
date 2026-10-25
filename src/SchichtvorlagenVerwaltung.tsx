@@ -57,7 +57,9 @@ export default function SchichtvorlagenVerwaltung() {
 
   async function vorlageSpeichern() {
     if (!neueVorlage.name.trim()) return
-    await supabase.from('schichtvorlagen').insert(neueVorlage)
+    await supabase
+      .from('schichtvorlagen')
+      .insert(neueVorlage.bereich === 'Wagenmeister' ? { ...neueVorlage, benoetigte_loks: [] } : neueVorlage)
     setNeueVorlage(LEERE_VORLAGE)
     setFormularOffen(false)
     await laden()
@@ -193,13 +195,15 @@ export default function SchichtvorlagenVerwaltung() {
               style={{ ...eingabeStil, padding: 2, height: 36 }}
             />
           </label>
-          <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
-            Benötigte Loks (nur Mitarbeiter mit allen gewählten Loks sind ohne Warnung einsetzbar)
-            <LokAuswahl
-              ausgewaehlt={neueVorlage.benoetigte_loks}
-              onAendern={(loks) => setNeueVorlage({ ...neueVorlage, benoetigte_loks: loks })}
-            />
-          </label>
+          {neueVorlage.bereich !== 'Wagenmeister' && (
+            <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+              Benötigte Loks (nur Mitarbeiter mit allen gewählten Loks sind ohne Warnung einsetzbar)
+              <LokAuswahl
+                ausgewaehlt={neueVorlage.benoetigte_loks}
+                onAendern={(loks) => setNeueVorlage({ ...neueVorlage, benoetigte_loks: loks })}
+              />
+            </label>
+          )}
           <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
             Benötigt an
             <WochentagCheckboxen
@@ -253,7 +257,12 @@ export default function SchichtvorlagenVerwaltung() {
                 <td style={zellStil}>
                   <select
                     value={vorlage.bereich ?? 'Lokführer'}
-                    onChange={(e) => vorlageAktualisieren(vorlage, { bereich: e.target.value })}
+                    onChange={(e) =>
+                      vorlageAktualisieren(
+                        vorlage,
+                        e.target.value === 'Wagenmeister' ? { bereich: e.target.value, benoetigte_loks: [] } : { bereich: e.target.value }
+                      )
+                    }
                     style={{ ...eingabeStil, width: 140 }}
                   >
                     {BEREICHE.map((b) => (
@@ -295,11 +304,15 @@ export default function SchichtvorlagenVerwaltung() {
                   />
                 </td>
                 <td style={zellStil}>
-                  <LokAuswahl
-                    ausgewaehlt={vorlage.benoetigte_loks ?? []}
-                    onAendern={(loks) => vorlageAktualisieren(vorlage, { benoetigte_loks: loks })}
-                    kompakt
-                  />
+                  {vorlage.bereich === 'Wagenmeister' ? (
+                    <span style={{ color: 'var(--text-muted)' }}>–</span>
+                  ) : (
+                    <LokAuswahl
+                      ausgewaehlt={vorlage.benoetigte_loks ?? []}
+                      onAendern={(loks) => vorlageAktualisieren(vorlage, { benoetigte_loks: loks })}
+                      kompakt
+                    />
+                  )}
                 </td>
                 <td style={zellStil}>
                   <WochentagCheckboxen
