@@ -116,6 +116,40 @@ const ABW_LEER = {
   abw_info: null,
 }
 
+const MONATE = [
+  'Januar',
+  'Februar',
+  'März',
+  'April',
+  'Mai',
+  'Juni',
+  'Juli',
+  'August',
+  'September',
+  'Oktober',
+  'November',
+  'Dezember',
+]
+
+type Ansicht = 'tag' | 'woche' | 'monat'
+
+function kalenderwoche(datum: Date): number {
+  const d = new Date(Date.UTC(datum.getFullYear(), datum.getMonth(), datum.getDate()))
+  const tag = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - tag)
+  const jahrStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil(((d.getTime() - jahrStart.getTime()) / 86400000 + 1) / 7)
+}
+
+function textFarbeFuer(hex: string): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return '#ffffff'
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  const helligkeit = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return helligkeit > 0.65 ? '#0f2447' : '#ffffff'
+}
+
 const BEREICHE = ['Lokführer', 'Wagenmeister'] as const
 
 function bereichVonKategorie(kategorie: string | null): string {
@@ -125,6 +159,12 @@ function bereichVonKategorie(kategorie: string | null): string {
 const WOCHENTAGE_KURZ = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
 const WOCHENTAGE_LANG = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
 const STUNDEN = Array.from({ length: 24 }, (_, i) => i)
+
+function stundeKurz(minuten: number): string {
+  const m = ((minuten % 1440) + 1440) % 1440
+  if (m % 60 === 0) return String(m / 60).padStart(2, '0')
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
 
 function addTage(datum: Date, anzahl: number): Date {
   const neu = new Date(datum)
@@ -201,7 +241,18 @@ function farbeFuerAvatar(name: string): string {
 }
 
 export default function Dienstplan() {
-  const [ansicht, setAnsicht] = useState<'tag' | 'woche'>('tag')
+  const [ansicht, setAnsicht] = useState<Ansicht>('tag')
+  const [ausgewaehlterBalken, setAusgewaehlterBalken] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
+  const [tauschenOffen, setTauschenOffen] = useState(false)
+  const [tauschZiel, setTauschZiel] = useState('')
+  const [mindestbesetzung, setMindestbesetzung] = useState(() => {
+    try {
+      const gespeichert = window.localStorage.getItem('dienstplan_mindestbesetzung')
+      return gespeichert ? Number(gespeichert) || 2 : 2
+    } catch {
+      return 2
+    }
+  })
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
   const [vorlagen, setVorlagen] = useState<Schichtvorlage[]>([])
@@ -244,13 +295,21 @@ export default function Dienstplan() {
   const tage = Array.from({ length: 7 }, (_, i) => addTage(wochenStart, i))
   const tagIso = datumZuISO(bezugsdatum)
   const wochenStartIso = datumZuISO(wochenStart)
+  const monatsErster = new Date(bezugsdatum.getFullYear(), bezugsdatum.getMonth(), 1)
+  const monatsTage = Array.from(
+    { length: new Date(bezugsdatum.getFullYear(), bezugsdatum.getMonth() + 1, 0).getDate() },
+    (_, i) => new Date(bezugsdatum.getFullYear(), bezugsdatum.getMonth(), i + 1)
+  )
+  const ladeSchluessel = ansicht === 'monat' ? `m-${datumZuISO(monatsErster)}` : `w-${wochenStartIso}`
 
   async function laden() {
     setLadeVorgang(true)
     // ein Tag davor wird mitgeladen, damit Nachtschichten vom Vortag sichtbar sind
-    const startIso = datumZuISO(addTage(wochenStart, -1))
-    const endeIso = datumZuISO(tage[6])
-    const urlaubStartIso = datumZuISO(wochenStart)
+    const bereichStart = ansicht === 'monat' ? monatsErster : wochenStart
+    const bereichEnde = ansicht === 'monat' ? monatsTage[monatsTage.length - 1] : tage[6]
+    const startIso = datumZuISO(addTage(bereichStart, -1))
+    const endeIso = datumZuISO(bereichEnde)
+    const urlaubStartIso = datumZuISO(bereichStart)
 
     const [
       { data: mitarbeiterData },
@@ -299,7 +358,7 @@ export default function Dienstplan() {
   useEffect(() => {
     laden()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wochenStartIso])
+  }, [ladeSchluessel])
 
   function istUrlaub(mitarbeiterId: string, datumIso: string): boolean {
     return urlaube.some(
@@ -774,12 +833,6 @@ export default function Dienstplan() {
     return []
   }
 
-  function tagesArbeitszeit(mitarbeiterId: string, datum: Date): string {
-    const info = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(datum)))
-    if (!info) return ''
-    return minutenAlsText(info.ende - info.beginn)
-  }
-
   function offeneVorlagenFuerTag(datumIso: string, wochentag: number, bereich: string): Schichtvorlage[] {
     return vorlagen.filter((v) => {
       if ((v.bereich ?? 'Lokführer') !== bereich) return false
@@ -815,18 +868,105 @@ export default function Dienstplan() {
     }
   }
 
+  function eintragPayload(e: DienstplanEintrag, mitarbeiterId: string, datumIso: string) {
+    return {
+      mitarbeiter_id: mitarbeiterId,
+      datum: datumIso,
+      schichtvorlage_id: e.schichtvorlage_id,
+      ist_spotschicht: e.ist_spotschicht,
+      spot_name: e.spot_name,
+      spot_beginn_zeit: e.spot_beginn_zeit,
+      spot_ende_zeit: e.spot_ende_zeit,
+      spot_pause_minuten: e.spot_pause_minuten,
+      spot_dienstort: e.spot_dienstort,
+      spot_farbe: e.spot_farbe,
+      spot_info: e.spot_info ?? null,
+      abw_beginn_zeit: e.abw_beginn_zeit ?? null,
+      abw_ende_zeit: e.abw_ende_zeit ?? null,
+      abw_pause_minuten: e.abw_pause_minuten ?? null,
+      abw_dienstort: e.abw_dienstort ?? null,
+      abw_info: e.abw_info ?? null,
+      status: e.status,
+    }
+  }
+
+  // Zwei Personen tauschen ihre Schichten am selben Tag
+  async function eintragTauschen(quelle: { mitarbeiterId: string; datum: string }, zielId: string) {
+    const eA = eintragFuer(quelle.mitarbeiterId, quelle.datum)
+    if (!eA || !zielId) return
+    const eB = eintragFuer(zielId, quelle.datum)
+    await supabase
+      .from('dienstplan_eintraege')
+      .delete()
+      .eq('datum', quelle.datum)
+      .in('mitarbeiter_id', [quelle.mitarbeiterId, zielId])
+    await supabase
+      .from('dienstplan_eintraege')
+      .upsert(eintragPayload(eA, zielId, quelle.datum), { onConflict: 'mitarbeiter_id,datum' })
+    if (eB) {
+      await supabase
+        .from('dienstplan_eintraege')
+        .upsert(eintragPayload(eB, quelle.mitarbeiterId, quelle.datum), { onConflict: 'mitarbeiter_id,datum' })
+    }
+    setTauschenOffen(false)
+    setTauschZiel('')
+    setAusgewaehlterBalken({ mitarbeiterId: zielId, datum: quelle.datum })
+    await laden()
+  }
+
+  function uebersichtFuerTage(tageListe: Date[]): { dienste: number; offen: number } {
+    let dienste = 0
+    let offen = 0
+    for (const tag of tageListe) {
+      const iso = datumZuISO(tag)
+      for (const m of mitarbeiterListe) {
+        if (!istUrlaub(m.id, iso) && schichtInfoVon(eintragFuer(m.id, iso))) dienste++
+      }
+      for (const b of BEREICHE) {
+        offen += offeneVorlagenFuerTag(iso, tag.getDay(), b).length + offeneSpotsFuerTag(iso, b).length
+      }
+    }
+    return { dienste, offen }
+  }
+
+  function auswahlZuruecksetzen() {
+    setAusgewaehlterBalken(null)
+    setTauschenOffen(false)
+    setTauschZiel('')
+  }
+
   function navigieren(richtung: -1 | 1) {
-    setBezugsdatum(addTage(bezugsdatum, (ansicht === 'tag' ? 1 : 7) * richtung))
+    auswahlZuruecksetzen()
+    if (ansicht === 'monat') {
+      setBezugsdatum(new Date(bezugsdatum.getFullYear(), bezugsdatum.getMonth() + richtung, 1))
+    } else {
+      setBezugsdatum(addTage(bezugsdatum, (ansicht === 'tag' ? 1 : 7) * richtung))
+    }
+  }
+
+  function zuTagSpringen(tag: Date, mitarbeiterId?: string) {
+    setBezugsdatum(tag)
+    setAnsicht('tag')
+    setTauschenOffen(false)
+    setTauschZiel('')
+    setAusgewaehlterBalken(mitarbeiterId ? { mitarbeiterId, datum: datumZuISO(tag) } : null)
   }
 
   if (erstesLaden && ladeVorgang) {
     return <p style={{ color: 'var(--text-muted)' }}>Lade Dienstplan...</p>
   }
 
-  const navigationsText =
+  const anzeigeTage = ansicht === 'tag' ? [bezugsdatum] : ansicht === 'woche' ? tage : monatsTage
+  const uebersicht = uebersichtFuerTage(anzeigeTage)
+  const toolbarTitel =
     ansicht === 'tag'
       ? `${WOCHENTAGE_LANG[bezugsdatum.getDay()]}, ${datumKurz(bezugsdatum)}${bezugsdatum.getFullYear()}`
-      : `${datumKurz(tage[0])} – ${datumKurz(tage[6])} ${tage[0].getFullYear()}`
+      : ansicht === 'woche'
+      ? `${datumKurz(tage[0])} – ${datumKurz(tage[6])} ${tage[0].getFullYear()}`
+      : `${MONATE[bezugsdatum.getMonth()]} ${bezugsdatum.getFullYear()}`
+  const toolbarUntertitel =
+    (ansicht === 'monat' ? '' : `KW ${kalenderwoche(bezugsdatum)} · `) +
+    `${uebersicht.dienste} Dienste · ${uebersicht.offen} offen`
 
   return (
     <div style={{ opacity: ladeVorgang ? 0.7 : 1, transition: 'opacity 0.15s' }}>
@@ -834,82 +974,89 @@ export default function Dienstplan() {
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
           gap: 12,
           flexWrap: 'wrap',
-          marginBottom: 12,
+          marginBottom: 14,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button onClick={() => navigieren(-1)} style={navigationsKnopfStil}>
-            ← {ansicht === 'tag' ? 'Vortag' : 'Vorherige Woche'}
-          </button>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)', minWidth: 190, textAlign: 'center' }}>
-            {navigationsText}
-          </div>
-          <button onClick={() => navigieren(1)} style={navigationsKnopfStil}>
-            {ansicht === 'tag' ? 'Folgetag' : 'Nächste Woche'} →
-          </button>
-          <button onClick={() => setBezugsdatum(heuteOhneUhrzeit())} style={navigationsKnopfStil}>
-            Heute
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
-          + Offene Spotschicht
+        <button onClick={() => navigieren(-1)} style={pfeilKnopfStil} aria-label="Zurück">
+          ‹
         </button>
-        <div style={{ display: 'flex', border: '1px solid var(--navy)', borderRadius: 6, overflow: 'hidden' }}>
-          {(['tag', 'woche'] as const).map((a) => (
+        <div style={{ minWidth: 190, textAlign: 'center' }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>{toolbarTitel}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{toolbarUntertitel}</div>
+        </div>
+        <button onClick={() => navigieren(1)} style={pfeilKnopfStil} aria-label="Weiter">
+          ›
+        </button>
+
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+          {(
+            [
+              ['woche', 'Woche'],
+              ['tag', 'Tag'],
+              ['monat', 'Monat'],
+            ] as const
+          ).map(([id, label]) => (
             <button
-              key={a}
-              onClick={() => setAnsicht(a)}
+              key={id}
+              onClick={() => {
+                auswahlZuruecksetzen()
+                setAnsicht(id)
+              }}
               style={{
                 border: 'none',
-                padding: '7px 18px',
+                padding: '8px 16px',
                 fontSize: 13,
-                fontWeight: 600,
+                fontWeight: ansicht === id ? 600 : 500,
                 cursor: 'pointer',
-                background: ansicht === a ? 'var(--navy)' : '#ffffff',
-                color: ansicht === a ? '#ffffff' : 'var(--navy)',
+                background: ansicht === id ? 'var(--navy)' : '#ffffff',
+                color: ansicht === id ? '#ffffff' : 'var(--navy)',
               }}
             >
-              {a === 'tag' ? 'Tag' : 'Woche'}
+              {label}
             </button>
           ))}
         </div>
+
+        <button
+          onClick={() => {
+            auswahlZuruecksetzen()
+            setBezugsdatum(heuteOhneUhrzeit())
+          }}
+          style={navigationsKnopfStil}
+        >
+          Heute
+        </button>
+
+        <div style={{ flexGrow: 1 }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12, color: '#475569' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span
+              style={{ width: 16, height: 12, borderRadius: 3, background: '#f6d3cc', border: '1px solid #e5a99c' }}
+            />
+            Nachtdienst Vortag
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 16, height: 12, borderRadius: 3, border: '1.5px dashed #c2410c' }} />
+            Offen
+          </span>
         </div>
+
+        <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
+          + Offene Spotschicht
+        </button>
       </div>
 
-      {ansicht === 'tag' && (
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-          {tage.map((tag, i) => {
-            const aktiv = datumZuISO(tag) === tagIso
-            return (
-              <button
-                key={i}
-                onClick={() => setBezugsdatum(tag)}
-                style={{
-                  border: `1px solid ${aktiv ? 'var(--navy)' : 'var(--border)'}`,
-                  background: aktiv ? 'var(--navy)' : istHeute(tag) ? '#dbe6f5' : '#ffffff',
-                  color: aktiv ? '#ffffff' : 'var(--navy)',
-                  borderRadius: 6,
-                  padding: '5px 12px',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  fontWeight: aktiv ? 700 : 500,
-                }}
-              >
-                {WOCHENTAGE_KURZ[i]} {datumKurz(tag)}
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {ansicht === 'tag' ? renderTagesansicht() : ansicht === 'woche' ? renderWochenansicht() : renderMonatsansicht()}
 
-      {ansicht === 'tag' ? renderTagesansicht() : renderWochenansicht()}
-
-      <style>{`.dienstplan-leerzelle:hover { border-color: var(--navy) !important; color: var(--navy) !important; }`}</style>
+      <style>{`
+        .dienstplan-leerzelle:hover { border-color: var(--navy) !important; color: var(--navy) !important; }
+        .dp-leer-tag { opacity: 0; transition: opacity 0.12s; }
+        .dp-zeile:hover .dp-leer-tag { opacity: 1; }
+        .dp-zeile:hover { background: #f8fafc; }
+      `}</style>
 
       {offenSpotDialogOffen && (
         <div
@@ -1397,14 +1544,53 @@ export default function Dienstplan() {
     const hinweise: string[] = mitarbeiterListe.flatMap((m) =>
       warnungenFuer(m.id, bezugsdatum).map((w) => `${m.name}: ${w.lang}`)
     )
+    const dienste = mitarbeiterListe.filter(
+      (m) => !istUrlaub(m.id, datumIso) && schichtInfoVon(eintragFuer(m.id, datumIso))
+    ).length
 
-    const linkeSpalte: React.CSSProperties = { width: 190, flexShrink: 0, padding: '0 14px' }
-    const rechteSpalte: React.CSSProperties = { width: 56, flexShrink: 0, textAlign: 'center' }
+    // Ausgewaehlte Schicht (rechtes Detailfeld)
+    const sel = ausgewaehlterBalken
+    const selEintrag = sel ? eintragFuer(sel.mitarbeiterId, sel.datum) : undefined
+    const selInfo = schichtInfoVon(selEintrag)
+    const selPerson = sel ? mitarbeiterListe.find((m) => m.id === sel.mitarbeiterId) : undefined
+    const selVortag = sel
+      ? schichtInfoVon(eintragFuer(sel.mitarbeiterId, datumZuISO(addTage(new Date(sel.datum + 'T00:00:00'), -1))))
+      : null
+    const selRuhe = selInfo && selVortag ? 1440 + selInfo.beginn - selVortag.ende : null
+    const selUrlaub = sel ? istUrlaub(sel.mitarbeiterId, sel.datum) : false
+    const selWoche = sel ? wochenMinuten(sel.mitarbeiterId) : 0
+    const pruefpunkte: { ok: boolean; text: string }[] = []
+    if (sel && selInfo) {
+      if (selRuhe === null) pruefpunkte.push({ ok: true, text: 'Kein Dienst am Vortag' })
+      else if (selRuhe < 0) pruefpunkte.push({ ok: false, text: 'Überschneidung mit der Schicht vom Vortag' })
+      else if (selRuhe < 660)
+        pruefpunkte.push({ ok: false, text: `Ruhezeit zum Vortag nur ${minutenAlsText(selRuhe)} Std. (mind. 11 Std.)` })
+      else pruefpunkte.push({ ok: true, text: `Ruhezeit zum Vortag: ${minutenAlsText(selRuhe)} Std.` })
+      pruefpunkte.push(
+        selUrlaub
+          ? { ok: false, text: 'Urlaub in diesem Zeitraum' }
+          : { ok: true, text: 'Kein Urlaub in diesem Zeitraum' }
+      )
+      pruefpunkte.push(
+        selWoche > 48 * 60
+          ? { ok: false, text: `Wochenstunden: ${minutenAlsText(selWoche)} Std. (über 48)` }
+          : { ok: true, text: `Wochenstunden: ${minutenAlsText(selWoche)} Std.` }
+      )
+    }
+
+    const linkeSpalte: React.CSSProperties = { width: 210, flexShrink: 0, padding: '0 14px' }
+    const kachelStil: React.CSSProperties = {
+      background: '#f1f5f9',
+      borderRadius: 8,
+      padding: '8px 12px',
+    }
 
     return (
-      <div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div
           style={{
+            flex: '999 1 640px',
+            minWidth: 0,
             border: '1px solid var(--border)',
             borderRadius: 12,
             overflow: 'hidden',
@@ -1413,30 +1599,25 @@ export default function Dienstplan() {
           }}
         >
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ minWidth: 1000 }}>
+            <div style={{ minWidth: 1100 }}>
               {/* Kopfzeile mit Uhrzeiten */}
-              <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ ...linkeSpalte, padding: '10px 14px', fontWeight: 600, fontSize: 12, color: '#475569' }}>
-                  Mitarbeiter
-                </div>
+              <div style={{ display: 'flex', background: '#14325c', color: '#ffffff' }}>
+                <div style={{ ...linkeSpalte, padding: '11px 14px', fontWeight: 600, fontSize: 13 }}>Mitarbeiter</div>
                 <div style={{ flex: 1, display: 'flex' }}>
                   {STUNDEN.map((h) => (
                     <div
                       key={h}
                       style={{
                         flex: 1,
-                        padding: '10px 0 10px 4px',
-                        fontSize: 10,
-                        color: '#64748b',
-                        borderLeft: '1px solid #e2e8f0',
+                        padding: '11px 0 11px 5px',
+                        fontSize: 11,
+                        color: '#c9d6ea',
+                        borderLeft: '1px solid rgba(255,255,255,0.14)',
                       }}
                     >
                       {String(h).padStart(2, '0')}
                     </div>
                   ))}
-                </div>
-                <div style={{ ...rechteSpalte, padding: '10px 0', fontWeight: 600, fontSize: 12, color: '#475569' }}>
-                  Std.
                 </div>
               </div>
 
@@ -1599,15 +1780,12 @@ export default function Dienstplan() {
                         </>
                       )}
                     </div>
-                    <div style={rechteSpalte} />
                   </div>
                 )
               })}
 
               {/* Mitarbeiterzeilen */}
-              {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => {
-                const vorherigeKategorie = zeilenIndex > 0 ? mitarbeiterListe[zeilenIndex - 1].kategorie : null
-                const neueGruppe = mitarbeiter.kategorie !== vorherigeKategorie
+              {mitarbeiterListe.map((mitarbeiter) => {
                 const urlaub = istUrlaub(mitarbeiter.id, datumIso)
                 const eintrag = eintragFuer(mitarbeiter.id, datumIso)
                 const balken = urlaub ? [] : balkenFuer(mitarbeiter.id, bezugsdatum)
@@ -1616,347 +1794,791 @@ export default function Dienstplan() {
                 const zielSchluessel = `${mitarbeiter.id}-${datumIso}`
                 const ausgewaehlt =
                   ausgewaehlteZelle?.mitarbeiterId === mitarbeiter.id && ausgewaehlteZelle?.datum === datumIso
+                const vortagIso = datumZuISO(addTage(bezugsdatum, -1))
 
                 return (
-                  <Fragment key={mitarbeiter.id}>
-                    {neueGruppe && (
+                  <div
+                    key={mitarbeiter.id}
+                    className="dp-zeile"
+                    style={{ display: 'flex', borderBottom: '1px solid #eef2f8', alignItems: 'stretch' }}
+                  >
+                    <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px' }}>
                       <div
                         style={{
-                          background: '#eef2f7',
-                          color: 'var(--navy)',
-                          fontWeight: 700,
-                          fontSize: 11,
-                          padding: '6px 16px',
-                          textTransform: 'uppercase',
-                          letterSpacing: 0.4,
-                          borderBottom: '1px solid var(--border)',
-                          borderTop: zeilenIndex > 0 ? '1px solid var(--border)' : undefined,
-                        }}
-                      >
-                        {mitarbeiter.kategorie ?? 'Ohne Qualifikation'}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', alignItems: 'stretch' }}>
-                      <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px' }}>
-                        <div
-                          style={{
-                            width: 26,
-                            height: 26,
-                            borderRadius: '50%',
-                            background: farbeFuerAvatar(mitarbeiter.name),
-                            color: '#ffffff',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {initialen(mitarbeiter.name)}
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontWeight: 500,
-                              fontSize: 12,
-                              color: '#1e293b',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                            }}
-                          >
-                            {mitarbeiter.name}
-                          </div>
-                          {warnungen.map((w, wi) => (
-                            <div
-                              key={wi}
-                              title={w.lang}
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                color: w.art === 'ueberschneidung' ? '#dc2626' : '#b45309',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              ⚠ {w.kurz}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div
-                        onClick={() => (!urlaub || !!eintrag) && zelleOeffnen(mitarbeiter.id, datumIso)}
-                        onDragOver={(e) => {
-                          if (urlaub) return
-                          e.preventDefault()
-                          setHoverZiel(zielSchluessel)
-                        }}
-                        onDragLeave={() => setHoverZiel((z) => (z === zielSchluessel ? null : z))}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          setHoverZiel(null)
-                          if (urlaub) return
-                          if (gezogeneVorlage) {
-                            offenesZuweisen(gezogeneVorlage, mitarbeiter.id, datumIso)
-                            setGezogeneVorlage(null)
-                          } else if (gezogenerEintrag) {
-                            eintragVerschieben(gezogenerEintrag, mitarbeiter.id, datumIso)
-                            setGezogenerEintrag(null)
-                          }
-                        }}
-                        style={{
-                          flex: 1,
-                          position: 'relative',
-                          height: 52,
-                          cursor: urlaub && !eintrag ? 'default' : 'pointer',
-                          background: hoverZiel === zielSchluessel ? '#e0f2fe' : undefined,
-                          boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
-                          ...raster,
-                        }}
-                      >
-                        {zeigeJetzt && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              left: `${(jetztMinuten / 1440) * 100}%`,
-                              top: 0,
-                              bottom: 0,
-                              width: 2,
-                              background: '#dc2626',
-                              opacity: 0.6,
-                              pointerEvents: 'none',
-                              zIndex: 2,
-                            }}
-                          />
-                        )}
-
-                        {urlaub && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              inset: '8px 4px',
-                              borderRadius: 8,
-                              border: '1.5px solid #db2777',
-                              background: '#db277715',
-                              color: '#db2777',
-                              fontWeight: 700,
-                              fontSize: 12,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            Urlaub
-                          </div>
-                        )}
-
-                        {!urlaub && eintrag?.status && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              inset: '8px 4px',
-                              borderRadius: 8,
-                              border: `1.5px solid ${eintrag.status === 'ruhe' ? '#0e7490' : '#64748b'}`,
-                              background: eintrag.status === 'ruhe' ? '#0e749015' : '#64748b15',
-                              color: eintrag.status === 'ruhe' ? '#0e7490' : '#64748b',
-                              fontWeight: 700,
-                              fontSize: 12,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            {eintrag.status === 'ruhe' ? 'Ruhe' : 'Frei'}
-                          </div>
-                        )}
-
-                        {!urlaub && !eintrag && balken.length === 0 && (
-                          <div
-                            className="dienstplan-leerzelle"
-                            style={{
-                              position: 'absolute',
-                              inset: '8px 4px',
-                              borderRadius: 8,
-                              border: '1.5px dashed #e2e8f0',
-                              color: '#cbd5e1',
-                              fontSize: 14,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            + Schicht
-                          </div>
-                        )}
-
-                        {balken.map((b, i) => {
-                          const breite = ((b.bis - b.von) / 1440) * 100
-                          // Pausenabschnitt (nur bei Vorlagen mit Pause von/bis, nur am Starttag)
-                          const pauseSichtbar =
-                            !b.vortag && b.info.pauseVon !== null && b.info.pauseBis !== null && b.info.pauseBis > b.info.pauseVon
-                          return (
-                            <div
-                              key={i}
-                              draggable={!b.vortag}
-                              onDragStart={(e) => {
-                                e.stopPropagation()
-                                setGezogenerEintrag({ mitarbeiterId: mitarbeiter.id, datum: datumIso })
-                              }}
-                              onDragEnd={() => setGezogenerEintrag(null)}
-                              title={`${b.info.titel} ${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}${b.vortag ? ' (Nachtschicht vom Vortag)' : ''}${b.info.info ? '\nInfo: ' + b.info.info : ''}`}
-                              style={{
-                                position: 'absolute',
-                                left: `${(b.von / 1440) * 100}%`,
-                                width: `${breite}%`,
-                                top: ueberlappt ? (b.vortag ? 3 : 27) : 8,
-                                height: ueberlappt ? 22 : 36,
-                                boxSizing: 'border-box',
-                                boxShadow: ueberlappt ? '0 0 0 2px #dc2626' : undefined,
-                                background: b.info.farbe,
-                                color: '#ffffff',
-                                opacity: b.vortag ? 0.75 : 1,
-                                borderRadius: `${b.vortag ? 0 : 8}px ${b.weiter ? 0 : 8}px ${b.weiter ? 0 : 8}px ${b.vortag ? 0 : 8}px`,
-                                padding: '3px 8px',
-                                overflow: 'hidden',
-                                cursor: b.vortag ? 'pointer' : 'grab',
-                                zIndex: 1,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                justifyContent: 'center',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontWeight: 700,
-                                  fontSize: 11,
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                }}
-                              >
-                                {b.vortag ? '← ' : ''}
-                                {b.info.titel}
-                                {b.info.abweichung ? ' ✎' : ''}
-                                {b.info.info ? ' ℹ' : ''}
-                                {ueberlappt
-                                  ? b.vortag
-                                    ? ` · bis ${minutenAlsUhrzeit(b.info.ende)}`
-                                    : ` · ${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}`
-                                  : ''}
-                                {b.weiter ? ' →' : ''}
-                              </div>
-                              {!ueberlappt && (
-                                <div style={{ fontSize: 10, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden' }}>
-                                  {b.vortag
-                                    ? `Nacht vom Vortag bis ${minutenAlsUhrzeit(b.info.ende)}`
-                                    : `${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}`}
-                                </div>
-                              )}
-                              {pauseSichtbar && (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    left: `${(((b.info.pauseVon as number) - b.von) / (b.bis - b.von)) * 100}%`,
-                                    width: `${(((b.info.pauseBis as number) - (b.info.pauseVon as number)) / (b.bis - b.von)) * 100}%`,
-                                    top: 0,
-                                    bottom: 0,
-                                    background: 'rgba(255,255,255,0.35)',
-                                    pointerEvents: 'none',
-                                  }}
-                                />
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-
-                      <div
-                        style={{
-                          ...rechteSpalte,
+                          width: 30,
+                          height: 30,
+                          borderRadius: '50%',
+                          background: farbeFuerAvatar(mitarbeiter.name),
+                          color: '#ffffff',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
+                          fontSize: 11,
                           fontWeight: 700,
-                          fontSize: 12,
-                          color: 'var(--navy)',
+                          flexShrink: 0,
                         }}
                       >
-                        {urlaub ? '' : tagesArbeitszeit(mitarbeiter.id, bezugsdatum)}
+                        {initialen(mitarbeiter.name)}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b', lineHeight: 1.25 }}>
+                          {mitarbeiter.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#64748b' }}>{mitarbeiter.kategorie ?? 'Ohne Qualifikation'}</div>
+                        {warnungen.map((w, wi) => (
+                          <div
+                            key={wi}
+                            title={w.lang}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: w.art === 'ueberschneidung' ? '#dc2626' : '#b45309',
+                            }}
+                          >
+                            ⚠ {w.kurz}
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  </Fragment>
+
+                    <div
+                      onClick={() => (!urlaub || !!eintrag) && zelleOeffnen(mitarbeiter.id, datumIso)}
+                      onDragOver={(e) => {
+                        if (urlaub) return
+                        e.preventDefault()
+                        setHoverZiel(zielSchluessel)
+                      }}
+                      onDragLeave={() => setHoverZiel((z) => (z === zielSchluessel ? null : z))}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setHoverZiel(null)
+                        if (urlaub) return
+                        if (gezogeneVorlage) {
+                          offenesZuweisen(gezogeneVorlage, mitarbeiter.id, datumIso)
+                          setGezogeneVorlage(null)
+                        } else if (gezogenerEintrag) {
+                          eintragVerschieben(gezogenerEintrag, mitarbeiter.id, datumIso)
+                          setGezogenerEintrag(null)
+                        }
+                      }}
+                      style={{
+                        flex: 1,
+                        position: 'relative',
+                        minHeight: 52,
+                        cursor: urlaub && !eintrag ? 'default' : 'pointer',
+                        background: hoverZiel === zielSchluessel ? '#e0f2fe' : undefined,
+                        boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
+                        ...raster,
+                      }}
+                    >
+                      {zeigeJetzt && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: `${(jetztMinuten / 1440) * 100}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 2,
+                            background: '#dc2626',
+                            opacity: 0.6,
+                            pointerEvents: 'none',
+                            zIndex: 2,
+                          }}
+                        />
+                      )}
+
+                      {urlaub && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            right: 0,
+                            top: 'calc(50% - 16px)',
+                            height: 32,
+                            borderRadius: 6,
+                            background: '#c026d3',
+                            color: '#ffffff',
+                            fontWeight: 700,
+                            fontSize: 12,
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0 10px',
+                          }}
+                        >
+                          Urlaub ganztägig
+                        </div>
+                      )}
+
+                      {!urlaub && eintrag?.status && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            right: 0,
+                            top: 'calc(50% - 16px)',
+                            height: 32,
+                            borderRadius: 6,
+                            border: `1.5px solid ${eintrag.status === 'ruhe' ? '#0e7490' : '#64748b'}`,
+                            background: eintrag.status === 'ruhe' ? '#0e749015' : '#64748b15',
+                            color: eintrag.status === 'ruhe' ? '#0e7490' : '#64748b',
+                            fontWeight: 700,
+                            fontSize: 12,
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0 10px',
+                            boxSizing: 'border-box',
+                          }}
+                        >
+                          {eintrag.status === 'ruhe' ? 'Ruhe' : 'Frei'}
+                        </div>
+                      )}
+
+                      {!urlaub && !eintrag && balken.length === 0 && (
+                        <div
+                          className="dienstplan-leerzelle dp-leer-tag"
+                          style={{
+                            position: 'absolute',
+                            inset: '8px 4px',
+                            borderRadius: 8,
+                            border: '1.5px dashed #cbd5e1',
+                            color: '#94a3b8',
+                            fontSize: 12,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          + Schicht
+                        </div>
+                      )}
+
+                      {balken.map((b, i) => {
+                        const breite = ((b.bis - b.von) / 1440) * 100
+                        const balkenDatum = b.vortag ? vortagIso : datumIso
+                        const istAuswahl = sel?.mitarbeiterId === mitarbeiter.id && sel?.datum === balkenDatum
+                        // Pausenabschnitt (nur bei Vorlagen mit Pause von/bis, nur am Starttag)
+                        const pauseSichtbar =
+                          !b.vortag && b.info.pauseVon !== null && b.info.pauseBis !== null && b.info.pauseBis > b.info.pauseVon
+                        const zeitText = b.vortag
+                          ? `bis ${stundeKurz(b.info.ende)}`
+                          : `${stundeKurz(b.info.beginn)}–${stundeKurz(b.info.ende)}`
+                        return (
+                          <div
+                            key={i}
+                            draggable={!b.vortag}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setTauschenOffen(false)
+                              setAusgewaehlterBalken({ mitarbeiterId: mitarbeiter.id, datum: balkenDatum })
+                            }}
+                            onDragStart={(e) => {
+                              e.stopPropagation()
+                              setGezogenerEintrag({ mitarbeiterId: mitarbeiter.id, datum: datumIso })
+                            }}
+                            onDragEnd={() => setGezogenerEintrag(null)}
+                            title={`${b.info.titel} ${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}${b.vortag ? ' (Nachtschicht vom Vortag)' : ''}${b.info.info ? '\nInfo: ' + b.info.info : ''}`}
+                            style={{
+                              position: 'absolute',
+                              left: `${(b.von / 1440) * 100}%`,
+                              width: `${breite}%`,
+                              top: ueberlappt ? (b.vortag ? 'calc(50% - 24px)' : 'calc(50% + 2px)') : 'calc(50% - 16px)',
+                              height: ueberlappt ? 22 : 32,
+                              boxSizing: 'border-box',
+                              boxShadow: istAuswahl
+                                ? '0 0 0 2px var(--navy)'
+                                : ueberlappt
+                                ? '0 0 0 2px #dc2626'
+                                : undefined,
+                              background: b.vortag ? '#f6d3cc' : b.info.farbe,
+                              color: b.vortag ? '#7a1d0f' : textFarbeFuer(b.info.farbe),
+                              borderRadius: `${b.vortag ? 0 : 6}px ${b.weiter ? 0 : 6}px ${b.weiter ? 0 : 6}px ${b.vortag ? 0 : 6}px`,
+                              padding: '0 9px',
+                              overflow: 'hidden',
+                              cursor: 'pointer',
+                              zIndex: istAuswahl ? 3 : 1,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              whiteSpace: 'nowrap',
+                              fontSize: 12,
+                            }}
+                          >
+                            <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {b.info.titel}
+                              {b.vortag ? ' (Vortag)' : ''}
+                              {b.info.abweichung ? ' ✎' : ''}
+                              {b.info.info ? ' ℹ' : ''}
+                            </span>
+                            <span style={{ fontWeight: 400, opacity: 0.9, flexShrink: 0 }}>
+                              {zeitText}
+                              {b.weiter ? ' →' : ''}
+                            </span>
+                            {pauseSichtbar && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  left: `${(((b.info.pauseVon as number) - b.von) / (b.bis - b.von)) * 100}%`,
+                                  width: `${(((b.info.pauseBis as number) - (b.info.pauseVon as number)) / (b.bis - b.von)) * 100}%`,
+                                  top: 0,
+                                  bottom: 0,
+                                  background: 'rgba(255,255,255,0.35)',
+                                  pointerEvents: 'none',
+                                }}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
                 )
               })}
 
               {/* Besetzung pro Stunde */}
-              <div style={{ display: 'flex', background: '#f8fafc', borderTop: '2px solid var(--navy)' }}>
-                <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', fontWeight: 700, fontSize: 12, color: 'var(--navy)' }}>
-                  Besetzung
-                </div>
-                <div style={{ flex: 1, display: 'flex', height: 58 }}>
-                  {besetzung.map((n, h) => (
-                    <div
-                      key={h}
-                      style={{
-                        flex: 1,
-                        borderLeft: '1px solid #e2e8f0',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'flex-end',
-                        alignItems: 'center',
-                        padding: '4px 2px',
-                        boxSizing: 'border-box',
+              <div style={{ display: 'flex', background: '#f8fafc', borderTop: '2px solid #14325c' }}>
+                <div style={{ ...linkeSpalte, padding: '10px 14px', fontSize: 12, color: '#334155' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13 }}>Besetzung je Stunde</div>
+                  <div style={{ marginTop: 2 }}>
+                    Mindestbesetzung:{' '}
+                    <input
+                      type="number"
+                      min={0}
+                      value={mindestbesetzung}
+                      onChange={(e) => {
+                        const wert = Math.max(0, Number(e.target.value) || 0)
+                        setMindestbesetzung(wert)
+                        try {
+                          window.localStorage.setItem('dienstplan_mindestbesetzung', String(wert))
+                        } catch {
+                          // Speichern im Browser nicht moeglich: egal
+                        }
                       }}
-                    >
-                      <div style={{ fontSize: 10, fontWeight: 700, color: n === 0 ? '#b91c1c' : '#334155' }}>{n}</div>
-                      <div
-                        style={{
-                          width: '70%',
-                          height: Math.max(2, (n / maxBesetzung) * 28),
-                          background: n === 0 ? '#fca5a5' : '#7ea6e8',
-                          borderRadius: 2,
-                        }}
-                      />
-                    </div>
-                  ))}
+                      style={{ width: 42, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12 }}
+                    />{' '}
+                    Personen
+                  </div>
                 </div>
-                <div style={rechteSpalte} />
+                <div style={{ flex: 1, display: 'flex', height: 74 }}>
+                  {besetzung.map((n, h) => {
+                    const farbe = n < mindestbesetzung ? '#b91c1c' : n === mindestbesetzung ? '#c2570c' : '#15803d'
+                    return (
+                      <div
+                        key={h}
+                        style={{
+                          flex: 1,
+                          borderLeft: '1px solid #e2e8f0',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'flex-end',
+                          alignItems: 'center',
+                          padding: '4px 2px',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        <div style={{ fontSize: 10, fontWeight: 700, color: farbe }}>{n}</div>
+                        <div
+                          style={{
+                            width: '72%',
+                            height: Math.max(3, (n / maxBesetzung) * 40),
+                            background: farbe,
+                            borderRadius: '3px 3px 0 0',
+                          }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Pruefung */}
+        {/* Detailfeld rechts */}
         <div
           style={{
-            marginTop: 12,
+            flex: '1 1 280px',
+            maxWidth: 360,
+            minWidth: 260,
             border: '1px solid var(--border)',
             borderRadius: 12,
-            padding: '12px 16px',
             background: '#ffffff',
-            fontSize: 13,
+            padding: 16,
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
           }}
         >
-          <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>Prüfung für diesen Tag</div>
-          {hinweise.length === 0 && offeneNamen.length === 0 && (
-            <div style={{ color: 'var(--success)' }}>✓ Alles in Ordnung: keine offenen Schichten, Ruhezeiten eingehalten.</div>
-          )}
-          {offeneNamen.length > 0 && (
-            <div style={{ color: '#b45309', marginBottom: 4 }}>
-              ⚠ {offeneNamen.length} offene Schicht{offeneNamen.length === 1 ? '' : 'en'}: {offeneNamen.join(', ')}
+          {sel && selInfo && selEintrag ? (
+            <div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
+                <div style={{ width: 8, alignSelf: 'stretch', borderRadius: 4, background: selInfo.farbe, minHeight: 34 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>
+                    {selInfo.titel}
+                    {selInfo.abweichung ? ' ✎' : ''}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                    {selPerson?.name} · {sel.datum.split('-').reverse().join('.')}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                <div style={kachelStil}>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>Beginn</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{minutenAlsUhrzeit(selInfo.beginn)}</div>
+                </div>
+                <div style={kachelStil}>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>Ende</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{minutenAlsUhrzeit(selInfo.ende)}</div>
+                </div>
+                <div style={kachelStil}>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>Pause</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>
+                    {selInfo.pause} min
+                    {selInfo.pauseVon !== null ? ` · ${minutenAlsUhrzeit(selInfo.pauseVon)}` : ''}
+                  </div>
+                </div>
+                <div style={kachelStil}>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>Arbeitszeit</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{minutenAlsText(selInfo.ende - selInfo.beginn)} Std.</div>
+                </div>
+              </div>
+
+              {selInfo.ort && (
+                <div style={{ fontSize: 12, color: '#475569', marginBottom: 8 }}>
+                  Dienstort: <b>{selInfo.ort}</b>
+                </div>
+              )}
+              {selInfo.info && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: '#78350f',
+                    background: '#fffbeb',
+                    border: '1px solid #fde68a',
+                    borderRadius: 8,
+                    padding: '6px 10px',
+                    marginBottom: 8,
+                  }}
+                >
+                  ℹ {selInfo.info}
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Prüfung</div>
+                {pruefpunkte.map((pp, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, fontSize: 13, marginBottom: 6, color: pp.ok ? '#334155' : '#b91c1c' }}>
+                    <span style={{ color: pp.ok ? '#15803d' : '#dc2626', fontWeight: 700 }}>{pp.ok ? '✓' : '⚠'}</span>
+                    {pp.text}
+                  </div>
+                ))}
+              </div>
+
+              {tauschenOffen && (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <select value={tauschZiel} onChange={(e) => setTauschZiel(e.target.value)} style={{ ...eingabeStil, width: '100%' }}>
+                    <option value="">Mit wem tauschen?</option>
+                    {mitarbeiterListe
+                      .filter((m) => m.id !== sel.mitarbeiterId && !istUrlaub(m.id, sel.datum))
+                      .map((m) => {
+                        const ziel = schichtInfoVon(eintragFuer(m.id, sel.datum))
+                        return (
+                          <option key={m.id} value={m.id}>
+                            {m.name} ({ziel ? ziel.titel : 'kein Dienst'})
+                          </option>
+                        )
+                      })}
+                  </select>
+                  <button
+                    onClick={() => eintragTauschen(sel, tauschZiel)}
+                    disabled={!tauschZiel}
+                    style={{ ...primaerKnopfStil, width: '100%' }}
+                  >
+                    Jetzt tauschen
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                <button
+                  onClick={() => setTauschenOffen(!tauschenOffen)}
+                  style={{ ...sekundaerKnopfStil, flex: 1, borderColor: 'var(--border)', fontWeight: 600 }}
+                >
+                  Tauschen
+                </button>
+                <button
+                  onClick={async () => {
+                    await eintragLoeschenExtern({ mitarbeiterId: sel.mitarbeiterId, datum: sel.datum })
+                    auswahlZuruecksetzen()
+                  }}
+                  style={{
+                    flex: 1,
+                    background: '#b91c1c',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '8px 14px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Entfernen
+                </button>
+              </div>
+              <button
+                onClick={() => zelleOeffnen(sel.mitarbeiterId, sel.datum)}
+                style={{ ...sekundaerKnopfStil, width: '100%', marginTop: 8 }}
+              >
+                Bearbeiten / Dienstzeit anpassen
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)', marginBottom: 4 }}>Tagesübersicht</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+                {dienste} Dienste · {offeneNamen.length} offen
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Prüfung für diesen Tag</div>
+              {hinweise.length === 0 && offeneNamen.length === 0 && (
+                <div style={{ color: '#15803d', fontSize: 13 }}>✓ Alles in Ordnung: keine offenen Schichten, Ruhezeiten eingehalten.</div>
+              )}
+              {offeneNamen.length > 0 && (
+                <div style={{ color: '#b45309', fontSize: 13, marginBottom: 6 }}>
+                  ⚠ {offeneNamen.length} offene Schicht{offeneNamen.length === 1 ? '' : 'en'}: {offeneNamen.join(', ')}
+                </div>
+              )}
+              {hinweise.map((h, i) => (
+                <div key={i} style={{ color: '#b91c1c', fontSize: 13, marginBottom: 6 }}>
+                  ⚠ {h}
+                </div>
+              ))}
+              {hinweise.length === 0 && offeneNamen.length > 0 && (
+                <div style={{ color: '#15803d', fontSize: 13 }}>✓ Ruhezeiten (mind. 11 Std.) eingehalten.</div>
+              )}
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 14 }}>
+                Klicke auf eine Schicht, um Details, Prüfung, Tauschen und Entfernen zu sehen. Ein Klick auf eine leere
+                Stelle in der Zeile weist eine Schicht zu.
+              </div>
             </div>
           )}
-          {hinweise.map((h, i) => (
-            <div key={i} style={{ color: '#b91c1c', marginBottom: 4 }}>
-              ⚠ {h}
+        </div>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // MONATSANSICHT (Matrix + Hinweise)
+  // ---------------------------------------------------------------------------
+  function renderMonatsansicht() {
+    const n = monatsTage.length
+    const spalten = `190px repeat(${n}, minmax(28px, 1fr))`
+    let urlaubstage = 0
+    let verstoesse = 0
+    let sollGesamt = 0
+    let offenVorlagenGesamt = 0
+    let offenGesamt = 0
+    const hinweisListe: { farbe: string; titel: string; text: string; tag: Date; mitarbeiterId?: string }[] = []
+
+    const proTag = monatsTage.map((tag) => {
+      const iso = datumZuISO(tag)
+      let anwesend = 0
+      for (const m of mitarbeiterListe) {
+        if (istUrlaub(m.id, iso)) urlaubstage++
+        else if (schichtInfoVon(eintragFuer(m.id, iso))) anwesend++
+      }
+      const offeneV = BEREICHE.flatMap((b) => offeneVorlagenFuerTag(iso, tag.getDay(), b))
+      const offeneS = offeneSpots.filter((x) => x.datum === iso)
+      const soll = vorlagen.filter((v) => (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(tag.getDay())).length
+      sollGesamt += soll
+      offenVorlagenGesamt += Math.min(offeneV.length, soll)
+      offenGesamt += offeneV.length + offeneS.length
+      if (offeneV.length + offeneS.length > 0) {
+        hinweisListe.push({
+          farbe: '#d97706',
+          titel: `Offene Schichten am ${datumKurz(tag)}`,
+          text: [...offeneV.map((v) => v.name), ...offeneS.map((x) => x.name)].join(', '),
+          tag,
+        })
+      }
+      return { anwesend, offen: offeneV.length + offeneS.length }
+    })
+
+    const zeilen = mitarbeiterListe.map((m) => {
+      const zellen = monatsTage.map((tag) => {
+        const iso = datumZuISO(tag)
+        const urlaub = istUrlaub(m.id, iso)
+        const eintrag = eintragFuer(m.id, iso)
+        const info = urlaub ? null : schichtInfoVon(eintrag)
+        const warnungen = warnungenFuer(m.id, tag)
+        for (const w of warnungen) {
+          if (w.art !== 'urlaub') verstoesse++
+          hinweisListe.push({
+            farbe: w.art === 'ueberschneidung' ? '#dc2626' : '#d97706',
+            titel: w.art === 'ueberschneidung' ? 'Überschneidung' : w.art === 'ruhezeit' ? 'Ruhezeit unter 11 Stunden' : 'Urlaub und Schicht',
+            text: `${m.name}, ${datumKurz(tag)}: ${w.lang}`,
+            tag,
+            mitarbeiterId: m.id,
+          })
+        }
+        let bg = '#f3f6fa'
+        let fg = '#64748b'
+        let txt = ''
+        let tip = `${m.name} · ${datumKurz(tag)}`
+        if (urlaub) {
+          bg = '#c026d3'
+          fg = '#ffffff'
+          txt = 'U'
+          tip += ' · Urlaub'
+        } else if (eintrag?.status === 'ruhe') {
+          bg = '#d8eef2'
+          fg = '#0e7490'
+          txt = 'R'
+          tip += ' · Ruhe'
+        } else if (eintrag?.status === 'frei') {
+          bg = '#e2e8f0'
+          fg = '#475569'
+          txt = 'F'
+          tip += ' · Frei'
+        } else if (info) {
+          bg = info.farbe
+          fg = textFarbeFuer(info.farbe)
+          txt = stundeKurz(info.beginn)
+          tip += ` · ${info.titel} ${minutenAlsUhrzeit(info.beginn)}–${minutenAlsUhrzeit(info.ende)}`
+        }
+        const zeigeRing = warnungen.some((w) => w.art !== 'urlaub')
+        return { tag, iso, bg, fg, txt, tip, ring: zeigeRing ? '#dc2626' : 'transparent' }
+      })
+      return { m, zellen }
+    })
+
+    const besetzungsgrad = sollGesamt > 0 ? Math.round(((sollGesamt - offenVorlagenGesamt) / sollGesamt) * 100) : 100
+    const kpis = [
+      { label: 'Besetzungsgrad', wert: `${besetzungsgrad} %`, farbe: besetzungsgrad >= 95 ? '#15803d' : besetzungsgrad >= 80 ? '#b45309' : '#b91c1c' },
+      { label: 'Offene Schichten', wert: String(offenGesamt), farbe: offenGesamt === 0 ? '#15803d' : '#b45309' },
+      { label: 'Urlaubstage im Monat', wert: String(urlaubstage), farbe: '#a21caf' },
+      { label: 'Regelverstöße', wert: String(verstoesse), farbe: verstoesse === 0 ? '#15803d' : '#b91c1c' },
+    ]
+
+    const legende: { name: string; farbe: string }[] = []
+    for (const v of vorlagen) {
+      if (!legende.some((l) => l.name === v.name && l.farbe === v.farbe)) legende.push({ name: v.name, farbe: v.farbe })
+    }
+
+    return (
+      <div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 14 }}>
+          {kpis.map((k) => (
+            <div key={k.label} style={{ background: '#ffffff', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 16px' }}>
+              <div style={{ fontSize: 12, color: '#64748b' }}>{k.label}</div>
+              <div style={{ fontWeight: 700, fontSize: 24, color: k.farbe }}>{k.wert}</div>
             </div>
           ))}
-          {hinweise.length === 0 && offeneNamen.length > 0 && (
-            <div style={{ color: 'var(--success)' }}>✓ Ruhezeiten (mind. 11 Std.) eingehalten.</div>
-          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              flex: '999 1 640px',
+              minWidth: 0,
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              overflow: 'hidden',
+              background: '#ffffff',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            }}
+          >
+            <div style={{ overflowX: 'auto' }}>
+              <div style={{ minWidth: 1000 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: spalten, background: '#14325c', color: '#ffffff' }}>
+                  <div style={{ padding: '8px 14px', fontWeight: 600, alignSelf: 'end' }}>Mitarbeiter</div>
+                  {monatsTage.map((tag) => {
+                    const we = istWochenende(tag)
+                    return (
+                      <div
+                        key={datumZuISO(tag)}
+                        style={{
+                          padding: '6px 0',
+                          textAlign: 'center',
+                          borderLeft: '1px solid rgba(255,255,255,0.14)',
+                          background: istHeute(tag) ? '#2f5d9e' : we ? 'rgba(255,255,255,0.10)' : 'transparent',
+                        }}
+                      >
+                        <div style={{ fontSize: 10, color: '#c9d6ea' }}>{WOCHENTAGE_LANG[tag.getDay()].slice(0, 2)}</div>
+                        <div style={{ fontWeight: 700, fontSize: 12 }}>{tag.getDate()}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {zeilen.map(({ m, zellen }) => (
+                  <div
+                    key={m.id}
+                    style={{ display: 'grid', gridTemplateColumns: spalten, borderBottom: '1px solid #e8edf5', alignItems: 'stretch' }}
+                  >
+                    <div style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div
+                        style={{
+                          width: 26,
+                          height: 26,
+                          borderRadius: '50%',
+                          background: farbeFuerAvatar(m.name),
+                          color: '#ffffff',
+                          fontWeight: 700,
+                          fontSize: 10,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {initialen(m.name)}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {m.name}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#64748b' }}>{m.kategorie ?? ''}</div>
+                      </div>
+                    </div>
+                    {zellen.map((c) => (
+                      <div
+                        key={c.iso}
+                        onClick={() => zuTagSpringen(c.tag, m.id)}
+                        title={c.tip}
+                        style={{
+                          padding: '3px 1px',
+                          borderLeft: '1px solid #eef2f8',
+                          background: istWochenende(c.tag) ? '#f7f9fc' : 'transparent',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: 30,
+                            borderRadius: 4,
+                            background: c.bg,
+                            color: c.fg,
+                            boxShadow: `inset 0 0 0 2px ${c.ring}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 600,
+                            fontSize: 10,
+                          }}
+                        >
+                          {c.txt}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                <div style={{ display: 'grid', gridTemplateColumns: spalten, background: '#f7f9fc', borderTop: '2px solid #14325c' }}>
+                  <div style={{ padding: '10px 14px', fontWeight: 700 }}>Besetzung</div>
+                  {proTag.map((t, i) => (
+                    <div
+                      key={i}
+                      title={t.offen > 0 ? `${t.offen} offene Schicht(en)` : 'Alle Schichten besetzt'}
+                      style={{
+                        textAlign: 'center',
+                        padding: '10px 0',
+                        fontWeight: 700,
+                        fontSize: 12,
+                        color: t.offen === 0 ? '#15803d' : t.offen <= 2 ? '#b45309' : '#b91c1c',
+                        borderLeft: '1px solid #eef2f8',
+                      }}
+                    >
+                      {t.anwesend}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                gap: 12,
+                flexWrap: 'wrap',
+                padding: '10px 14px',
+                borderTop: '1px solid #e8edf5',
+                fontSize: 12,
+                color: '#3d4c63',
+              }}
+            >
+              <span style={{ color: '#94a3b8' }}>Zahl = Dienstbeginn (Stunde)</span>
+              {legende.map((l) => (
+                <span key={l.name + l.farbe} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 14, height: 14, borderRadius: 3, background: l.farbe }} />
+                  {l.name}
+                </span>
+              ))}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 14, height: 14, borderRadius: 3, background: '#c026d3' }} />U = Urlaub
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 14, height: 14, borderRadius: 3, boxShadow: 'inset 0 0 0 2px #dc2626' }} />
+                Regelverstoß
+              </span>
+            </div>
+          </div>
+
+          <div
+            style={{
+              flex: '1 1 280px',
+              maxWidth: 360,
+              minWidth: 260,
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              background: '#ffffff',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            }}
+          >
+            <div
+              style={{
+                padding: '14px 16px',
+                borderBottom: '1px solid #e8edf5',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Hinweise</div>
+              <div
+                style={{
+                  background: hinweisListe.length === 0 ? '#dcfce7' : '#fee2e2',
+                  color: hinweisListe.length === 0 ? '#166534' : '#991b1b',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  borderRadius: 999,
+                  padding: '2px 10px',
+                }}
+              >
+                {hinweisListe.length}
+              </div>
+            </div>
+            <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+              {hinweisListe.length === 0 && (
+                <div style={{ padding: '14px 16px', color: '#15803d', fontSize: 13 }}>
+                  ✓ Keine Hinweise: Alle Schichten besetzt, keine Regelverstöße.
+                </div>
+              )}
+              {hinweisListe.map((h, i) => (
+                <div
+                  key={i}
+                  onClick={() => zuTagSpringen(h.tag, h.mitarbeiterId)}
+                  style={{ padding: '10px 16px', borderBottom: '1px solid #eef2f8', display: 'flex', gap: 10, cursor: 'pointer' }}
+                >
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: h.farbe, marginTop: 6, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{h.titel}</div>
+                    <div style={{ color: '#3d4c63', fontSize: 12, marginTop: 2 }}>{h.text}</div>
+                    <div style={{ color: 'var(--navy)', fontWeight: 600, fontSize: 11, marginTop: 4 }}>Zum Tag springen →</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -2450,6 +3072,19 @@ function SchichtKarte({
       )}
     </div>
   )
+}
+
+const pfeilKnopfStil: React.CSSProperties = {
+  width: 34,
+  height: 34,
+  borderRadius: 8,
+  border: '1px solid var(--border)',
+  background: '#ffffff',
+  color: 'var(--navy)',
+  cursor: 'pointer',
+  fontSize: 20,
+  lineHeight: 1,
+  padding: 0,
 }
 
 const navigationsKnopfStil: React.CSSProperties = {
