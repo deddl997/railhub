@@ -284,6 +284,8 @@ export default function Dienstplan() {
   const [tauschPanelOffen, setTauschPanelOffen] = useState(false)
   const [wunschPanelOffen, setWunschPanelOffen] = useState(false)
   const [pushHinweis, setPushHinweis] = useState<string | null>(null)
+  const [kategorieFilter, setKategorieFilter] = useState<string[]>([])
+  const [bereichAus, setBereichAus] = useState<Record<string, boolean>>({})
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
   const [vorlagen, setVorlagen] = useState<Schichtvorlage[]>([])
@@ -414,6 +416,34 @@ export default function Dienstplan() {
     laden()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ladeSchluessel])
+
+  // Beim Ziehen einer Schicht automatisch scrollen: am oberen/unteren Fensterrand
+  // und zusaetzlich mit dem Mausrad (falls der Browser Mausrad-Ereignisse beim Ziehen liefert)
+  const ziehtGerade = gezogeneVorlage !== null || gezogenerEintrag !== null
+  useEffect(() => {
+    if (!ziehtGerade) return
+    let letzteY: number | null = null
+    const beiDragover = (e: DragEvent) => {
+      letzteY = e.clientY
+    }
+    const beiRad = (e: WheelEvent) => {
+      window.scrollBy(0, e.deltaY)
+    }
+    const takt = window.setInterval(() => {
+      if (letzteY === null) return
+      const rand = 110
+      const hoehe = window.innerHeight
+      if (letzteY < rand) window.scrollBy(0, -Math.ceil((rand - letzteY) / 4 + 3))
+      else if (letzteY > hoehe - rand) window.scrollBy(0, Math.ceil((letzteY - (hoehe - rand)) / 4 + 3))
+    }, 16)
+    window.addEventListener('dragover', beiDragover)
+    window.addEventListener('wheel', beiRad, { passive: true })
+    return () => {
+      window.clearInterval(takt)
+      window.removeEventListener('dragover', beiDragover)
+      window.removeEventListener('wheel', beiRad)
+    }
+  }, [ziehtGerade])
 
   function wunschFuer(mitarbeiterId: string, datumIso: string): Wunsch | undefined {
     return wuensche.find((w) => w.mitarbeiter_id === mitarbeiterId && w.datum === datumIso)
@@ -1238,6 +1268,14 @@ export default function Dienstplan() {
     return <p style={{ color: 'var(--text-muted)' }}>Lade Dienstplan...</p>
   }
 
+  const istSichtbar = (m: Mitarbeiter): boolean => {
+    if (bereichAus[bereichVonKategorie(m.kategorie)]) return false
+    if (kategorieFilter.length > 0) return kategorieFilter.includes(m.kategorie ?? '__ohne__')
+    return true
+  }
+  const anzeigeListe = mitarbeiterListe.filter(istSichtbar)
+  const kategorienVorhanden = Array.from(new Set(mitarbeiterListe.map((m) => m.kategorie ?? '__ohne__')))
+  const filterAktiv = kategorieFilter.length > 0 || Object.values(bereichAus).some(Boolean)
   const wochenMitDienst = mitarbeiterMitDienstInWoche()
   const gelesenAnzahl = wochenMitDienst.filter((m) => gelesenIds.includes(m.id)).length
   const anzeigeTage = ansicht === 'tag' ? [bezugsdatum] : ansicht === 'woche' ? tage : monatsTage
@@ -1415,6 +1453,40 @@ export default function Dienstplan() {
         <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
           + Offene Spotschicht
         </button>
+      </div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12 }}>
+        <span style={{ color: '#64748b', fontWeight: 600 }}>Filter:</span>
+        <button onClick={() => setKategorieFilter([])} style={chipStil(kategorieFilter.length === 0)}>
+          Alle Qualifikationen
+        </button>
+        {kategorienVorhanden.map((k) => {
+          const aktiv = kategorieFilter.includes(k)
+          return (
+            <button
+              key={k}
+              onClick={() => setKategorieFilter((alt) => (alt.includes(k) ? alt.filter((x) => x !== k) : [...alt, k]))}
+              style={chipStil(aktiv)}
+            >
+              {k === '__ohne__' ? 'Ohne Qualifikation' : k}
+            </button>
+          )
+        })}
+        <span style={{ width: 1, height: 18, background: '#cbd5e1', margin: '0 4px' }} />
+        {BEREICHE.map((b) => (
+          <button
+            key={b}
+            onClick={() => setBereichAus((alt) => ({ ...alt, [b]: !alt[b] }))}
+            style={chipStil(!!bereichAus[b], true)}
+          >
+            {bereichAus[b] ? `${b} einblenden` : `${b} ausblenden`}
+          </button>
+        ))}
+        {filterAktiv && (
+          <span style={{ color: '#64748b' }}>
+            {anzeigeListe.length} von {mitarbeiterListe.length} Mitarbeitern angezeigt
+          </span>
+        )}
       </div>
 
       {pushHinweis && (
@@ -2416,7 +2488,7 @@ export default function Dienstplan() {
               </div>
 
               {/* Offene Schichten, getrennt nach Bereich */}
-              {BEREICHE.map((bereich) => {
+              {BEREICHE.filter((b) => !bereichAus[b]).map((bereich) => {
                 const offeneV = offeneVorlagenFuerTag(datumIso, bezugsdatum.getDay(), bereich)
                 const offeneS = offeneSpotsFuerTag(datumIso, bereich)
                 const poolSchluessel = `offen-${bereich}`
@@ -2580,7 +2652,7 @@ export default function Dienstplan() {
               })}
 
               {/* Mitarbeiterzeilen */}
-              {mitarbeiterListe.map((mitarbeiter) => {
+              {anzeigeListe.map((mitarbeiter) => {
                 const urlaub = istUrlaub(mitarbeiter.id, datumIso)
                 const eintrag = eintragFuer(mitarbeiter.id, datumIso)
                 const balken = urlaub ? [] : balkenFuer(mitarbeiter.id, bezugsdatum)
@@ -3239,7 +3311,7 @@ export default function Dienstplan() {
                   })}
                 </div>
 
-                {zeilen.map(({ m, zellen }) => (
+                {zeilen.filter(({ m }) => istSichtbar(m)).map(({ m, zellen }) => (
                   <div
                     key={m.id}
                     style={{ display: 'grid', gridTemplateColumns: spalten, borderBottom: '1px solid #e8edf5', alignItems: 'stretch' }}
@@ -3462,7 +3534,7 @@ export default function Dienstplan() {
             </tr>
           </thead>
           <tbody>
-            {BEREICHE.map((bereich) => (
+            {BEREICHE.filter((b) => !bereichAus[b]).map((bereich) => (
               <tr key={`offen-${bereich}`}>
                 <td
                   style={{
@@ -3599,8 +3671,8 @@ export default function Dienstplan() {
                 <td style={{ ...zellBasisStil, background: '#fff7ed', borderBottom: '1px solid #fed7aa' }} />
               </tr>
             ))}
-            {mitarbeiterListe.map((mitarbeiter, zeilenIndex) => {
-              const vorherigeKategorie = zeilenIndex > 0 ? mitarbeiterListe[zeilenIndex - 1].kategorie : null
+            {anzeigeListe.map((mitarbeiter, zeilenIndex) => {
+              const vorherigeKategorie = zeilenIndex > 0 ? anzeigeListe[zeilenIndex - 1].kategorie : null
               const neueGruppe = mitarbeiter.kategorie !== vorherigeKategorie
               return (
                 <Fragment key={mitarbeiter.id}>
@@ -3960,6 +4032,19 @@ const zellBasisStil: React.CSSProperties = {
   borderBottom: '1px solid #f1f5f9',
   padding: 5,
   verticalAlign: 'middle',
+}
+
+function chipStil(aktiv: boolean, ausblenden = false): React.CSSProperties {
+  return {
+    border: `1px solid ${aktiv ? (ausblenden ? '#b45309' : 'var(--navy)') : '#cbd5e1'}`,
+    background: aktiv ? (ausblenden ? '#fef3c7' : 'var(--navy)') : '#ffffff',
+    color: aktiv ? (ausblenden ? '#92400e' : '#ffffff') : '#334155',
+    borderRadius: 999,
+    padding: '5px 12px',
+    fontSize: 12,
+    fontWeight: aktiv ? 700 : 500,
+    cursor: 'pointer',
+  }
 }
 
 const eingabeStil: React.CSSProperties = {
