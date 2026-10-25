@@ -36,6 +36,12 @@ interface OffeneSpot {
   farbe: string | null
 }
 
+interface Warnung {
+  art: 'ueberschneidung' | 'ruhezeit'
+  kurz: string
+  lang: string
+}
+
 interface OffenesElement {
   art: 'vorlage' | 'spot'
   id: string
@@ -567,13 +573,45 @@ export default function Dienstplan() {
     await laden()
   }
 
-  function wochenArbeitszeit(mitarbeiterId: string): string {
+  function wochenMinuten(mitarbeiterId: string): number {
     let summe = 0
     for (const tag of tage) {
       const info = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(tag)))
       if (info) summe += info.ende - info.beginn
     }
-    return minutenAlsText(summe)
+    return summe
+  }
+
+  function wochenArbeitszeit(mitarbeiterId: string): string {
+    return minutenAlsText(wochenMinuten(mitarbeiterId))
+  }
+
+  // Warnungen fuer eine Person an einem Tag (Ueberschneidung / zu kurze Ruhezeit)
+  function warnungenFuer(mitarbeiterId: string, datum: Date): Warnung[] {
+    if (istUrlaub(mitarbeiterId, datumZuISO(datum))) return []
+    const vortag = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(addTage(datum, -1))))
+    const heute = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(datum)))
+    if (!vortag || !heute) return []
+    const ruhe = 1440 + heute.beginn - vortag.ende
+    if (ruhe < 0) {
+      return [
+        {
+          art: 'ueberschneidung',
+          kurz: 'Überschneidung',
+          lang: `Überschneidung: Die Schicht vom Vortag endet erst um ${minutenAlsUhrzeit(vortag.ende)}, die heutige beginnt schon um ${minutenAlsUhrzeit(heute.beginn)}.`,
+        },
+      ]
+    }
+    if (ruhe < 660) {
+      return [
+        {
+          art: 'ruhezeit',
+          kurz: `Ruhezeit nur ${minutenAlsText(ruhe)} Std.`,
+          lang: `Ruhezeit nur ${minutenAlsText(ruhe)} Std. (mind. 11 Std.): Vortag Ende ${minutenAlsUhrzeit(vortag.ende)}, heute Beginn ${minutenAlsUhrzeit(heute.beginn)}.`,
+        },
+      ]
+    }
+    return []
   }
 
   function tagesArbeitszeit(mitarbeiterId: string, datum: Date): string {
@@ -1074,20 +1112,10 @@ export default function Dienstplan() {
     )
     const maxBesetzung = Math.max(1, ...besetzung)
 
-    // Pruefung Ruhezeit (< 11 Std. zwischen Schichten)
-    const hinweise: string[] = []
-    for (const m of mitarbeiterListe) {
-      if (istUrlaub(m.id, datumIso)) continue
-      const vortag = schichtInfoVon(eintragFuer(m.id, datumZuISO(addTage(bezugsdatum, -1))))
-      const heute = schichtInfoVon(eintragFuer(m.id, datumIso))
-      if (!vortag || !heute) continue
-      const ruhe = 1440 + heute.beginn - vortag.ende
-      if (ruhe < 660) {
-        hinweise.push(
-          `${m.name}: nur ${minutenAlsText(Math.max(ruhe, 0))} Std. Ruhezeit (Vortag Ende ${minutenAlsUhrzeit(vortag.ende)}, heute Beginn ${minutenAlsUhrzeit(heute.beginn)})`
-        )
-      }
-    }
+    // Pruefung: Ueberschneidungen und Ruhezeiten (< 11 Std.) aller Personen
+    const hinweise: string[] = mitarbeiterListe.flatMap((m) =>
+      warnungenFuer(m.id, bezugsdatum).map((w) => `${m.name}: ${w.lang}`)
+    )
 
     const linkeSpalte: React.CSSProperties = { width: 190, flexShrink: 0, padding: '0 14px' }
     const rechteSpalte: React.CSSProperties = { width: 56, flexShrink: 0, textAlign: 'center' }
@@ -1301,6 +1329,8 @@ export default function Dienstplan() {
                 const urlaub = istUrlaub(mitarbeiter.id, datumIso)
                 const eintrag = eintragFuer(mitarbeiter.id, datumIso)
                 const balken = urlaub ? [] : balkenFuer(mitarbeiter.id, bezugsdatum)
+                const warnungen = warnungenFuer(mitarbeiter.id, bezugsdatum)
+                const ueberlappt = warnungen.some((w) => w.art === 'ueberschneidung')
                 const zielSchluessel = `${mitarbeiter.id}-${datumIso}`
                 const ausgewaehlt =
                   ausgewaehlteZelle?.mitarbeiterId === mitarbeiter.id && ausgewaehlteZelle?.datum === datumIso
@@ -1343,18 +1373,36 @@ export default function Dienstplan() {
                         >
                           {initialen(mitarbeiter.name)}
                         </div>
-                        <span
-                          style={{
-                            fontWeight: 500,
-                            fontSize: 12,
-                            color: '#1e293b',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          {mitarbeiter.name}
-                        </span>
+                        <div style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontWeight: 500,
+                              fontSize: 12,
+                              color: '#1e293b',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {mitarbeiter.name}
+                          </div>
+                          {warnungen.map((w, wi) => (
+                            <div
+                              key={wi}
+                              title={w.lang}
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: w.art === 'ueberschneidung' ? '#dc2626' : '#b45309',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              ⚠ {w.kurz}
+                            </div>
+                          ))}
+                        </div>
                       </div>
 
                       <div
@@ -1481,9 +1529,10 @@ export default function Dienstplan() {
                                 position: 'absolute',
                                 left: `${(b.von / 1440) * 100}%`,
                                 width: `${breite}%`,
-                                top: 8,
-                                height: 36,
+                                top: ueberlappt ? (b.vortag ? 3 : 27) : 8,
+                                height: ueberlappt ? 22 : 36,
                                 boxSizing: 'border-box',
+                                boxShadow: ueberlappt ? '0 0 0 2px #dc2626' : undefined,
                                 background: b.info.farbe,
                                 color: '#ffffff',
                                 opacity: b.vortag ? 0.75 : 1,
@@ -1508,13 +1557,20 @@ export default function Dienstplan() {
                               >
                                 {b.vortag ? '← ' : ''}
                                 {b.info.titel}
+                                {ueberlappt
+                                  ? b.vortag
+                                    ? ` · bis ${minutenAlsUhrzeit(b.info.ende)}`
+                                    : ` · ${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}`
+                                  : ''}
                                 {b.weiter ? ' →' : ''}
                               </div>
-                              <div style={{ fontSize: 10, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden' }}>
-                                {b.vortag
-                                  ? `Nacht vom Vortag bis ${minutenAlsUhrzeit(b.info.ende)}`
-                                  : `${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}`}
-                              </div>
+                              {!ueberlappt && (
+                                <div style={{ fontSize: 10, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                                  {b.vortag
+                                    ? `Nacht vom Vortag bis ${minutenAlsUhrzeit(b.info.ende)}`
+                                    : `${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}`}
+                                </div>
+                              )}
                               {pauseSichtbar && (
                                 <div
                                   style={{
@@ -1903,6 +1959,7 @@ export default function Dienstplan() {
 
                       const zielSchluessel = `${mitarbeiter.id}-${datumIso}`
                       const falscherTagBeimZiehen = !!gezogeneVorlage && gezogeneVorlage.tagDatum !== datumIso
+                      const warnungenTag = warnungenFuer(mitarbeiter.id, tag)
 
                       return (
                         <td
@@ -1937,11 +1994,32 @@ export default function Dienstplan() {
                                   ? '#f3f7fd'
                                   : '#fafbfc'
                                 : undefined,
+                            position: 'relative',
                             cursor: urlaub ? 'default' : 'pointer',
                             boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
                             padding: 5,
                           }}
                         >
+                          {warnungenTag.length > 0 && (
+                            <div
+                              title={warnungenTag.map((w) => w.lang).join('\n')}
+                              style={{
+                                position: 'absolute',
+                                top: 1,
+                                right: 3,
+                                zIndex: 2,
+                                fontSize: 12,
+                                lineHeight: 1,
+                                color: warnungenTag.some((w) => w.art === 'ueberschneidung') ? '#dc2626' : '#d97706',
+                                background: '#ffffff',
+                                borderRadius: 4,
+                                padding: '1px 2px',
+                                boxShadow: '0 0 0 1px #fecaca',
+                              }}
+                            >
+                              ⚠
+                            </div>
+                          )}
                           {karte && eintrag && !urlaub && !eintrag.status ? (
                             <div
                               draggable
@@ -1978,7 +2056,15 @@ export default function Dienstplan() {
                       )
                     })}
                     <td style={{ ...zellBasisStil, textAlign: 'center' }}>
-                      <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13 }}>
+                      <div
+                        title={wochenMinuten(mitarbeiter.id) > 48 * 60 ? 'Über 48 Wochenstunden' : undefined}
+                        style={{
+                          fontWeight: 700,
+                          color: wochenMinuten(mitarbeiter.id) > 48 * 60 ? '#dc2626' : 'var(--navy)',
+                          fontSize: 13,
+                        }}
+                      >
+                        {wochenMinuten(mitarbeiter.id) > 48 * 60 ? '⚠ ' : ''}
                         {wochenArbeitszeit(mitarbeiter.id)}
                       </div>
                     </td>
