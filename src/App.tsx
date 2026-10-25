@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
-import Kopfzeile from './Kopfzeile'
 import Anmeldung from './Anmeldung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
@@ -30,6 +29,7 @@ function App() {
   const [ladeSession, setLadeSession] = useState(true)
   const [neuLadenAuslöser, setNeuLadenAuslöser] = useState(0)
   const [aktiverTab, setAktiverTab] = useState<TabId>('antrag')
+  const [logoFehler, setLogoFehler] = useState(false)
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
 
@@ -73,40 +73,96 @@ function App() {
   const sichtbareTabs = ALLE_TABS.filter((tab) => !tab.nurAdmin || istAdmin)
 
   return (
-    <div>
-      <Kopfzeile angemeldeterName={mitarbeiter?.name ?? null} onAbmelden={abmelden} />
-
-      <nav
+    <div style={{ background: '#f1f4f9', minHeight: '100vh' }}>
+      <header
         style={{
+          background: '#14325c',
+          color: '#ffffff',
           display: 'flex',
-          gap: 4,
-          borderBottom: '1px solid var(--border)',
-          background: 'var(--card)',
-          padding: '0 20px',
-          overflowX: 'auto',
+          alignItems: 'center',
+          gap: 24,
+          padding: '8px 24px',
+          minHeight: 56,
+          flexWrap: 'wrap',
         }}
       >
-        {sichtbareTabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setAktiverTab(tab.id)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div
             style={{
-              background: 'none',
-              border: 'none',
-              borderBottom:
-                aktiverTab === tab.id ? '2px solid var(--navy)' : '2px solid transparent',
-              color: aktiverTab === tab.id ? 'var(--navy)' : 'var(--text-muted)',
-              fontWeight: aktiverTab === tab.id ? 600 : 500,
-              fontSize: 14,
-              padding: '12px 14px',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
+              height: 44,
+              minWidth: 44,
+              borderRadius: 8,
+              background: '#ffffff',
+              color: '#14325c',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '2px 6px',
+              boxSizing: 'border-box',
+              letterSpacing: -0.5,
             }}
           >
-            {tab.label}
+            {logoFehler ? (
+              'RBL'
+            ) : (
+              <img
+                src="/rbl-logo.png"
+                alt="Rail Bavaria Logistik"
+                onError={() => setLogoFehler(true)}
+                style={{ height: 38, width: 'auto', display: 'block' }}
+              />
+            )}
+          </div>
+          <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.2 }}>
+            RBL Planung
+            <div style={{ fontWeight: 400, fontSize: 11, color: '#c9d6ea' }}>Rail Bavaria Logistik GmbH</div>
+          </div>
+        </div>
+
+        <nav style={{ display: 'flex', gap: 4, flexGrow: 1, overflowX: 'auto' }}>
+          {sichtbareTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setAktiverTab(tab.id)}
+              style={{
+                background: aktiverTab === tab.id ? 'rgba(255,255,255,0.14)' : 'transparent',
+                border: 'none',
+                borderRadius: 8,
+                color: aktiverTab === tab.id ? '#ffffff' : '#c9d6ea',
+                fontWeight: aktiverTab === tab.id ? 600 : 500,
+                fontSize: 14,
+                padding: '8px 14px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13, color: '#c9d6ea' }}>
+          <span>
+            {istAdmin ? 'Planer · ' : ''}
+            {mitarbeiter?.name ?? ''}
+          </span>
+          <button
+            onClick={abmelden}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.4)',
+              color: '#ffffff',
+              borderRadius: 8,
+              padding: '6px 12px',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            Abmelden
           </button>
-        ))}
-      </nav>
+        </div>
+      </header>
 
       <main
         style={{
