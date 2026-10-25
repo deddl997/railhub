@@ -216,7 +216,7 @@ export default function SchichtvorlagenVerwaltung() {
       )}
 
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1280, fontSize: 13 }}>
           <thead>
             <tr>
               <th style={kopfZelleStil}>Farbe</th>
@@ -247,14 +247,14 @@ export default function SchichtvorlagenVerwaltung() {
                   <input
                     value={vorlage.name}
                     onChange={(e) => vorlageAktualisieren(vorlage, { name: e.target.value })}
-                    style={eingabeStil}
+                    style={{ ...eingabeStil, minWidth: 240 }}
                   />
                 </td>
                 <td style={zellStil}>
                   <select
                     value={vorlage.bereich ?? 'Lokführer'}
                     onChange={(e) => vorlageAktualisieren(vorlage, { bereich: e.target.value })}
-                    style={{ ...eingabeStil, width: 130 }}
+                    style={{ ...eingabeStil, width: 140 }}
                   >
                     {BEREICHE.map((b) => (
                       <option key={b} value={b}>
@@ -291,7 +291,7 @@ export default function SchichtvorlagenVerwaltung() {
                   <input
                     value={vorlage.dienstort ?? ''}
                     onChange={(e) => vorlageAktualisieren(vorlage, { dienstort: e.target.value })}
-                    style={{ ...eingabeStil, width: 90 }}
+                    style={{ ...eingabeStil, width: 130 }}
                   />
                 </td>
                 <td style={zellStil}>
@@ -343,7 +343,7 @@ function LokAuswahl({
   }
 
   return (
-    <div style={{ display: 'flex', gap: kompakt ? 3 : 6, flexWrap: 'wrap', maxWidth: kompakt ? 150 : undefined }}>
+    <div style={{ display: 'flex', gap: kompakt ? 3 : 6, flexWrap: 'wrap', minWidth: kompakt ? 200 : undefined, maxWidth: kompakt ? 230 : undefined }}>
       {LOK_TYPEN.map((lok) => {
         const aktiv = ausgewaehlt.includes(lok)
         return (
@@ -424,7 +424,8 @@ const kopfZelleStil: React.CSSProperties = {
 }
 
 const zellStil: React.CSSProperties = {
-  padding: '4px 8px',
+  padding: '6px 8px',
+  verticalAlign: 'middle',
   borderBottom: '1px solid var(--border)',
 }
 
