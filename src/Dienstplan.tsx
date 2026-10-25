@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
 import { KATEGORIEN } from './qualifikationen'
+import { pushSenden } from './pushAbo'
 
 interface Mitarbeiter {
   id: string
@@ -41,6 +42,25 @@ interface SollZeile {
   schichtvorlage_id: string
   wochentag: number
   anzahl: number
+}
+
+interface Wunsch {
+  mitarbeiter_id: string
+  datum: string
+  notiz: string | null
+}
+
+interface Tausch {
+  id: string
+  datum: string
+  von_mitarbeiter_id: string
+  von_name: string
+  von_schicht: string | null
+  mit_mitarbeiter_id: string
+  mit_name: string
+  mit_schicht: string | null
+  nachricht: string | null
+  status: string
 }
 
 interface Warnung {
@@ -256,6 +276,12 @@ export default function Dienstplan() {
   const [sollDialogOffen, setSollDialogOffen] = useState(false)
   const [sollEntwurf, setSollEntwurf] = useState<Record<string, number[]>>({})
   const [sollSpeichert, setSollSpeichert] = useState(false)
+  const [gelesenIds, setGelesenIds] = useState<string[]>([])
+  const [gelesenOffen, setGelesenOffen] = useState(false)
+  const [wuensche, setWuensche] = useState<Wunsch[]>([])
+  const [tauschListe, setTauschListe] = useState<Tausch[]>([])
+  const [tauschPanelOffen, setTauschPanelOffen] = useState(false)
+  const [pushHinweis, setPushHinweis] = useState<string | null>(null)
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
   const [vorlagen, setVorlagen] = useState<Schichtvorlage[]>([])
@@ -322,6 +348,9 @@ export default function Dienstplan() {
       { data: spotsData },
       { data: freigabenData },
       { data: sollData },
+      { data: gelesenData },
+      { data: wunschData },
+      { data: tauschData },
     ] = await Promise.all([
         supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
@@ -343,6 +372,17 @@ export default function Dienstplan() {
           .lte('datum', endeIso),
         supabase.from('dienstplan_freigaben').select('woche_start'),
         supabase.from('schicht_soll').select('schichtvorlage_id, wochentag, anzahl'),
+        supabase.from('dienstplan_gelesen').select('mitarbeiter_id').eq('woche_start', wochenStartIso),
+        supabase
+          .from('wunschfrei')
+          .select('mitarbeiter_id, datum, notiz')
+          .gte('datum', urlaubStartIso)
+          .lte('datum', endeIso),
+        supabase
+          .from('tauschwuensche')
+          .select('*')
+          .in('status', ['angefragt', 'zugestimmt'])
+          .order('created_at'),
     ])
 
     const sortierteMitarbeiter = [...(mitarbeiterData ?? [])].sort((a, b) => {
@@ -360,6 +400,9 @@ export default function Dienstplan() {
     setOffeneSpots((spotsData ?? []) as OffeneSpot[])
     setFreigegebeneWochen((freigabenData ?? []).map((f) => String(f.woche_start)))
     setSollZeilen((sollData ?? []) as SollZeile[])
+    setGelesenIds((gelesenData ?? []).map((g) => String(g.mitarbeiter_id)))
+    setWuensche((wunschData ?? []) as Wunsch[])
+    setTauschListe((tauschData ?? []) as Tausch[])
     setLadeVorgang(false)
     setErstesLaden(false)
   }
@@ -368,6 +411,10 @@ export default function Dienstplan() {
     laden()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ladeSchluessel])
+
+  function wunschFuer(mitarbeiterId: string, datumIso: string): Wunsch | undefined {
+    return wuensche.find((w) => w.mitarbeiter_id === mitarbeiterId && w.datum === datumIso)
+  }
 
   function istUrlaub(mitarbeiterId: string, datumIso: string): boolean {
     return urlaube.some(
@@ -1008,7 +1055,92 @@ export default function Dienstplan() {
     )
     if (!bestaetigt) return
     const { error } = await supabase.from('dienstplan_freigaben').upsert({ woche_start: wochenStartIso })
-    if (error) window.alert('Veröffentlichen fehlgeschlagen: ' + error.message)
+    if (error) {
+      window.alert('Veröffentlichen fehlgeschlagen: ' + error.message)
+    } else {
+      const ergebnis = await pushSenden(
+        'Neuer Dienstplan',
+        `Dein Dienstplan für KW ${kalenderwoche(tage[0])} (${datumKurz(tage[0])} – ${datumKurz(tage[6])}) ist veröffentlicht.`,
+        mitarbeiterMitDienstInWoche().map((m) => m.id)
+      )
+      setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Veröffentlicht. Push nicht gesendet: ' + ergebnis.meldung)
+    }
+    await laden()
+  }
+
+  function mitarbeiterMitDienstInWoche(): Mitarbeiter[] {
+    return mitarbeiterListe.filter((m) => tage.some((t) => schichtInfoVon(eintragFuer(m.id, datumZuISO(t)))))
+  }
+
+  async function aenderungMelden() {
+    const empfaenger = mitarbeiterMitDienstInWoche()
+    const bestaetigt = window.confirm(
+      `Alle ${empfaenger.length} Mitarbeiter mit Dienst in dieser Woche benachrichtigen, dass sich ihr Dienstplan geändert hat?`
+    )
+    if (!bestaetigt) return
+    const ergebnis = await pushSenden(
+      'Dienstplan geändert',
+      `Dein Dienstplan der KW ${kalenderwoche(tage[0])} wurde geändert. Bitte prüfen.`,
+      empfaenger.map((m) => m.id)
+    )
+    setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Push nicht gesendet: ' + ergebnis.meldung)
+  }
+
+  function datumDeutsch(iso: string): string {
+    return iso.split('-').reverse().join('.')
+  }
+
+  async function tauschGenehmigen(t: Tausch) {
+    const { data, error } = await supabase
+      .from('dienstplan_eintraege')
+      .select('*')
+      .eq('datum', t.datum)
+      .in('mitarbeiter_id', [t.von_mitarbeiter_id, t.mit_mitarbeiter_id])
+    if (error) {
+      window.alert('Laden fehlgeschlagen: ' + error.message)
+      return
+    }
+    const eA = (data ?? []).find((e) => e.mitarbeiter_id === t.von_mitarbeiter_id) as DienstplanEintrag | undefined
+    const eB = (data ?? []).find((e) => e.mitarbeiter_id === t.mit_mitarbeiter_id) as DienstplanEintrag | undefined
+    if (!eA || !eB) {
+      window.alert('Der Tausch ist nicht mehr möglich: Einer von beiden hat an diesem Tag keinen Eintrag mehr.')
+      return
+    }
+    const bestaetigt = window.confirm(
+      `Am ${datumDeutsch(t.datum)} tauschen:\n${t.von_name} (${t.von_schicht}) ⇄ ${t.mit_name} (${t.mit_schicht})?`
+    )
+    if (!bestaetigt) return
+    await supabase
+      .from('dienstplan_eintraege')
+      .delete()
+      .eq('datum', t.datum)
+      .in('mitarbeiter_id', [t.von_mitarbeiter_id, t.mit_mitarbeiter_id])
+    await supabase
+      .from('dienstplan_eintraege')
+      .upsert(eintragPayload(eA, t.mit_mitarbeiter_id, t.datum), { onConflict: 'mitarbeiter_id,datum' })
+    await supabase
+      .from('dienstplan_eintraege')
+      .upsert(eintragPayload(eB, t.von_mitarbeiter_id, t.datum), { onConflict: 'mitarbeiter_id,datum' })
+    await supabase.from('tauschwuensche').update({ status: 'genehmigt' }).eq('id', t.id)
+    const ergebnis = await pushSenden(
+      'Tausch genehmigt',
+      `Dein Dienst-Tausch am ${datumDeutsch(t.datum)} wurde genehmigt. Bitte Dienstplan prüfen.`,
+      [t.von_mitarbeiter_id, t.mit_mitarbeiter_id]
+    )
+    setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Tausch genehmigt. Push nicht gesendet: ' + ergebnis.meldung)
+    await laden()
+  }
+
+  async function tauschAblehnen(t: Tausch) {
+    const bestaetigt = window.confirm(`Tausch am ${datumDeutsch(t.datum)} zwischen ${t.von_name} und ${t.mit_name} ablehnen?`)
+    if (!bestaetigt) return
+    await supabase.from('tauschwuensche').update({ status: 'abgelehnt' }).eq('id', t.id)
+    const ergebnis = await pushSenden(
+      'Tausch abgelehnt',
+      `Dein Dienst-Tausch am ${datumDeutsch(t.datum)} wurde vom Planer abgelehnt.`,
+      [t.von_mitarbeiter_id, t.mit_mitarbeiter_id]
+    )
+    setPushHinweis(ergebnis.ok ? ergebnis.meldung : null)
     await laden()
   }
 
@@ -1049,6 +1181,8 @@ export default function Dienstplan() {
     return <p style={{ color: 'var(--text-muted)' }}>Lade Dienstplan...</p>
   }
 
+  const wochenMitDienst = mitarbeiterMitDienstInWoche()
+  const gelesenAnzahl = wochenMitDienst.filter((m) => gelesenIds.includes(m.id)).length
   const anzeigeTage = ansicht === 'tag' ? [bezugsdatum] : ansicht === 'woche' ? tage : monatsTage
   const uebersicht = uebersichtFuerTage(anzeigeTage)
   const toolbarTitel =
@@ -1174,6 +1308,36 @@ export default function Dienstplan() {
             </button>
           ))}
 
+        {ansicht !== 'monat' && freigegebeneWochen.includes(wochenStartIso) && (
+          <>
+            <button
+              onClick={() => setGelesenOffen(true)}
+              title="Wer hat die Woche als gelesen bestätigt?"
+              style={{
+                ...sekundaerKnopfStil,
+                borderColor: gelesenAnzahl === wochenMitDienst.length ? '#16a34a' : '#d97706',
+                color: gelesenAnzahl === wochenMitDienst.length ? '#166534' : '#92400e',
+              }}
+            >
+              Gelesen {gelesenAnzahl}/{wochenMitDienst.length}
+            </button>
+            <button onClick={aenderungMelden} title="Mitarbeiter per Push über eine Änderung informieren" style={sekundaerKnopfStil}>
+              Änderung melden
+            </button>
+          </>
+        )}
+
+        <button
+          onClick={() => setTauschPanelOffen(true)}
+          style={{
+            ...sekundaerKnopfStil,
+            borderColor: tauschListe.some((t) => t.status === 'zugestimmt') ? '#2563eb' : 'var(--navy)',
+            color: tauschListe.some((t) => t.status === 'zugestimmt') ? '#1d4ed8' : 'var(--navy)',
+          }}
+        >
+          Tauschwünsche{tauschListe.length > 0 ? ` (${tauschListe.length})` : ''}
+        </button>
+
         <button onClick={sollDialogOeffnen} style={sekundaerKnopfStil} title="Wie viele Personen pro Schicht und Wochentag gebraucht werden">
           Soll-Besetzung
         </button>
@@ -1183,6 +1347,31 @@ export default function Dienstplan() {
         </button>
       </div>
 
+      {pushHinweis && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 12,
+            background: '#eff6ff',
+            border: '1px solid #bfdbfe',
+            color: '#1e3a8a',
+            borderRadius: 8,
+            padding: '8px 12px',
+            marginBottom: 12,
+            fontSize: 13,
+          }}
+        >
+          <span>🔔 {pushHinweis}</span>
+          <button
+            onClick={() => setPushHinweis(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1e3a8a', fontSize: 16, lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {ansicht === 'tag' ? renderTagesansicht() : ansicht === 'woche' ? renderWochenansicht() : renderMonatsansicht()}
 
       <style>{`
@@ -1191,6 +1380,155 @@ export default function Dienstplan() {
         .dp-zeile:hover .dp-leer-tag { opacity: 1; }
         .dp-zeile:hover { background: #f8fafc; }
       `}</style>
+
+      {gelesenOffen && (
+        <div
+          onClick={() => setGelesenOffen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: 12,
+              padding: 20,
+              width: 420,
+              maxWidth: '100%',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>
+                Gelesen: KW {kalenderwoche(tage[0])}
+              </div>
+              <button
+                onClick={() => setGelesenOffen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+              {gelesenAnzahl} von {wochenMitDienst.length} Mitarbeitern mit Dienst haben die Woche bestätigt.
+            </div>
+            {wochenMitDienst.length === 0 && <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine Dienste in dieser Woche.</div>}
+            {[...wochenMitDienst]
+              .sort((a, b) => Number(gelesenIds.includes(a.id)) - Number(gelesenIds.includes(b.id)))
+              .map((m) => {
+                const gelesenJa = gelesenIds.includes(m.id)
+                return (
+                  <div
+                    key={m.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid #eef2f8', fontSize: 13 }}
+                  >
+                    <span style={{ color: gelesenJa ? '#15803d' : '#d97706', fontWeight: 700, width: 16 }}>{gelesenJa ? '✓' : '○'}</span>
+                    <span style={{ fontWeight: 600 }}>{m.name}</span>
+                    <span style={{ color: '#94a3b8', fontSize: 11 }}>{gelesenJa ? 'gelesen' : 'noch nicht gelesen'}</span>
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      )}
+
+      {tauschPanelOffen && (
+        <div
+          onClick={() => setTauschPanelOffen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: 12,
+              padding: 20,
+              width: 560,
+              maxWidth: '100%',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>Tauschwünsche</div>
+              <button
+                onClick={() => setTauschPanelOffen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+              Genehmigen kannst du, sobald der Kollege zugestimmt hat. Beim Genehmigen werden die beiden Dienste im Plan getauscht.
+            </div>
+            {tauschListe.length === 0 && <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine offenen Tauschwünsche.</div>}
+            {tauschListe.map((t) => (
+              <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{datumDeutsch(t.datum)}</div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>
+                  <b>{t.von_name}</b> ({t.von_schicht}) ⇄ <b>{t.mit_name}</b> ({t.mit_schicht})
+                </div>
+                {t.nachricht && (
+                  <div style={{ fontSize: 12, color: '#475569', background: '#f1f5f9', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
+                    „{t.nachricht}“
+                  </div>
+                )}
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    marginTop: 6,
+                    color: t.status === 'zugestimmt' ? '#1d4ed8' : '#b45309',
+                  }}
+                >
+                  {t.status === 'zugestimmt' ? 'Kollege hat zugestimmt' : 'Wartet auf Zustimmung des Kollegen'}
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => tauschGenehmigen(t)}
+                    disabled={t.status !== 'zugestimmt'}
+                    style={{ ...primaerKnopfStil, opacity: t.status === 'zugestimmt' ? 1 : 0.4 }}
+                  >
+                    Genehmigen
+                  </button>
+                  <button onClick={() => tauschAblehnen(t)} style={loeschenKnopfStil}>
+                    Ablehnen
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTauschPanelOffen(false)
+                      zuTagSpringen(new Date(t.datum + 'T00:00:00'), t.von_mitarbeiter_id)
+                    }}
+                    style={sekundaerKnopfStil}
+                  >
+                    Zum Tag
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {sollDialogOffen && (
         <div
@@ -1502,6 +1840,25 @@ export default function Dienstplan() {
                 ✕
               </button>
             </div>
+
+            {wunschFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum) && (
+              <div
+                style={{
+                  background: '#fef3c7',
+                  color: '#92400e',
+                  borderRadius: 6,
+                  padding: '6px 10px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  marginBottom: 12,
+                }}
+              >
+                ★ Wunschfrei eingetragen
+                {wunschFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)?.notiz
+                  ? `: ${wunschFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)?.notiz}`
+                  : ''}
+              </div>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
               <select
@@ -2111,6 +2468,14 @@ export default function Dienstplan() {
                           {mitarbeiter.name}
                         </div>
                         <div style={{ fontSize: 11, color: '#64748b' }}>{mitarbeiter.kategorie ?? 'Ohne Qualifikation'}</div>
+                        {wunschFuer(mitarbeiter.id, datumIso) && (
+                          <div
+                            title={wunschFuer(mitarbeiter.id, datumIso)?.notiz ?? 'Wunschfrei'}
+                            style={{ fontSize: 10, fontWeight: 700, color: '#92400e' }}
+                          >
+                            ★ Wunschfrei{wunschFuer(mitarbeiter.id, datumIso)?.notiz ? `: ${wunschFuer(mitarbeiter.id, datumIso)?.notiz}` : ''}
+                          </div>
+                        )}
                         {warnungen.map((w, wi) => (
                           <div
                             key={wi}
@@ -2611,6 +2976,7 @@ export default function Dienstplan() {
         let fg = '#64748b'
         let txt = ''
         let tip = `${m.name} · ${datumKurz(tag)}`
+        const wunsch = wunschFuer(m.id, iso)
         if (urlaub) {
           bg = '#c026d3'
           fg = '#ffffff'
@@ -2632,8 +2998,32 @@ export default function Dienstplan() {
           txt = stundeKurz(info.beginn)
           tip += ` · ${info.titel} ${minutenAlsUhrzeit(info.beginn)}–${minutenAlsUhrzeit(info.ende)}`
         }
+        if (wunsch && !urlaub) {
+          tip += ` · Wunschfrei${wunsch.notiz ? ': ' + wunsch.notiz : ''}`
+          if (!info && !eintrag?.status) {
+            bg = '#fef3c7'
+            fg = '#92400e'
+            txt = 'W'
+          } else if (info) {
+            hinweisListe.push({
+              farbe: '#f59e0b',
+              titel: 'Wunschfrei trotz Dienst',
+              text: `${m.name}, ${datumKurz(tag)}: Wunschfrei eingetragen${wunsch.notiz ? ' (' + wunsch.notiz + ')' : ''}, geplant ist ${info.titel}.`,
+              tag,
+              mitarbeiterId: m.id,
+            })
+          }
+        }
         const zeigeRing = warnungen.some((w) => w.art !== 'urlaub')
-        return { tag, iso, bg, fg, txt, tip, ring: zeigeRing ? '#dc2626' : 'transparent' }
+        return {
+          tag,
+          iso,
+          bg,
+          fg,
+          txt,
+          tip,
+          ring: zeigeRing ? '#dc2626' : wunsch && info ? '#f59e0b' : 'transparent',
+        }
       })
       return { m, zellen }
     })
@@ -2801,6 +3191,9 @@ export default function Dienstplan() {
               ))}
               <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ width: 14, height: 14, borderRadius: 3, background: '#c026d3' }} />U = Urlaub
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 14, height: 14, borderRadius: 3, background: '#fef3c7' }} />W = Wunschfrei
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ width: 14, height: 14, borderRadius: 3, boxShadow: 'inset 0 0 0 2px #dc2626' }} />
@@ -3219,6 +3612,25 @@ export default function Dienstplan() {
                               }}
                             >
                               ⚠
+                            </div>
+                          )}
+                          {wunschFuer(mitarbeiter.id, datumIso) && (
+                            <div
+                              title={`Wunschfrei${wunschFuer(mitarbeiter.id, datumIso)?.notiz ? ': ' + wunschFuer(mitarbeiter.id, datumIso)?.notiz : ''}`}
+                              style={{
+                                position: 'absolute',
+                                top: 1,
+                                left: 3,
+                                zIndex: 2,
+                                fontSize: 11,
+                                lineHeight: 1,
+                                color: '#92400e',
+                                background: '#fef3c7',
+                                borderRadius: 4,
+                                padding: '1px 3px',
+                              }}
+                            >
+                              ★
                             </div>
                           )}
                           {karte && eintrag && !urlaub && !eintrag.status ? (
