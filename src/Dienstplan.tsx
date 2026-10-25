@@ -34,6 +34,7 @@ interface OffeneSpot {
   pause_minuten: number | null
   dienstort: string | null
   farbe: string | null
+  info?: string | null
 }
 
 interface Warnung {
@@ -61,6 +62,7 @@ interface DienstplanEintrag {
   spot_pause_minuten: number | null
   spot_dienstort: string | null
   spot_farbe: string | null
+  spot_info?: string | null
   status: string | null
 }
 
@@ -79,6 +81,7 @@ interface SchichtInfo {
   pauseVon: number | null
   pauseBis: number | null
   ort: string | null
+  info: string | null
 }
 
 interface Balken {
@@ -87,6 +90,16 @@ interface Balken {
   bis: number
   vortag: boolean // Nachtschicht vom Vortag
   weiter: boolean // laeuft in den Folgetag
+}
+
+const SPOT_STANDARD = {
+  name: '',
+  beginn_zeit: '06:00',
+  ende_zeit: '18:00',
+  pause_minuten: 0,
+  dienstort: '',
+  farbe: '#8b1a1a',
+  info: '',
 }
 
 const BEREICHE = ['Lokführer', 'Wagenmeister'] as const
@@ -196,19 +209,14 @@ export default function Dienstplan() {
     pause_minuten: 0,
     dienstort: '',
     farbe: '#8b1a1a',
+    info: '',
   })
+  const [offenSpotBearbeitenId, setOffenSpotBearbeitenId] = useState<string | null>(null)
   const [gezogenerEintrag, setGezogenerEintrag] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
   const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
   const [spotFormularOffen, setSpotFormularOffen] = useState(false)
-  const [spotDaten, setSpotDaten] = useState({
-    name: '',
-    beginn_zeit: '06:00',
-    ende_zeit: '18:00',
-    pause_minuten: 0,
-    dienstort: '',
-    farbe: '#8b1a1a',
-  })
+  const [spotDaten, setSpotDaten] = useState(SPOT_STANDARD)
 
   const wochenStart = montagDerWoche(bezugsdatum)
   const tage = Array.from({ length: 7 }, (_, i) => addTage(wochenStart, i))
@@ -297,6 +305,7 @@ export default function Dienstplan() {
         pauseVon: null,
         pauseBis: null,
         ort: eintrag.spot_dienstort,
+        info: eintrag.spot_info ?? null,
       }
     }
     if (eintrag.schichtvorlage_id) {
@@ -320,6 +329,7 @@ export default function Dienstplan() {
       pauseVon: v.pause_von ? zeitInMinuten(v.pause_von) : null,
       pauseBis: v.pause_bis ? zeitInMinuten(v.pause_bis) : null,
       ort: v.dienstort,
+      info: null,
     }
   }
 
@@ -346,7 +356,23 @@ export default function Dienstplan() {
   function zelleOeffnen(mitarbeiterId: string, datumIso: string) {
     setAusgewaehlteZelle({ mitarbeiterId, datum: datumIso })
     setGewaehlteVorlage('')
-    setSpotFormularOffen(false)
+    const eintrag = eintragFuer(mitarbeiterId, datumIso)
+    if (eintrag?.ist_spotschicht) {
+      // bestehende Spotschicht: direkt im Bearbeiten-Formular oeffnen
+      setSpotDaten({
+        name: eintrag.spot_name ?? '',
+        beginn_zeit: zeitKurz(eintrag.spot_beginn_zeit) || '06:00',
+        ende_zeit: zeitKurz(eintrag.spot_ende_zeit) || '18:00',
+        pause_minuten: eintrag.spot_pause_minuten ?? 0,
+        dienstort: eintrag.spot_dienstort ?? '',
+        farbe: eintrag.spot_farbe ?? '#8b1a1a',
+        info: eintrag.spot_info ?? '',
+      })
+      setSpotFormularOffen(true)
+    } else {
+      setSpotDaten(SPOT_STANDARD)
+      setSpotFormularOffen(false)
+    }
   }
 
   async function schichtDirektZuweisen(vorlageId: string, mitarbeiterId: string, datumIso: string) {
@@ -403,6 +429,7 @@ export default function Dienstplan() {
         spot_pause_minuten: quellEintrag.spot_pause_minuten,
         spot_dienstort: quellEintrag.spot_dienstort,
         spot_farbe: quellEintrag.spot_farbe,
+        spot_info: quellEintrag.spot_info ?? null,
         status: quellEintrag.status,
       },
       { onConflict: 'mitarbeiter_id,datum' }
@@ -440,12 +467,13 @@ export default function Dienstplan() {
         spot_pause_minuten: spotDaten.pause_minuten,
         spot_dienstort: spotDaten.dienstort,
         spot_farbe: spotDaten.farbe,
+        spot_info: spotDaten.info.trim() || null,
         status: null,
       },
       { onConflict: 'mitarbeiter_id,datum' }
     )
     setAusgewaehlteZelle(null)
-    setSpotDaten({ name: '', beginn_zeit: '06:00', ende_zeit: '18:00', pause_minuten: 0, dienstort: '', farbe: '#8b1a1a' })
+    setSpotDaten(SPOT_STANDARD)
     await laden()
   }
 
@@ -491,6 +519,7 @@ export default function Dienstplan() {
         pause_minuten: eintrag.spot_pause_minuten ?? 0,
         dienstort: eintrag.spot_dienstort,
         farbe: eintrag.spot_farbe,
+        info: eintrag.spot_info ?? null,
       })
     }
     await supabase
@@ -520,6 +549,7 @@ export default function Dienstplan() {
         spot_pause_minuten: spot.pause_minuten ?? 0,
         spot_dienstort: spot.dienstort,
         spot_farbe: spot.farbe,
+        spot_info: spot.info ?? null,
         status: null,
       },
       { onConflict: 'mitarbeiter_id,datum' }
@@ -546,13 +576,30 @@ export default function Dienstplan() {
   }
 
   function offenSpotDialogOeffnen() {
-    setOffenSpotDaten((alt) => ({ ...alt, datum: tagIso }))
+    setOffenSpotBearbeitenId(null)
+    setOffenSpotDaten({ ...SPOT_STANDARD, datum: tagIso, bereich: 'Lokführer' })
+    setOffenSpotDialogOffen(true)
+  }
+
+  function offenSpotBearbeiten(x: OffeneSpot) {
+    setOffenSpotBearbeitenId(x.id)
+    setOffenSpotDaten({
+      datum: x.datum,
+      bereich: x.bereich,
+      name: x.name,
+      beginn_zeit: zeitKurz(x.beginn_zeit),
+      ende_zeit: zeitKurz(x.ende_zeit),
+      pause_minuten: x.pause_minuten ?? 0,
+      dienstort: x.dienstort ?? '',
+      farbe: x.farbe ?? '#8b1a1a',
+      info: x.info ?? '',
+    })
     setOffenSpotDialogOffen(true)
   }
 
   async function offeneSpotschichtAnlegen() {
     if (!offenSpotDaten.name.trim() || !offenSpotDaten.datum) return
-    await supabase.from('offene_spotschichten').insert({
+    const werte = {
       datum: offenSpotDaten.datum,
       bereich: offenSpotDaten.bereich,
       name: offenSpotDaten.name.trim(),
@@ -561,9 +608,16 @@ export default function Dienstplan() {
       pause_minuten: offenSpotDaten.pause_minuten,
       dienstort: offenSpotDaten.dienstort || null,
       farbe: offenSpotDaten.farbe,
-    })
+      info: offenSpotDaten.info.trim() || null,
+    }
+    if (offenSpotBearbeitenId) {
+      await supabase.from('offene_spotschichten').update(werte).eq('id', offenSpotBearbeitenId)
+    } else {
+      await supabase.from('offene_spotschichten').insert(werte)
+    }
     setOffenSpotDialogOffen(false)
-    setOffenSpotDaten((alt) => ({ ...alt, name: '', dienstort: '' }))
+    setOffenSpotBearbeitenId(null)
+    setOffenSpotDaten({ ...SPOT_STANDARD, datum: tagIso, bereich: 'Lokführer' })
     await laden()
   }
 
@@ -647,6 +701,7 @@ export default function Dienstplan() {
       pauseVon: null,
       pauseBis: null,
       ort: x.dienstort,
+      info: x.info ?? null,
     }
   }
 
@@ -774,7 +829,7 @@ export default function Dienstplan() {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)' }}>Offene Spotschicht anlegen</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)' }}>{offenSpotBearbeitenId ? 'Offene Spotschicht bearbeiten' : 'Offene Spotschicht anlegen'}</div>
               <button
                 onClick={() => setOffenSpotDialogOffen(false)}
                 style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
@@ -868,6 +923,16 @@ export default function Dienstplan() {
                   style={{ ...eingabeStil, padding: 2, height: 36 }}
                 />
               </label>
+              <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+                Info / Bemerkung
+                <textarea
+                  value={offenSpotDaten.info}
+                  onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, info: e.target.value })}
+                  rows={3}
+                  style={{ ...eingabeStil, resize: 'vertical', fontFamily: 'inherit' }}
+                  placeholder="z.B. Treffpunkt, Auftrag, Ansprechpartner ..."
+                />
+              </label>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
               <button onClick={() => setOffenSpotDialogOffen(false)} style={sekundaerKnopfStil}>
@@ -878,7 +943,7 @@ export default function Dienstplan() {
                 disabled={!offenSpotDaten.name.trim() || !offenSpotDaten.datum}
                 style={primaerKnopfStil}
               >
-                Anlegen
+                {offenSpotBearbeitenId ? 'Speichern' : 'Anlegen'}
               </button>
             </div>
           </div>
@@ -996,7 +1061,11 @@ export default function Dienstplan() {
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
               <button onClick={() => setSpotFormularOffen(!spotFormularOffen)} style={sekundaerKnopfStil}>
-                {spotFormularOffen ? 'Spotschicht abbrechen' : '+ Spotschicht anlegen'}
+                {spotFormularOffen
+                  ? 'Spotschicht schließen'
+                  : eintragFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)?.ist_spotschicht
+                  ? 'Spotschicht bearbeiten'
+                  : '+ Spotschicht anlegen'}
               </button>
               <button onClick={() => statusSetzen('ruhe')} style={sekundaerKnopfStil}>
                 Ruhe
@@ -1074,9 +1143,21 @@ export default function Dienstplan() {
                     style={{ ...eingabeStil, padding: 2, height: 36 }}
                   />
                 </label>
+                <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+                  Info / Bemerkung
+                  <textarea
+                    value={spotDaten.info}
+                    onChange={(e) => setSpotDaten({ ...spotDaten, info: e.target.value })}
+                    rows={3}
+                    style={{ ...eingabeStil, resize: 'vertical', fontFamily: 'inherit' }}
+                    placeholder="z.B. Treffpunkt, Auftrag, Ansprechpartner ..."
+                  />
+                </label>
                 <div style={{ display: 'flex', alignItems: 'flex-end' }}>
                   <button onClick={spotschichtAnlegen} style={primaerKnopfStil}>
-                    Anlegen
+                    {eintragFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)?.ist_spotschicht
+                      ? 'Speichern'
+                      : 'Anlegen'}
                   </button>
                 </div>
               </div>
@@ -1263,7 +1344,8 @@ export default function Dienstplan() {
                                     setGezogeneVorlage({ art: 'spot', id: x.id, tagDatum: datumIso, bereich })
                                   }
                                   onDragEnd={() => setGezogeneVorlage(null)}
-                                  title="Offene Spotschicht: auf eine Person ziehen"
+                                  onClick={() => offenSpotBearbeiten(x)}
+                                  title="Offene Spotschicht: Klick zum Bearbeiten, auf eine Person ziehen zum Zuweisen"
                                   style={{
                                     position: 'absolute',
                                     left: `${(info.beginn / 1440) * 100}%`,
@@ -1524,7 +1606,7 @@ export default function Dienstplan() {
                                 setGezogenerEintrag({ mitarbeiterId: mitarbeiter.id, datum: datumIso })
                               }}
                               onDragEnd={() => setGezogenerEintrag(null)}
-                              title={`${b.info.titel} ${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}${b.vortag ? ' (Nachtschicht vom Vortag)' : ''}`}
+                              title={`${b.info.titel} ${minutenAlsUhrzeit(b.info.beginn)}–${minutenAlsUhrzeit(b.info.ende)}${b.info.ort ? ' · ' + b.info.ort : ''}${b.vortag ? ' (Nachtschicht vom Vortag)' : ''}${b.info.info ? '\nInfo: ' + b.info.info : ''}`}
                               style={{
                                 position: 'absolute',
                                 left: `${(b.von / 1440) * 100}%`,
@@ -1557,6 +1639,7 @@ export default function Dienstplan() {
                               >
                                 {b.vortag ? '← ' : ''}
                                 {b.info.titel}
+                                {b.info.info ? ' ℹ' : ''}
                                 {ueberlappt
                                   ? b.vortag
                                     ? ` · bis ${minutenAlsUhrzeit(b.info.ende)}`
@@ -1809,7 +1892,8 @@ export default function Dienstplan() {
                                 setGezogeneVorlage({ art: 'spot', id: x.id, tagDatum: datumIso, bereich })
                               }
                               onDragEnd={() => setGezogeneVorlage(null)}
-                              title="Offene Spotschicht: nach unten auf die Person ziehen"
+                              onClick={() => offenSpotBearbeiten(x)}
+                              title="Offene Spotschicht: Klick zum Bearbeiten, nach unten auf die Person ziehen zum Zuweisen"
                               style={{
                                 background: x.farbe ?? '#8b1a1a',
                                 color: '#ffffff',
@@ -1941,6 +2025,7 @@ export default function Dienstplan() {
                             titel={eintrag.spot_name ?? ''}
                             zeile2={`${zeitKurz(eintrag.spot_beginn_zeit)}–${zeitKurz(eintrag.spot_ende_zeit)}`}
                             zeile3={eintrag.spot_dienstort ?? undefined}
+                            info={eintrag.spot_info ?? undefined}
                           />
                         )
                       } else if (eintrag?.schichtvorlage_id) {
@@ -2084,12 +2169,14 @@ function SchichtKarte({
   titel,
   zeile2,
   zeile3,
+  info,
   umrandet,
 }: {
   farbe: string
   titel: string
   zeile2?: string
   zeile3?: string
+  info?: string
   umrandet?: boolean
 }) {
   if (umrandet) {
@@ -2144,6 +2231,14 @@ function SchichtKarte({
       {zeile3 && (
         <div style={{ fontSize: 9, opacity: 0.8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {zeile3}
+        </div>
+      )}
+      {info && (
+        <div
+          title={info}
+          style={{ fontSize: 9, opacity: 0.95, fontStyle: 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+        >
+          ℹ {info}
         </div>
       )}
     </div>
