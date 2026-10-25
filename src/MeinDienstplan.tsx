@@ -53,6 +53,7 @@ interface Wunsch {
   id: string
   datum: string
   notiz: string | null
+  status: string
 }
 
 interface Tausch {
@@ -206,7 +207,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   async function extraLaden() {
     const [gel, wun, tau, ich] = await Promise.all([
       supabase.from('dienstplan_gelesen').select('woche_start').eq('mitarbeiter_id', mitarbeiterId),
-      supabase.from('wunschfrei').select('id, datum, notiz').gte('datum', heuteIso).order('datum'),
+      supabase.from('wunschfrei').select('id, datum, notiz, status').gte('datum', heuteIso).order('datum'),
       supabase.from('tauschwuensche').select('*').order('created_at', { ascending: false }).limit(40),
       supabase.from('mitarbeiter').select('name').eq('id', mitarbeiterId).maybeSingle(),
     ])
@@ -552,7 +553,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
       <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 16, background: '#ffffff' }}>
         <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 4 }}>Wunschfrei eintragen</div>
         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
-          Das ist ein Wunsch, kein Urlaubsantrag. Der Planer sieht ihn bei der Planung und berücksichtigt ihn, wenn es geht.
+          Das ist ein Wunsch, kein Urlaubsantrag. Der Planer genehmigt oder lehnt ihn ab. Du siehst hier den Stand.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <input type="date" min={heuteIso} value={wunschDatum} onChange={(e) => setWunschDatum(e.target.value)} style={eingabe} />
@@ -589,6 +590,20 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{datumLang(w.datum)}</div>
                 {w.notiz && <div style={{ fontSize: 12, color: '#64748b' }}>{w.notiz}</div>}
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    marginTop: 2,
+                    color: w.status === 'genehmigt' ? '#15803d' : w.status === 'abgelehnt' ? '#b91c1c' : '#b45309',
+                  }}
+                >
+                  {w.status === 'genehmigt'
+                    ? '✓ Genehmigt'
+                    : w.status === 'abgelehnt'
+                    ? 'Abgelehnt'
+                    : 'Wartet auf Entscheidung des Planers'}
+                </div>
               </div>
               <button
                 onClick={() => wunschLoeschen(w.id)}
@@ -846,8 +861,8 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                         ) : (
                           <span style={{ color: '#cbd5e1', fontSize: 13 }}>–</span>
                         )}
-                        {wuensche.some((w) => w.datum === iso) && (
-                          <div style={{ fontSize: 11, color: '#92400e', marginTop: 2 }}>★ Wunschfrei eingetragen</div>
+                        {wuensche.some((w) => w.datum === iso && w.status === 'offen') && (
+                          <div style={{ fontSize: 11, color: '#92400e', marginTop: 2 }}>★ Wunschfrei beantragt</div>
                         )}
                       </div>
                       <div style={{ color: '#94a3b8', fontSize: 18 }}>›</div>
@@ -1029,8 +1044,8 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
               ) : (
                 <div style={{ fontSize: 14, color: '#475569' }}>An diesem Tag ist kein Dienst eingetragen.</div>
               )}
-              {wuensche.some((w) => w.datum === offenerTag) && (
-                <div style={{ marginTop: 10, fontSize: 13, color: '#92400e' }}>★ Für diesen Tag hast du Wunschfrei eingetragen.</div>
+              {wuensche.some((w) => w.datum === offenerTag && w.status === 'offen') && (
+                <div style={{ marginTop: 10, fontSize: 13, color: '#92400e' }}>★ Für diesen Tag hast du Wunschfrei beantragt.</div>
               )}
             </div>
           </div>

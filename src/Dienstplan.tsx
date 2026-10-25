@@ -45,6 +45,7 @@ interface SollZeile {
 }
 
 interface Wunsch {
+  id: string
   mitarbeiter_id: string
   datum: string
   notiz: string | null
@@ -281,6 +282,7 @@ export default function Dienstplan() {
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
   const [tauschListe, setTauschListe] = useState<Tausch[]>([])
   const [tauschPanelOffen, setTauschPanelOffen] = useState(false)
+  const [wunschPanelOffen, setWunschPanelOffen] = useState(false)
   const [pushHinweis, setPushHinweis] = useState<string | null>(null)
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
@@ -375,9 +377,10 @@ export default function Dienstplan() {
         supabase.from('dienstplan_gelesen').select('mitarbeiter_id').eq('woche_start', wochenStartIso),
         supabase
           .from('wunschfrei')
-          .select('mitarbeiter_id, datum, notiz')
-          .gte('datum', urlaubStartIso)
-          .lte('datum', endeIso),
+          .select('id, mitarbeiter_id, datum, notiz')
+          .eq('status', 'offen')
+          .gte('datum', datumZuISO(heuteOhneUhrzeit()))
+          .order('datum'),
         supabase
           .from('tauschwuensche')
           .select('*')
@@ -1131,6 +1134,60 @@ export default function Dienstplan() {
     await laden()
   }
 
+  async function wunschGenehmigen(w: Wunsch) {
+    const person = mitarbeiterListe.find((m) => m.id === w.mitarbeiter_id)
+    const { data: bestehendListe } = await supabase
+      .from('dienstplan_eintraege')
+      .select('*')
+      .eq('mitarbeiter_id', w.mitarbeiter_id)
+      .eq('datum', w.datum)
+    const bestehend = (bestehendListe ?? [])[0] as DienstplanEintrag | undefined
+    if (bestehend && !bestehend.status) {
+      const ok = window.confirm(
+        `${person?.name ?? 'Die Person'} hat am ${datumDeutsch(w.datum)} bereits einen Dienst. Genehmigen setzt den Tag auf „Frei“ und der Dienst wird wieder offen. Fortfahren?`
+      )
+      if (!ok) return
+      if (bestehend.ist_spotschicht && bestehend.spot_beginn_zeit && bestehend.spot_ende_zeit) {
+        await supabase.from('offene_spotschichten').insert({
+          datum: w.datum,
+          bereich: bereichVonKategorie(person?.kategorie ?? null),
+          name: bestehend.spot_name ?? 'Spotschicht',
+          beginn_zeit: bestehend.spot_beginn_zeit,
+          ende_zeit: bestehend.spot_ende_zeit,
+          pause_minuten: bestehend.spot_pause_minuten ?? 0,
+          dienstort: bestehend.spot_dienstort,
+          farbe: bestehend.spot_farbe,
+          info: bestehend.spot_info ?? null,
+        })
+      }
+    }
+    await supabase.from('dienstplan_eintraege').upsert(
+      {
+        ...ABW_LEER,
+        mitarbeiter_id: w.mitarbeiter_id,
+        datum: w.datum,
+        schichtvorlage_id: null,
+        ist_spotschicht: false,
+        status: 'frei',
+      },
+      { onConflict: 'mitarbeiter_id,datum' }
+    )
+    await supabase.from('wunschfrei').update({ status: 'genehmigt' }).eq('id', w.id)
+    const ergebnis = await pushSenden('Wunschfrei genehmigt', `Dein Wunschfrei am ${datumDeutsch(w.datum)} wurde genehmigt.`, [w.mitarbeiter_id])
+    setPushHinweis(ergebnis.ok ? ergebnis.meldung : null)
+    await laden()
+  }
+
+  async function wunschAblehnen(w: Wunsch) {
+    const person = mitarbeiterListe.find((m) => m.id === w.mitarbeiter_id)
+    const ok = window.confirm(`Wunschfrei von ${person?.name ?? 'der Person'} am ${datumDeutsch(w.datum)} ablehnen?`)
+    if (!ok) return
+    await supabase.from('wunschfrei').update({ status: 'abgelehnt' }).eq('id', w.id)
+    const ergebnis = await pushSenden('Wunschfrei abgelehnt', `Dein Wunschfrei am ${datumDeutsch(w.datum)} konnte leider nicht genehmigt werden.`, [w.mitarbeiter_id])
+    setPushHinweis(ergebnis.ok ? ergebnis.meldung : null)
+    await laden()
+  }
+
   async function tauschAblehnen(t: Tausch) {
     const bestaetigt = window.confirm(`Tausch am ${datumDeutsch(t.datum)} zwischen ${t.von_name} und ${t.mit_name} ablehnen?`)
     if (!bestaetigt) return
@@ -1328,6 +1385,19 @@ export default function Dienstplan() {
         )}
 
         <button
+          onClick={() => setWunschPanelOffen(true)}
+          title="Wunschfrei-Anträge der Mitarbeiter genehmigen oder ablehnen"
+          style={{
+            ...sekundaerKnopfStil,
+            borderColor: wuensche.length > 0 ? '#d97706' : 'var(--navy)',
+            color: wuensche.length > 0 ? '#92400e' : 'var(--navy)',
+            background: wuensche.length > 0 ? '#fef3c7' : 'none',
+          }}
+        >
+          Wunschfrei{wuensche.length > 0 ? ` (${wuensche.length})` : ''}
+        </button>
+
+        <button
           onClick={() => setTauschPanelOffen(true)}
           style={{
             ...sekundaerKnopfStil,
@@ -1438,6 +1508,88 @@ export default function Dienstplan() {
                   </div>
                 )
               })}
+          </div>
+        </div>
+      )}
+
+      {wunschPanelOffen && (
+        <div
+          onClick={() => setWunschPanelOffen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: 12,
+              padding: 20,
+              width: 560,
+              maxWidth: '100%',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>Wunschfrei-Anträge</div>
+              <button
+                onClick={() => setWunschPanelOffen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+              Beim Genehmigen wird der Tag im Dienstplan auf „Frei“ gesetzt. Ein geplanter Dienst wird dabei wieder offen.
+            </div>
+            {wuensche.length === 0 && <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine offenen Anträge.</div>}
+            {wuensche.map((w) => {
+              const person = mitarbeiterListe.find((m) => m.id === w.mitarbeiter_id)
+              const dienst = person ? schichtInfoVon(eintragFuer(person.id, w.datum)) : null
+              return (
+                <div key={w.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>
+                    {person?.name ?? 'Unbekannt'} · {datumDeutsch(w.datum)}
+                  </div>
+                  {w.notiz && (
+                    <div style={{ fontSize: 12, color: '#475569', background: '#f1f5f9', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
+                      „{w.notiz}“
+                    </div>
+                  )}
+                  {dienst && (
+                    <div style={{ fontSize: 12, color: '#b45309', fontWeight: 600, marginTop: 6 }}>
+                      ⚠ An diesem Tag ist schon {dienst.titel} geplant ({minutenAlsUhrzeit(dienst.beginn)}–{minutenAlsUhrzeit(dienst.ende)}).
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <button onClick={() => wunschGenehmigen(w)} style={primaerKnopfStil}>
+                      Genehmigen
+                    </button>
+                    <button onClick={() => wunschAblehnen(w)} style={loeschenKnopfStil}>
+                      Ablehnen
+                    </button>
+                    <button
+                      onClick={() => {
+                        setWunschPanelOffen(false)
+                        zuTagSpringen(new Date(w.datum + 'T00:00:00'), w.mitarbeiter_id)
+                      }}
+                      style={sekundaerKnopfStil}
+                    >
+                      Zum Tag
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
