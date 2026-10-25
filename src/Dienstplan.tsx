@@ -63,6 +63,11 @@ interface DienstplanEintrag {
   spot_dienstort: string | null
   spot_farbe: string | null
   spot_info?: string | null
+  abw_beginn_zeit?: string | null
+  abw_ende_zeit?: string | null
+  abw_pause_minuten?: number | null
+  abw_dienstort?: string | null
+  abw_info?: string | null
   status: string | null
 }
 
@@ -82,6 +87,7 @@ interface SchichtInfo {
   pauseBis: number | null
   ort: string | null
   info: string | null
+  abweichung: boolean
 }
 
 interface Balken {
@@ -100,6 +106,14 @@ const SPOT_STANDARD = {
   dienstort: '',
   farbe: '#8b1a1a',
   info: '',
+}
+
+const ABW_LEER = {
+  abw_beginn_zeit: null,
+  abw_ende_zeit: null,
+  abw_pause_minuten: null,
+  abw_dienstort: null,
+  abw_info: null,
 }
 
 const BEREICHE = ['Lokführer', 'Wagenmeister'] as const
@@ -216,6 +230,14 @@ export default function Dienstplan() {
   const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
   const [spotFormularOffen, setSpotFormularOffen] = useState(false)
+  const [abwFormularOffen, setAbwFormularOffen] = useState(false)
+  const [abwDaten, setAbwDaten] = useState({
+    beginn_zeit: '06:00',
+    ende_zeit: '18:00',
+    pause_minuten: 0,
+    dienstort: '',
+    info: '',
+  })
   const [spotDaten, setSpotDaten] = useState(SPOT_STANDARD)
 
   const wochenStart = montagDerWoche(bezugsdatum)
@@ -306,12 +328,29 @@ export default function Dienstplan() {
         pauseBis: null,
         ort: eintrag.spot_dienstort,
         info: eintrag.spot_info ?? null,
+        abweichung: false,
       }
     }
     if (eintrag.schichtvorlage_id) {
       const v = vorlagen.find((x) => x.id === eintrag.schichtvorlage_id)
       if (!v) return null
-      return infoAusVorlage(v)
+      const basis = infoAusVorlage(v)
+      // Dienstzeitabweichung fuer genau diesen Eintrag
+      const hatZeitAbw = !!(eintrag.abw_beginn_zeit || eintrag.abw_ende_zeit)
+      const beginn = eintrag.abw_beginn_zeit ? zeitInMinuten(eintrag.abw_beginn_zeit) : basis.beginn
+      let ende = eintrag.abw_ende_zeit ? zeitInMinuten(eintrag.abw_ende_zeit) : basis.ende
+      if (ende <= beginn) ende += 1440
+      return {
+        ...basis,
+        beginn,
+        ende,
+        pause: eintrag.abw_pause_minuten ?? basis.pause,
+        pauseVon: hatZeitAbw ? null : basis.pauseVon,
+        pauseBis: hatZeitAbw ? null : basis.pauseBis,
+        ort: eintrag.abw_dienstort ?? basis.ort,
+        info: eintrag.abw_info ?? null,
+        abweichung: hatZeitAbw || eintrag.abw_pause_minuten != null || eintrag.abw_dienstort != null,
+      }
     }
     return null
   }
@@ -330,6 +369,7 @@ export default function Dienstplan() {
       pauseBis: v.pause_bis ? zeitInMinuten(v.pause_bis) : null,
       ort: v.dienstort,
       info: null,
+      abweichung: false,
     }
   }
 
@@ -356,7 +396,18 @@ export default function Dienstplan() {
   function zelleOeffnen(mitarbeiterId: string, datumIso: string) {
     setAusgewaehlteZelle({ mitarbeiterId, datum: datumIso })
     setGewaehlteVorlage('')
+    setAbwFormularOffen(false)
     const eintrag = eintragFuer(mitarbeiterId, datumIso)
+    const aktuelleInfo = eintrag && !eintrag.ist_spotschicht ? schichtInfoVon(eintrag) : null
+    if (aktuelleInfo) {
+      setAbwDaten({
+        beginn_zeit: minutenAlsUhrzeit(aktuelleInfo.beginn),
+        ende_zeit: minutenAlsUhrzeit(aktuelleInfo.ende),
+        pause_minuten: aktuelleInfo.pause,
+        dienstort: aktuelleInfo.ort ?? '',
+        info: eintrag?.abw_info ?? '',
+      })
+    }
     if (eintrag?.ist_spotschicht) {
       // bestehende Spotschicht: direkt im Bearbeiten-Formular oeffnen
       setSpotDaten({
@@ -385,6 +436,7 @@ export default function Dienstplan() {
     }
     await supabase.from('dienstplan_eintraege').upsert(
       {
+        ...ABW_LEER,
         mitarbeiter_id: mitarbeiterId,
         datum: datumIso,
         schichtvorlage_id: vorlageId,
@@ -419,6 +471,7 @@ export default function Dienstplan() {
 
     await supabase.from('dienstplan_eintraege').upsert(
       {
+        ...ABW_LEER,
         mitarbeiter_id: zielMitarbeiterId,
         datum: zielDatumIso,
         schichtvorlage_id: quellEintrag.schichtvorlage_id,
@@ -431,6 +484,11 @@ export default function Dienstplan() {
         spot_farbe: quellEintrag.spot_farbe,
         spot_info: quellEintrag.spot_info ?? null,
         status: quellEintrag.status,
+        abw_beginn_zeit: quellEintrag.abw_beginn_zeit ?? null,
+        abw_ende_zeit: quellEintrag.abw_ende_zeit ?? null,
+        abw_pause_minuten: quellEintrag.abw_pause_minuten ?? null,
+        abw_dienstort: quellEintrag.abw_dienstort ?? null,
+        abw_info: quellEintrag.abw_info ?? null,
       },
       { onConflict: 'mitarbeiter_id,datum' }
     )
@@ -441,6 +499,7 @@ export default function Dienstplan() {
     if (!ausgewaehlteZelle || !gewaehlteVorlage) return
     await supabase.from('dienstplan_eintraege').upsert(
       {
+        ...ABW_LEER,
         mitarbeiter_id: ausgewaehlteZelle.mitarbeiterId,
         datum: ausgewaehlteZelle.datum,
         schichtvorlage_id: gewaehlteVorlage,
@@ -457,6 +516,7 @@ export default function Dienstplan() {
     if (!ausgewaehlteZelle || !spotDaten.name.trim()) return
     await supabase.from('dienstplan_eintraege').upsert(
       {
+        ...ABW_LEER,
         mitarbeiter_id: ausgewaehlteZelle.mitarbeiterId,
         datum: ausgewaehlteZelle.datum,
         schichtvorlage_id: null,
@@ -477,10 +537,42 @@ export default function Dienstplan() {
     await laden()
   }
 
+  async function abweichungSpeichern() {
+    if (!ausgewaehlteZelle) return
+    const eintrag = eintragFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)
+    const vorlage = vorlagen.find((v) => v.id === eintrag?.schichtvorlage_id)
+    if (!eintrag || !vorlage) return
+    await supabase
+      .from('dienstplan_eintraege')
+      .update({
+        abw_beginn_zeit: abwDaten.beginn_zeit !== zeitKurz(vorlage.beginn_zeit) ? abwDaten.beginn_zeit : null,
+        abw_ende_zeit: abwDaten.ende_zeit !== zeitKurz(vorlage.ende_zeit) ? abwDaten.ende_zeit : null,
+        abw_pause_minuten: abwDaten.pause_minuten !== (vorlage.pause_minuten ?? 0) ? abwDaten.pause_minuten : null,
+        abw_dienstort: abwDaten.dienstort !== (vorlage.dienstort ?? '') ? abwDaten.dienstort : null,
+        abw_info: abwDaten.info.trim() || null,
+      })
+      .eq('mitarbeiter_id', ausgewaehlteZelle.mitarbeiterId)
+      .eq('datum', ausgewaehlteZelle.datum)
+    setAusgewaehlteZelle(null)
+    await laden()
+  }
+
+  async function abweichungZuruecksetzen() {
+    if (!ausgewaehlteZelle) return
+    await supabase
+      .from('dienstplan_eintraege')
+      .update(ABW_LEER)
+      .eq('mitarbeiter_id', ausgewaehlteZelle.mitarbeiterId)
+      .eq('datum', ausgewaehlteZelle.datum)
+    setAusgewaehlteZelle(null)
+    await laden()
+  }
+
   async function statusSetzen(status: 'ruhe' | 'frei') {
     if (!ausgewaehlteZelle) return
     await supabase.from('dienstplan_eintraege').upsert(
       {
+        ...ABW_LEER,
         mitarbeiter_id: ausgewaehlteZelle.mitarbeiterId,
         datum: ausgewaehlteZelle.datum,
         schichtvorlage_id: null,
@@ -539,6 +631,7 @@ export default function Dienstplan() {
     }
     await supabase.from('dienstplan_eintraege').upsert(
       {
+        ...ABW_LEER,
         mitarbeiter_id: mitarbeiterId,
         datum: datumIso,
         schichtvorlage_id: null,
@@ -718,6 +811,7 @@ export default function Dienstplan() {
       pauseBis: null,
       ort: x.dienstort,
       info: x.info ?? null,
+      abweichung: false,
     }
   }
 
@@ -1077,13 +1171,31 @@ export default function Dienstplan() {
             </div>
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-              <button onClick={() => setSpotFormularOffen(!spotFormularOffen)} style={sekundaerKnopfStil}>
+              <button onClick={() => {
+                  setSpotFormularOffen(!spotFormularOffen)
+                  setAbwFormularOffen(false)
+                }} style={sekundaerKnopfStil}>
                 {spotFormularOffen
                   ? 'Spotschicht schließen'
                   : eintragFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)?.ist_spotschicht
                   ? 'Spotschicht bearbeiten'
                   : '+ Spotschicht anlegen'}
               </button>
+              {(() => {
+                const e = eintragFuer(ausgewaehlteZelle.mitarbeiterId, ausgewaehlteZelle.datum)
+                if (!e?.schichtvorlage_id || e.ist_spotschicht) return null
+                return (
+                  <button
+                    onClick={() => {
+                      setAbwFormularOffen(!abwFormularOffen)
+                      setSpotFormularOffen(false)
+                    }}
+                    style={sekundaerKnopfStil}
+                  >
+                    {abwFormularOffen ? 'Dienstzeit schließen' : 'Dienstzeit anpassen'}
+                  </button>
+                )
+              })()}
               <button onClick={() => statusSetzen('ruhe')} style={sekundaerKnopfStil}>
                 Ruhe
               </button>
@@ -1094,6 +1206,77 @@ export default function Dienstplan() {
                 Eintrag leeren
               </button>
             </div>
+
+            {abwFormularOffen && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                  gap: 10,
+                  padding: 12,
+                  background: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  borderRadius: 6,
+                }}
+              >
+                <div style={{ gridColumn: '1 / -1', fontSize: 12, color: '#92400e' }}>
+                  Dienstzeitabweichung nur für diesen Tag und diese Person. Die Schichtvorlage selbst bleibt unverändert.
+                </div>
+                <label style={beschriftungStil}>
+                  Beginn
+                  <input
+                    type="time"
+                    value={abwDaten.beginn_zeit}
+                    onChange={(e) => setAbwDaten({ ...abwDaten, beginn_zeit: e.target.value })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Ende
+                  <input
+                    type="time"
+                    value={abwDaten.ende_zeit}
+                    onChange={(e) => setAbwDaten({ ...abwDaten, ende_zeit: e.target.value })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Pause (Min.)
+                  <input
+                    type="number"
+                    value={abwDaten.pause_minuten}
+                    onChange={(e) => setAbwDaten({ ...abwDaten, pause_minuten: Number(e.target.value) })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={beschriftungStil}>
+                  Dienstort
+                  <input
+                    value={abwDaten.dienstort}
+                    onChange={(e) => setAbwDaten({ ...abwDaten, dienstort: e.target.value })}
+                    style={eingabeStil}
+                  />
+                </label>
+                <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+                  Grund / Info
+                  <textarea
+                    value={abwDaten.info}
+                    onChange={(e) => setAbwDaten({ ...abwDaten, info: e.target.value })}
+                    rows={2}
+                    style={{ ...eingabeStil, resize: 'vertical', fontFamily: 'inherit' }}
+                    placeholder="z.B. Zugverspätung, Dienstbeginn verschoben ..."
+                  />
+                </label>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
+                  <button onClick={abweichungSpeichern} style={primaerKnopfStil}>
+                    Speichern
+                  </button>
+                  <button onClick={abweichungZuruecksetzen} style={sekundaerKnopfStil}>
+                    Auf Vorlage zurücksetzen
+                  </button>
+                </div>
+              </div>
+            )}
 
             {spotFormularOffen && (
               <div
@@ -1656,6 +1839,7 @@ export default function Dienstplan() {
                               >
                                 {b.vortag ? '← ' : ''}
                                 {b.info.titel}
+                                {b.info.abweichung ? ' ✎' : ''}
                                 {b.info.info ? ' ℹ' : ''}
                                 {ueberlappt
                                   ? b.vortag
@@ -2048,12 +2232,18 @@ export default function Dienstplan() {
                       } else if (eintrag?.schichtvorlage_id) {
                         const vorlage = vorlagen.find((v) => v.id === eintrag.schichtvorlage_id)
                         if (vorlage) {
+                          const si = schichtInfoVon(eintrag)
                           karte = (
                             <SchichtKarte
                               farbe={vorlage.farbe}
-                              titel={vorlage.name}
-                              zeile2={`${zeitKurz(vorlage.beginn_zeit)}–${zeitKurz(vorlage.ende_zeit)}`}
-                              zeile3={vorlage.dienstort ?? undefined}
+                              titel={vorlage.name + (si?.abweichung ? ' ✎' : '')}
+                              zeile2={
+                                si
+                                  ? `${minutenAlsUhrzeit(si.beginn)}–${minutenAlsUhrzeit(si.ende)}`
+                                  : `${zeitKurz(vorlage.beginn_zeit)}–${zeitKurz(vorlage.ende_zeit)}`
+                              }
+                              zeile3={si?.ort ?? vorlage.dienstort ?? undefined}
+                              info={eintrag.abw_info ?? undefined}
                             />
                           )
                         }
