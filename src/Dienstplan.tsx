@@ -1,13 +1,14 @@
 import { Fragment, useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
-import { KATEGORIEN } from './qualifikationen'
+import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { pushSenden } from './pushAbo'
 
 interface Mitarbeiter {
   id: string
   name: string
   kategorie: string | null
+  lok_typen?: string[] | null
 }
 
 interface Schichtvorlage {
@@ -285,6 +286,7 @@ export default function Dienstplan() {
   const [wunschPanelOffen, setWunschPanelOffen] = useState(false)
   const [pushHinweis, setPushHinweis] = useState<string | null>(null)
   const [kategorieFilter, setKategorieFilter] = useState<string[]>([])
+  const [lokFilter, setLokFilter] = useState<string[]>([])
   const [bereichAus, setBereichAus] = useState<Record<string, boolean>>({})
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
@@ -356,7 +358,7 @@ export default function Dienstplan() {
       { data: wunschData },
       { data: tauschData },
     ] = await Promise.all([
-        supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
         supabase
           .from('dienstplan_eintraege')
@@ -1270,12 +1272,15 @@ export default function Dienstplan() {
 
   const istSichtbar = (m: Mitarbeiter): boolean => {
     if (bereichAus[bereichVonKategorie(m.kategorie)]) return false
-    if (kategorieFilter.length > 0) return kategorieFilter.includes(m.kategorie ?? '__ohne__')
+    if (kategorieFilter.length > 0 && !kategorieFilter.includes(m.kategorie ?? '__ohne__')) return false
+    if (lokFilter.length > 0 && !(m.lok_typen ?? []).some((t) => lokFilter.includes(t))) return false
     return true
   }
   const anzeigeListe = mitarbeiterListe.filter(istSichtbar)
   const kategorienVorhanden = Array.from(new Set(mitarbeiterListe.map((m) => m.kategorie ?? '__ohne__')))
-  const filterAktiv = kategorieFilter.length > 0 || Object.values(bereichAus).some(Boolean)
+  const alleLoks = Array.from(new Set(mitarbeiterListe.flatMap((m) => m.lok_typen ?? [])))
+  const loksVorhanden = [...LOK_TYPEN.filter((l) => alleLoks.includes(l)), ...alleLoks.filter((l) => !LOK_TYPEN.includes(l))]
+  const filterAktiv = kategorieFilter.length > 0 || lokFilter.length > 0 || Object.values(bereichAus).some(Boolean)
   const wochenMitDienst = mitarbeiterMitDienstInWoche()
   const gelesenAnzahl = wochenMitDienst.filter((m) => gelesenIds.includes(m.id)).length
   const anzeigeTage = ansicht === 'tag' ? [bezugsdatum] : ansicht === 'woche' ? tage : monatsTage
@@ -1472,6 +1477,25 @@ export default function Dienstplan() {
             </button>
           )
         })}
+        {loksVorhanden.length > 0 && (
+          <>
+            <span style={{ width: 1, height: 18, background: '#cbd5e1', margin: '0 4px' }} />
+            <span style={{ color: '#64748b', fontWeight: 600 }}>Lok:</span>
+            <button onClick={() => setLokFilter([])} style={chipStil(lokFilter.length === 0)}>
+              Alle
+            </button>
+            {loksVorhanden.map((l) => (
+              <button
+                key={l}
+                onClick={() => setLokFilter((alt) => (alt.includes(l) ? alt.filter((x) => x !== l) : [...alt, l]))}
+                style={chipStil(lokFilter.includes(l))}
+                title="Zeigt Lokführer, die diese Lok fahren dürfen"
+              >
+                {l}
+              </button>
+            ))}
+          </>
+        )}
         <span style={{ width: 1, height: 18, background: '#cbd5e1', margin: '0 4px' }} />
         {BEREICHE.map((b) => (
           <button
@@ -2692,6 +2716,9 @@ export default function Dienstplan() {
                           {mitarbeiter.name}
                         </div>
                         <div style={{ fontSize: 11, color: '#64748b' }}>{mitarbeiter.kategorie ?? 'Ohne Qualifikation'}</div>
+                        {(mitarbeiter.lok_typen ?? []).length > 0 && (
+                          <div style={{ fontSize: 10, color: '#0e7490' }}>{(mitarbeiter.lok_typen ?? []).join(' · ')}</div>
+                        )}
                         {wunschFuer(mitarbeiter.id, datumIso) && (
                           <div
                             title={wunschFuer(mitarbeiter.id, datumIso)?.notiz ?? 'Wunschfrei'}
