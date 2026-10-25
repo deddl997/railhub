@@ -1242,7 +1242,7 @@ export default function Dienstplan() {
                 />
               </label>
               <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
-                Info / Bemerkung
+                Info für den Mitarbeiter (sichtbar in seinem Dienstplan)
                 <textarea
                   value={offenSpotDaten.info}
                   onChange={(e) => setOffenSpotDaten({ ...offenSpotDaten, info: e.target.value })}
@@ -1400,7 +1400,7 @@ export default function Dienstplan() {
                     }}
                     style={sekundaerKnopfStil}
                   >
-                    {abwFormularOffen ? 'Dienstzeit schließen' : 'Dienstzeit anpassen'}
+                    {abwFormularOffen ? 'Dienstzeit schließen' : 'Dienstzeit / Info anpassen'}
                   </button>
                 )
               })()}
@@ -1428,7 +1428,7 @@ export default function Dienstplan() {
                 }}
               >
                 <div style={{ gridColumn: '1 / -1', fontSize: 12, color: '#92400e' }}>
-                  Dienstzeitabweichung nur für diesen Tag und diese Person. Die Schichtvorlage selbst bleibt unverändert.
+                  Gilt nur für diesen Tag und diese Person. Die Schichtvorlage selbst bleibt unverändert. Auch ohne Zeitänderung kannst du hier eine Info für den Mitarbeiter eintragen.
                 </div>
                 <label style={beschriftungStil}>
                   Beginn
@@ -1466,7 +1466,7 @@ export default function Dienstplan() {
                   />
                 </label>
                 <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
-                  Grund / Info
+                  Info für den Mitarbeiter (sichtbar in seinem Dienstplan)
                   <textarea
                     value={abwDaten.info}
                     onChange={(e) => setAbwDaten({ ...abwDaten, info: e.target.value })}
@@ -1552,7 +1552,7 @@ export default function Dienstplan() {
                   />
                 </label>
                 <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
-                  Info / Bemerkung
+                  Info für den Mitarbeiter (sichtbar in seinem Dienstplan)
                   <textarea
                     value={spotDaten.info}
                     onChange={(e) => setSpotDaten({ ...spotDaten, info: e.target.value })}
@@ -2291,7 +2291,7 @@ export default function Dienstplan() {
                 onClick={() => zelleOeffnen(sel.mitarbeiterId, sel.datum)}
                 style={{ ...sekundaerKnopfStil, width: '100%', marginTop: 8 }}
               >
-                Bearbeiten / Dienstzeit anpassen
+                Bearbeiten / Dienstzeit / Info anpassen
               </button>
             </div>
           ) : (

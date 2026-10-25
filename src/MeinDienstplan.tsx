@@ -8,6 +8,8 @@ interface Vorlage {
   beginn_zeit: string
   ende_zeit: string
   pause_minuten: number | null
+  pause_von: string | null
+  pause_bis: string | null
   dienstort: string | null
   farbe: string
 }
@@ -40,6 +42,9 @@ interface Dienst {
   farbe: string
   info: string | null
   abweichung: boolean
+  pauseVon: string | null
+  pauseBis: string | null
+  standard: string | null
 }
 
 const WOCHENTAGE = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
@@ -100,6 +105,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [vorlagen, setVorlagen] = useState<Vorlage[]>([])
   const [eintraege, setEintraege] = useState<Eintrag[]>([])
   const [freigegeben, setFreigegeben] = useState<string[]>([])
+  const [offenerTag, setOffenerTag] = useState<string | null>(null)
   const [urlaube, setUrlaube] = useState<{ erster_tag: string; letzter_tag: string }[]>([])
 
   const heute = new Date()
@@ -155,10 +161,14 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         farbe: eintrag.spot_farbe ?? '#8b1a1a',
         info: eintrag.spot_info,
         abweichung: false,
+        pauseVon: null,
+        pauseBis: null,
+        standard: null,
       }
     }
     const v = vorlagen.find((x) => x.id === eintrag.schichtvorlage_id)
     if (!v) return null
+    const zeitAbw = !!(eintrag.abw_beginn_zeit || eintrag.abw_ende_zeit)
     return {
       name: v.name,
       beginn: eintrag.abw_beginn_zeit ?? v.beginn_zeit,
@@ -168,6 +178,9 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
       farbe: v.farbe,
       info: eintrag.abw_info,
       abweichung: !!(eintrag.abw_beginn_zeit || eintrag.abw_ende_zeit || eintrag.abw_pause_minuten != null || eintrag.abw_dienstort),
+      pauseVon: zeitAbw ? null : v.pause_von,
+      pauseBis: zeitAbw ? null : v.pause_bis,
+      standard: zeitAbw ? `${kurz(v.beginn_zeit)} – ${kurz(v.ende_zeit)}` : null,
     }
   }
 
@@ -255,12 +268,14 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
       {naechster ? (
         <div
+          onClick={() => setOffenerTag(datumZuISO(naechster!.tag))}
           style={{
             background: '#14325c',
             color: '#ffffff',
             borderRadius: 12,
             padding: 18,
             marginBottom: 18,
+            cursor: 'pointer',
           }}
         >
           <div style={{ fontSize: 12, color: '#c9d6ea', marginBottom: 4 }}>
@@ -339,10 +354,12 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                   return (
                     <div
                       key={iso}
+                      onClick={() => setOffenerTag(iso)}
                       style={{
                         display: 'flex',
                         gap: 12,
                         alignItems: 'center',
+                        cursor: 'pointer',
                         padding: '10px 12px',
                         borderBottom: i < 6 ? '1px solid #eef2f8' : undefined,
                         background: iso === heuteIso ? '#f3f7fd' : '#ffffff',
@@ -391,6 +408,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                           <span style={{ color: '#cbd5e1', fontSize: 13 }}>–</span>
                         )}
                       </div>
+                      <div style={{ color: '#94a3b8', fontSize: 18 }}>›</div>
                     </div>
                   )
                 })}
@@ -410,6 +428,114 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
       >
         Weitere Wochen anzeigen
       </button>
+      {offenerTag && (() => {
+        const tag = new Date(offenerTag + 'T00:00:00')
+        const eintrag = eintraege.find((e) => e.datum === offenerTag)
+        const urlaub = istUrlaub(offenerTag)
+        const dienst = urlaub ? null : dienstFuer(eintrag)
+        const kachel: React.CSSProperties = { background: '#f1f5f9', borderRadius: 8, padding: '8px 12px' }
+        return (
+          <div
+            onClick={() => setOffenerTag(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.5)',
+              display: 'flex',
+              alignItems: 'flex-end',
+              justifyContent: 'center',
+              zIndex: 1000,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#ffffff',
+                borderRadius: '16px 16px 0 0',
+                padding: 20,
+                width: 520,
+                maxWidth: '100%',
+                maxHeight: '88vh',
+                overflowY: 'auto',
+                boxShadow: '0 -10px 40px rgba(0,0,0,0.2)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                    {WOCHENTAGE[tag.getDay()]}, {datumKurz(tag)}
+                    {tag.getFullYear()}
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 20, color: 'var(--navy)' }}>
+                    {urlaub ? 'Urlaub' : dienst ? dienst.name : eintrag?.status === 'ruhe' ? 'Ruhe' : eintrag?.status === 'frei' ? 'Frei' : 'Kein Dienst'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setOffenerTag(null)}
+                  style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b', lineHeight: 1 }}
+                  aria-label="Schließen"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {dienst ? (
+                <div>
+                  <div style={{ height: 6, borderRadius: 3, background: dienst.farbe, marginBottom: 14 }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                    <div style={kachel}>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Beginn</div>
+                      <div style={{ fontWeight: 700, fontSize: 18 }}>{kurz(dienst.beginn)}</div>
+                    </div>
+                    <div style={kachel}>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Ende</div>
+                      <div style={{ fontWeight: 700, fontSize: 18 }}>{kurz(dienst.ende)}</div>
+                    </div>
+                    <div style={kachel}>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Dauer</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>{dauerText(dienst.beginn, dienst.ende)}</div>
+                    </div>
+                    <div style={kachel}>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Pause (inklusive)</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>
+                        {dienst.pause} Min.
+                        {dienst.pauseVon && dienst.pauseBis ? ` · ${kurz(dienst.pauseVon)}–${kurz(dienst.pauseBis)}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  {dienst.ort && (
+                    <div style={{ fontSize: 14, marginBottom: 10 }}>
+                      Dienstort: <b>{dienst.ort}</b>
+                    </div>
+                  )}
+                  {dienst.abweichung && (
+                    <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', borderRadius: 8, padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>
+                      ✎ Diese Schicht weicht von der Standard-Schicht ab
+                      {dienst.standard ? ` (Standard: ${dienst.standard})` : ''}.
+                    </div>
+                  )}
+                  {dienst.info ? (
+                    <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', borderRadius: 8, padding: '10px 12px', fontSize: 14 }}>
+                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>Info vom Planer</div>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{dienst.info}</div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine zusätzliche Info vom Planer.</div>
+                  )}
+                </div>
+              ) : urlaub ? (
+                <div style={{ fontSize: 14, color: '#475569' }}>Dein Urlaub ist genehmigt.</div>
+              ) : eintrag?.status === 'ruhe' ? (
+                <div style={{ fontSize: 14, color: '#475569' }}>Du hast an diesem Tag Ruhe.</div>
+              ) : eintrag?.status === 'frei' ? (
+                <div style={{ fontSize: 14, color: '#475569' }}>Du hast an diesem Tag frei.</div>
+              ) : (
+                <div style={{ fontSize: 14, color: '#475569' }}>An diesem Tag ist kein Dienst eingetragen.</div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
