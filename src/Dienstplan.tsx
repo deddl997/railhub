@@ -37,6 +37,12 @@ interface OffeneSpot {
   info?: string | null
 }
 
+interface SollZeile {
+  schichtvorlage_id: string
+  wochentag: number
+  anzahl: number
+}
+
 interface Warnung {
   art: 'ueberschneidung' | 'ruhezeit' | 'urlaub'
   kurz: string
@@ -246,14 +252,10 @@ export default function Dienstplan() {
   const [tauschenOffen, setTauschenOffen] = useState(false)
   const [freigegebeneWochen, setFreigegebeneWochen] = useState<string[]>([])
   const [tauschZiel, setTauschZiel] = useState('')
-  const [mindestbesetzung, setMindestbesetzung] = useState(() => {
-    try {
-      const gespeichert = window.localStorage.getItem('dienstplan_mindestbesetzung')
-      return gespeichert ? Number(gespeichert) || 2 : 2
-    } catch {
-      return 2
-    }
-  })
+  const [sollZeilen, setSollZeilen] = useState<SollZeile[]>([])
+  const [sollDialogOffen, setSollDialogOffen] = useState(false)
+  const [sollEntwurf, setSollEntwurf] = useState<Record<string, number[]>>({})
+  const [sollSpeichert, setSollSpeichert] = useState(false)
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
   const [vorlagen, setVorlagen] = useState<Schichtvorlage[]>([])
@@ -319,6 +321,7 @@ export default function Dienstplan() {
       { data: urlaubeData },
       { data: spotsData },
       { data: freigabenData },
+      { data: sollData },
     ] = await Promise.all([
         supabase.from('mitarbeiter').select('id, name, kategorie').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
@@ -339,6 +342,7 @@ export default function Dienstplan() {
           .gte('datum', urlaubStartIso)
           .lte('datum', endeIso),
         supabase.from('dienstplan_freigaben').select('woche_start'),
+        supabase.from('schicht_soll').select('schichtvorlage_id, wochentag, anzahl'),
     ])
 
     const sortierteMitarbeiter = [...(mitarbeiterData ?? [])].sort((a, b) => {
@@ -355,6 +359,7 @@ export default function Dienstplan() {
     setUrlaube((urlaubeData ?? []).filter((u) => u.mitarbeiter_id))
     setOffeneSpots((spotsData ?? []) as OffeneSpot[])
     setFreigegebeneWochen((freigabenData ?? []).map((f) => String(f.woche_start)))
+    setSollZeilen((sollData ?? []) as SollZeile[])
     setLadeVorgang(false)
     setErstesLaden(false)
   }
@@ -837,17 +842,79 @@ export default function Dienstplan() {
     return []
   }
 
+  // Soll-Besetzung einer Schicht an einem Wochentag (0 = Sonntag).
+  // Ohne eigene Einstellung gilt: 1 Person an den Tagen aus den Schichtvorlagen, sonst 0.
+  function sollFuer(v: Schichtvorlage, wochentag: number): number {
+    const zeile = sollZeilen.find((z) => z.schichtvorlage_id === v.id && z.wochentag === wochentag)
+    if (zeile) return zeile.anzahl
+    return (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentag) ? 1 : 0
+  }
+
+  // Wie viele Personen sind an diesem Tag fuer diese Schicht eingeteilt (Urlaub zaehlt nicht)
+  function besetztAm(vorlageId: string, datumIso: string): number {
+    return eintraege.filter(
+      (e) => e.schichtvorlage_id === vorlageId && e.datum === datumIso && !istUrlaub(e.mitarbeiter_id, datumIso)
+    ).length
+  }
+
+  function fehlendFuer(v: Schichtvorlage, datumIso: string, wochentag: number): number {
+    return Math.max(0, sollFuer(v, wochentag) - besetztAm(v.id, datumIso))
+  }
+
   function offeneVorlagenFuerTag(datumIso: string, wochentag: number, bereich: string): Schichtvorlage[] {
     return vorlagen.filter((v) => {
       if ((v.bereich ?? 'Lokführer') !== bereich) return false
-      const benoetigt = (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentag)
-      if (!benoetigt) return false
-      // Wer im Urlaub ist, belegt die Schicht nicht: sie bleibt offen
-      const bereitsVergeben = eintraege.some(
-        (e) => e.schichtvorlage_id === v.id && e.datum === datumIso && !istUrlaub(e.mitarbeiter_id, datumIso)
-      )
-      return !bereitsVergeben
+      return fehlendFuer(v, datumIso, wochentag) > 0
     })
+  }
+
+  // Beschriftung, z.B. "2/3" bei Schichten mit mehr als einer Person Soll
+  function besetzungText(v: Schichtvorlage, datumIso: string, wochentag: number): string {
+    const soll = sollFuer(v, wochentag)
+    return soll > 1 ? ` ${besetztAm(v.id, datumIso)}/${soll}` : ''
+  }
+
+  function sollDialogOeffnen() {
+    const entwurf: Record<string, number[]> = {}
+    for (const v of vorlagen) entwurf[v.id] = [0, 1, 2, 3, 4, 5, 6].map((wt) => sollFuer(v, wt))
+    setSollEntwurf(entwurf)
+    setSollDialogOffen(true)
+  }
+
+  function sollWertSetzen(vorlageId: string, wochentag: number, wert: number) {
+    setSollEntwurf((alt) => {
+      const zeile = [...(alt[vorlageId] ?? [0, 0, 0, 0, 0, 0, 0])]
+      zeile[wochentag] = Math.max(0, Math.min(50, Math.round(wert) || 0))
+      return { ...alt, [vorlageId]: zeile }
+    })
+  }
+
+  async function sollSpeichern() {
+    setSollSpeichert(true)
+    const zeilen = vorlagen.flatMap((v) =>
+      [0, 1, 2, 3, 4, 5, 6].map((wt) => ({
+        schichtvorlage_id: v.id,
+        wochentag: wt,
+        anzahl: sollEntwurf[v.id]?.[wt] ?? 0,
+      }))
+    )
+    const { error } = await supabase.from('schicht_soll').upsert(zeilen, { onConflict: 'schichtvorlage_id,wochentag' })
+    if (error) {
+      window.alert('Speichern fehlgeschlagen: ' + error.message)
+      setSollSpeichert(false)
+      return
+    }
+    // Die Wochentage der Schichtvorlagen mitfuehren, damit die Vorlagen-Verwaltung dazu passt
+    for (const v of vorlagen) {
+      const mitBedarf = [0, 1, 2, 3, 4, 5, 6].filter((wt) => (sollEntwurf[v.id]?.[wt] ?? 0) > 0)
+      const alt = [...(v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6])].sort((a, b) => a - b)
+      if (mitBedarf.join(',') !== alt.join(',')) {
+        await supabase.from('schichtvorlagen').update({ benoetigte_wochentage: mitBedarf }).eq('id', v.id)
+      }
+    }
+    setSollSpeichert(false)
+    setSollDialogOffen(false)
+    await laden()
   }
 
   function offeneSpotsFuerTag(datumIso: string, bereich: string): OffeneSpot[] {
@@ -927,7 +994,9 @@ export default function Dienstplan() {
         if (!istUrlaub(m.id, iso) && schichtInfoVon(eintragFuer(m.id, iso))) dienste++
       }
       for (const b of BEREICHE) {
-        offen += offeneVorlagenFuerTag(iso, tag.getDay(), b).length + offeneSpotsFuerTag(iso, b).length
+        offen +=
+          offeneVorlagenFuerTag(iso, tag.getDay(), b).reduce((summe, v) => summe + fehlendFuer(v, iso, tag.getDay()), 0) +
+          offeneSpotsFuerTag(iso, b).length
       }
     }
     return { dienste, offen }
@@ -1105,6 +1174,10 @@ export default function Dienstplan() {
             </button>
           ))}
 
+        <button onClick={sollDialogOeffnen} style={sekundaerKnopfStil} title="Wie viele Personen pro Schicht und Wochentag gebraucht werden">
+          Soll-Besetzung
+        </button>
+
         <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
           + Offene Spotschicht
         </button>
@@ -1118,6 +1191,126 @@ export default function Dienstplan() {
         .dp-zeile:hover .dp-leer-tag { opacity: 1; }
         .dp-zeile:hover { background: #f8fafc; }
       `}</style>
+
+      {sollDialogOffen && (
+        <div
+          onClick={() => setSollDialogOffen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: 12,
+              padding: 20,
+              width: 760,
+              maxWidth: '100%',
+              maxHeight: '88vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>Soll-Besetzung</div>
+              <button
+                onClick={() => setSollDialogOffen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>
+              Wie viele Personen werden pro Schicht und Wochentag gebraucht? 0 bedeutet: Die Schicht wird an diesem Tag nicht
+              gebraucht. Solange weniger Personen eingeteilt sind, bleibt die Schicht als offen markiert (z.B. 1/3).
+            </div>
+            {BEREICHE.map((bereich) => {
+              const liste = vorlagen.filter((v) => (v.bereich ?? 'Lokführer') === bereich)
+              if (liste.length === 0) return null
+              return (
+                <div key={bereich} style={{ marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--navy)', marginBottom: 6 }}>{bereich}</div>
+                  <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', padding: '4px 6px', color: '#64748b', fontWeight: 600 }}>Schicht</th>
+                        {[1, 2, 3, 4, 5, 6, 0].map((wt) => (
+                          <th key={wt} style={{ padding: '4px 2px', color: '#64748b', fontWeight: 600, width: 54 }}>
+                            {WOCHENTAGE_LANG[wt].slice(0, 2)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liste.map((v) => (
+                        <tr key={v.id} style={{ borderTop: '1px solid #eef2f8' }}>
+                          <td style={{ padding: '5px 6px' }}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                width: 10,
+                                height: 10,
+                                borderRadius: 3,
+                                background: v.farbe,
+                                marginRight: 6,
+                              }}
+                            />
+                            <b>{v.name}</b>{' '}
+                            <span style={{ color: '#94a3b8' }}>
+                              {zeitKurz(v.beginn_zeit)}–{zeitKurz(v.ende_zeit)}
+                            </span>
+                          </td>
+                          {[1, 2, 3, 4, 5, 6, 0].map((wt) => {
+                            const wert = sollEntwurf[v.id]?.[wt] ?? 0
+                            return (
+                              <td key={wt} style={{ padding: '3px 2px', textAlign: 'center' }}>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={50}
+                                  value={wert}
+                                  onChange={(e) => sollWertSetzen(v.id, wt, Number(e.target.value))}
+                                  style={{
+                                    width: 44,
+                                    padding: '4px 2px',
+                                    textAlign: 'center',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 4,
+                                    fontSize: 13,
+                                    background: wert === 0 ? '#f1f5f9' : '#ffffff',
+                                    color: wert === 0 ? '#94a3b8' : '#0f172a',
+                                    fontWeight: wert > 0 ? 700 : 400,
+                                  }}
+                                />
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            })}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setSollDialogOffen(false)} style={sekundaerKnopfStil}>
+                Abbrechen
+              </button>
+              <button onClick={sollSpeichern} disabled={sollSpeichert} style={primaerKnopfStil}>
+                {sollSpeichert ? 'Speichert ...' : 'Speichern'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {offenSpotDialogOffen && (
         <div
@@ -1322,22 +1515,30 @@ export default function Dienstplan() {
                   const person = mitarbeiterListe.find((m) => m.id === ausgewaehlteZelle.mitarbeiterId)
                   const personBereich = bereichVonKategorie(person?.kategorie ?? null)
                   // Schichten, die an diesem Tag schon an jemand anderen vergeben sind, nicht mehr anbieten
+                  // Eine Schicht ist erst "voll", wenn die Soll-Besetzung erreicht ist
+                  const anzahlJeVorlage = new Map<string, number>()
+                  for (const e of eintraege) {
+                    if (
+                      e.datum === ausgewaehlteZelle.datum &&
+                      e.schichtvorlage_id &&
+                      e.mitarbeiter_id !== ausgewaehlteZelle.mitarbeiterId &&
+                      !istUrlaub(e.mitarbeiter_id, e.datum)
+                    ) {
+                      anzahlJeVorlage.set(e.schichtvorlage_id, (anzahlJeVorlage.get(e.schichtvorlage_id) ?? 0) + 1)
+                    }
+                  }
                   const bereitsVergeben = new Set(
-                    eintraege
-                      .filter(
-                        (e) =>
-                          e.datum === ausgewaehlteZelle.datum &&
-                          e.schichtvorlage_id &&
-                          e.mitarbeiter_id !== ausgewaehlteZelle.mitarbeiterId &&
-                          !istUrlaub(e.mitarbeiter_id, e.datum)
-                      )
-                      .map((e) => e.schichtvorlage_id)
+                    vorlagen
+                      .filter((v) => {
+                        const n = anzahlJeVorlage.get(v.id) ?? 0
+                        return n > 0 && n >= Math.max(1, sollFuer(v, wochentagDerZelle))
+                      })
+                      .map((v) => v.id)
                   )
                   const freieVorlagen = vorlagen.filter((v) => !bereitsVergeben.has(v.id))
                   const imBereich = freieVorlagen.filter((v) => (v.bereich ?? 'Lokführer') === personBereich)
                   const andererBereich = freieVorlagen.filter((v) => (v.bereich ?? 'Lokführer') !== personBereich)
-                  const passt = (v: Schichtvorlage) =>
-                    (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(wochentagDerZelle)
+                  const passt = (v: Schichtvorlage) => sollFuer(v, wochentagDerZelle) > 0
                   const passend = imBereich.filter(passt)
                   const unpassend = imBereich.filter((v) => !passt(v))
                   return (
@@ -1583,7 +1784,16 @@ export default function Dienstplan() {
     const datumIso = tagIso
     const offeneVorlagenTag = BEREICHE.flatMap((b) => offeneVorlagenFuerTag(datumIso, bezugsdatum.getDay(), b))
     const offeneSpotsTag = offeneSpots.filter((x) => x.datum === datumIso)
-    const offeneNamen = [...offeneVorlagenTag.map((v) => v.name), ...offeneSpotsTag.map((x) => x.name)]
+    const offeneNamen = [
+      ...offeneVorlagenTag.map((v) => {
+        const fehlt = fehlendFuer(v, datumIso, bezugsdatum.getDay())
+        return fehlt > 1 ? `${v.name} (${fehlt}x)` : v.name
+      }),
+      ...offeneSpotsTag.map((x) => x.name),
+    ]
+    const offeneAnzahl =
+      offeneVorlagenTag.reduce((summe, v) => summe + fehlendFuer(v, datumIso, bezugsdatum.getDay()), 0) +
+      offeneSpotsTag.length
     const jetzt = new Date()
     const jetztMinuten = jetzt.getHours() * 60 + jetzt.getMinutes()
     const zeigeJetzt = istHeute(bezugsdatum)
@@ -1599,7 +1809,21 @@ export default function Dienstplan() {
     const besetzung = STUNDEN.map(
       (h) => alleBalken.filter((b) => b.von < (h + 1) * 60 && b.bis > h * 60).length
     )
-    const maxBesetzung = Math.max(1, ...besetzung)
+    // Soll je Stunde: Summe der Soll-Besetzung aller Schichten, die diese Stunde abdecken (inkl. Nachtschichten vom Vortag)
+    const sollJeStunde = STUNDEN.map((h) => {
+      let summe = 0
+      for (const v of vorlagen) {
+        const info = infoAusVorlage(v)
+        const heuteSoll = sollFuer(v, bezugsdatum.getDay())
+        if (heuteSoll > 0 && info.beginn < (h + 1) * 60 && Math.min(info.ende, 1440) > h * 60) summe += heuteSoll
+        if (info.ende > 1440) {
+          const vortagSoll = sollFuer(v, (bezugsdatum.getDay() + 6) % 7)
+          if (vortagSoll > 0 && info.ende - 1440 > h * 60) summe += vortagSoll
+        }
+      }
+      return summe
+    })
+    const maxBesetzung = Math.max(1, ...besetzung, ...sollJeStunde)
 
     // Pruefung: Ueberschneidungen und Ruhezeiten (< 11 Std.) aller Personen
     const hinweise: string[] = mitarbeiterListe.flatMap((m) =>
@@ -1768,6 +1992,7 @@ export default function Dienstplan() {
                                   }}
                                 >
                                   {v.name}
+                                  {besetzungText(v, datumIso, bezugsdatum.getDay())}
                                   <span style={{ fontWeight: 400, opacity: 0.85 }}>
                                     {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
                                   </span>
@@ -2100,28 +2325,19 @@ export default function Dienstplan() {
                 <div style={{ ...linkeSpalte, padding: '10px 14px', fontSize: 12, color: '#334155' }}>
                   <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13 }}>Besetzung je Stunde</div>
                   <div style={{ marginTop: 2 }}>
-                    Mindestbesetzung:{' '}
-                    <input
-                      type="number"
-                      min={0}
-                      value={mindestbesetzung}
-                      onChange={(e) => {
-                        const wert = Math.max(0, Number(e.target.value) || 0)
-                        setMindestbesetzung(wert)
-                        try {
-                          window.localStorage.setItem('dienstplan_mindestbesetzung', String(wert))
-                        } catch {
-                          // Speichern im Browser nicht moeglich: egal
-                        }
-                      }}
-                      style={{ width: 42, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12 }}
-                    />{' '}
-                    Personen
+                    Ist / Soll je Stunde.{' '}
+                    <button
+                      onClick={sollDialogOeffnen}
+                      style={{ background: 'none', border: 'none', padding: 0, color: 'var(--navy)', fontWeight: 600, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Soll ändern
+                    </button>
                   </div>
                 </div>
                 <div style={{ flex: 1, display: 'flex', height: 74 }}>
                   {besetzung.map((n, h) => {
-                    const farbe = n < mindestbesetzung ? '#b91c1c' : n === mindestbesetzung ? '#c2570c' : '#15803d'
+                    const sollH = sollJeStunde[h]
+                    const farbe = sollH === 0 ? '#64748b' : n < sollH ? '#b91c1c' : n === sollH ? '#15803d' : '#0e7490'
                     return (
                       <div
                         key={h}
@@ -2136,7 +2352,9 @@ export default function Dienstplan() {
                           boxSizing: 'border-box',
                         }}
                       >
-                        <div style={{ fontSize: 10, fontWeight: 700, color: farbe }}>{n}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: farbe }}>
+                          {sollH > 0 ? `${n}/${sollH}` : n}
+                        </div>
                         <div
                           style={{
                             width: '72%',
@@ -2298,7 +2516,7 @@ export default function Dienstplan() {
             <div>
               <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)', marginBottom: 4 }}>Tagesübersicht</div>
               <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-                {dienste} Dienste · {offeneNamen.length} offen
+                {dienste} Dienste · {offeneAnzahl} offen
               </div>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Prüfung für diesen Tag</div>
               {hinweise.length === 0 && offeneNamen.length === 0 && (
@@ -2306,7 +2524,7 @@ export default function Dienstplan() {
               )}
               {offeneNamen.length > 0 && (
                 <div style={{ color: '#b45309', fontSize: 13, marginBottom: 6 }}>
-                  ⚠ {offeneNamen.length} offene Schicht{offeneNamen.length === 1 ? '' : 'en'}: {offeneNamen.join(', ')}
+                  ⚠ {offeneAnzahl} offene Schicht{offeneAnzahl === 1 ? '' : 'en'}: {offeneNamen.join(', ')}
                 </div>
               )}
               {hinweise.map((h, i) => (
@@ -2350,19 +2568,26 @@ export default function Dienstplan() {
       }
       const offeneV = BEREICHE.flatMap((b) => offeneVorlagenFuerTag(iso, tag.getDay(), b))
       const offeneS = offeneSpots.filter((x) => x.datum === iso)
-      const soll = vorlagen.filter((v) => (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(tag.getDay())).length
+      const soll = vorlagen.reduce((summe, v) => summe + sollFuer(v, tag.getDay()), 0)
+      const fehlendSumme = offeneV.reduce((summe, v) => summe + fehlendFuer(v, iso, tag.getDay()), 0)
       sollGesamt += soll
-      offenVorlagenGesamt += Math.min(offeneV.length, soll)
-      offenGesamt += offeneV.length + offeneS.length
-      if (offeneV.length + offeneS.length > 0) {
+      offenVorlagenGesamt += Math.min(fehlendSumme, soll)
+      offenGesamt += fehlendSumme + offeneS.length
+      if (fehlendSumme + offeneS.length > 0) {
         hinweisListe.push({
           farbe: '#d97706',
           titel: `Offene Schichten am ${datumKurz(tag)}`,
-          text: [...offeneV.map((v) => v.name), ...offeneS.map((x) => x.name)].join(', '),
+          text: [
+            ...offeneV.map((v) => {
+              const fehlt = fehlendFuer(v, iso, tag.getDay())
+              return fehlt > 1 ? `${v.name} (${fehlt}x)` : v.name
+            }),
+            ...offeneS.map((x) => x.name),
+          ].join(', '),
           tag,
         })
       }
-      return { anwesend, offen: offeneV.length + offeneS.length }
+      return { anwesend, offen: fehlendSumme + offeneS.length }
     })
 
     const zeilen = mitarbeiterListe.map((m) => {
@@ -2762,6 +2987,7 @@ export default function Dienstplan() {
                             >
                               <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {vorlage.name}
+                                {besetzungText(vorlage, datumIso, tag.getDay())}
                               </div>
                               <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
                                 {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
