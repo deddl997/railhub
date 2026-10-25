@@ -571,7 +571,7 @@ export default function Dienstplan() {
     let summe = 0
     for (const tag of tage) {
       const info = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(tag)))
-      if (info) summe += info.ende - info.beginn - info.pause
+      if (info) summe += info.ende - info.beginn
     }
     return minutenAlsText(summe)
   }
@@ -579,7 +579,7 @@ export default function Dienstplan() {
   function tagesArbeitszeit(mitarbeiterId: string, datum: Date): string {
     const info = schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(datum)))
     if (!info) return ''
-    return minutenAlsText(info.ende - info.beginn - info.pause)
+    return minutenAlsText(info.ende - info.beginn)
   }
 
   function offeneVorlagenFuerTag(datumIso: string, wochentag: number, bereich: string): Schichtvorlage[] {
