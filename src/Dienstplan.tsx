@@ -24,6 +24,7 @@ interface Schichtvorlage {
   aktiv: boolean
   benoetigte_wochentage: number[] | null
   bereich?: string | null
+  benoetigte_loks?: string[] | null
 }
 
 interface OffeneSpot {
@@ -66,7 +67,7 @@ interface Tausch {
 }
 
 interface Warnung {
-  art: 'ueberschneidung' | 'ruhezeit' | 'urlaub'
+  art: 'ueberschneidung' | 'ruhezeit' | 'urlaub' | 'lok'
   kurz: string
   lang: string
 }
@@ -179,6 +180,15 @@ function textFarbeFuer(hex: string): string {
 }
 
 const BEREICHE = ['Lokführer', 'Wagenmeister'] as const
+
+// Welche der fuer eine Schicht benoetigten Loks kann die Person nicht?
+function fehlendeLoks(person: Mitarbeiter | undefined, vorlage: Schichtvorlage | undefined): string[] {
+  if (!vorlage) return []
+  const benoetigt = vorlage.benoetigte_loks ?? []
+  if (benoetigt.length === 0) return []
+  const kann = person?.lok_typen ?? []
+  return benoetigt.filter((l) => !kann.includes(l))
+}
 
 function bereichVonKategorie(kategorie: string | null): string {
   return (kategorie ?? '').toLowerCase().includes('wagen') ? 'Wagenmeister' : 'Lokführer'
@@ -577,6 +587,7 @@ export default function Dienstplan() {
   }
 
   async function schichtDirektZuweisen(vorlageId: string, mitarbeiterId: string, datumIso: string) {
+    if (!lokPruefungBestaetigt(mitarbeiterId, vorlageId)) return
     const bestehend = eintragFuer(mitarbeiterId, datumIso)
     if (bestehend) {
       const bestaetigt = window.confirm(
@@ -606,6 +617,13 @@ export default function Dienstplan() {
     if (quelle.mitarbeiterId === zielMitarbeiterId && quelle.datum === zielDatumIso) return
     const quellEintrag = eintragFuer(quelle.mitarbeiterId, quelle.datum)
     if (!quellEintrag) return
+
+    if (
+      quellEintrag.schichtvorlage_id &&
+      !quellEintrag.ist_spotschicht &&
+      !lokPruefungBestaetigt(zielMitarbeiterId, quellEintrag.schichtvorlage_id)
+    )
+      return
 
     const zielBestehend = eintragFuer(zielMitarbeiterId, zielDatumIso)
     if (zielBestehend) {
@@ -647,6 +665,7 @@ export default function Dienstplan() {
 
   async function vorlageZuweisen() {
     if (!ausgewaehlteZelle || !gewaehlteVorlage) return
+    if (!lokPruefungBestaetigt(ausgewaehlteZelle.mitarbeiterId, gewaehlteVorlage)) return
     await supabase.from('dienstplan_eintraege').upsert(
       {
         ...ABW_LEER,
@@ -886,6 +905,37 @@ export default function Dienstplan() {
 
   // Warnungen fuer eine Person an einem Tag (Ueberschneidung / zu kurze Ruhezeit)
   function warnungenFuer(mitarbeiterId: string, datum: Date): Warnung[] {
+    const liste = regelWarnungenFuer(mitarbeiterId, datum)
+    const iso = datumZuISO(datum)
+    const eintrag = eintragFuer(mitarbeiterId, iso)
+    if (eintrag?.schichtvorlage_id && !eintrag.ist_spotschicht && !eintrag.status && !istUrlaub(mitarbeiterId, iso)) {
+      const fehlt = fehlendeLoks(
+        mitarbeiterListe.find((m) => m.id === mitarbeiterId),
+        vorlagen.find((v) => v.id === eintrag.schichtvorlage_id)
+      )
+      if (fehlt.length > 0) {
+        liste.push({
+          art: 'lok',
+          kurz: `Lok ${fehlt.join(', ')} fehlt`,
+          lang: `Diese Schicht benötigt die Lok ${fehlt.join(', ')}, dafür ist bei der Person keine Kenntnis eingetragen.`,
+        })
+      }
+    }
+    return liste
+  }
+
+  // Lok-Pruefung beim Einteilen: true = weitermachen
+  function lokPruefungBestaetigt(mitarbeiterId: string, vorlageId: string): boolean {
+    const vorlage = vorlagen.find((v) => v.id === vorlageId)
+    const person = mitarbeiterListe.find((m) => m.id === mitarbeiterId)
+    const fehlt = fehlendeLoks(person, vorlage)
+    if (fehlt.length === 0) return true
+    return window.confirm(
+      `${person?.name ?? 'Die Person'} hat keine Kenntnis für: ${fehlt.join(', ')}. Die Schicht „${vorlage?.name}“ benötigt ${(vorlage?.benoetigte_loks ?? []).join(', ')}. Trotzdem einteilen?`
+    )
+  }
+
+  function regelWarnungenFuer(mitarbeiterId: string, datum: Date): Warnung[] {
     if (istUrlaub(mitarbeiterId, datumZuISO(datum))) {
       // Urlaub genehmigt, aber noch eine Schicht eingetragen
       if (schichtInfoVon(eintragFuer(mitarbeiterId, datumZuISO(datum)))) {
@@ -2119,6 +2169,10 @@ export default function Dienstplan() {
                   const wochentagDerZelle = new Date(ausgewaehlteZelle.datum).getDay()
                   const person = mitarbeiterListe.find((m) => m.id === ausgewaehlteZelle.mitarbeiterId)
                   const personBereich = bereichVonKategorie(person?.kategorie ?? null)
+                  const lokMarke = (v: Schichtvorlage) => {
+                    const f = fehlendeLoks(person, v)
+                    return f.length > 0 ? ` ⚠ Lok fehlt: ${f.join(', ')}` : ''
+                  }
                   // Schichten, die an diesem Tag schon an jemand anderen vergeben sind, nicht mehr anbieten
                   // Eine Schicht ist erst "voll", wenn die Soll-Besetzung erreicht ist
                   const anzahlJeVorlage = new Map<string, number>()
@@ -2152,7 +2206,7 @@ export default function Dienstplan() {
                         <optgroup label={`Für diesen Wochentag vorgesehen (${personBereich})`}>
                           {passend.map((v) => (
                             <option key={v.id} value={v.id}>
-                              {v.name}
+                              {v.name}{lokMarke(v)}
                             </option>
                           ))}
                         </optgroup>
@@ -2161,7 +2215,7 @@ export default function Dienstplan() {
                         <optgroup label="⚠ Normalerweise nicht an diesem Tag">
                           {unpassend.map((v) => (
                             <option key={v.id} value={v.id}>
-                              {v.name}
+                              {v.name}{lokMarke(v)}
                             </option>
                           ))}
                         </optgroup>
@@ -2170,7 +2224,7 @@ export default function Dienstplan() {
                         <optgroup label="⚠ Anderer Bereich">
                           {andererBereich.map((v) => (
                             <option key={v.id} value={v.id}>
-                              {v.name}
+                              {v.name}{lokMarke(v)}
                             </option>
                           ))}
                         </optgroup>
@@ -2466,6 +2520,18 @@ export default function Dienstplan() {
           ? { ok: false, text: `Wochenstunden: ${minutenAlsText(selWoche)} Std. (über 48)` }
           : { ok: true, text: `Wochenstunden: ${minutenAlsText(selWoche)} Std.` }
       )
+      const selVorlage =
+        selEintrag?.schichtvorlage_id && !selEintrag.ist_spotschicht
+          ? vorlagen.find((v) => v.id === selEintrag.schichtvorlage_id)
+          : undefined
+      if (selVorlage && (selVorlage.benoetigte_loks ?? []).length > 0) {
+        const fehlt = fehlendeLoks(selPerson, selVorlage)
+        pruefpunkte.push(
+          fehlt.length === 0
+            ? { ok: true, text: `Lok-Kenntnis vorhanden (${(selVorlage.benoetigte_loks ?? []).join(', ')})` }
+            : { ok: false, text: `Lok-Kenntnis fehlt: ${fehlt.join(', ')}` }
+        )
+      }
     }
 
     const linkeSpalte: React.CSSProperties = { width: 210, flexShrink: 0, padding: '0 14px' }
@@ -2598,6 +2664,9 @@ export default function Dienstplan() {
                                 >
                                   {v.name}
                                   {besetzungText(v, datumIso, bezugsdatum.getDay())}
+                                  {(v.benoetigte_loks ?? []).length > 0 && (
+                                    <span style={{ fontWeight: 600, opacity: 0.9 }}>🚂 {(v.benoetigte_loks ?? []).join('/')}</span>
+                                  )}
                                   <span style={{ fontWeight: 400, opacity: 0.85 }}>
                                     {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
                                   </span>
@@ -2686,12 +2755,21 @@ export default function Dienstplan() {
                 const ausgewaehlt =
                   ausgewaehlteZelle?.mitarbeiterId === mitarbeiter.id && ausgewaehlteZelle?.datum === datumIso
                 const vortagIso = datumZuISO(addTage(bezugsdatum, -1))
+                // Beim Ziehen einer offenen Schicht Personen ohne die noetigen Loks abblenden
+                const lokUnpassend =
+                  gezogeneVorlage?.art === 'vorlage' &&
+                  fehlendeLoks(mitarbeiter, vorlagen.find((v) => v.id === gezogeneVorlage.id)).length > 0
 
                 return (
                   <div
                     key={mitarbeiter.id}
                     className="dp-zeile"
-                    style={{ display: 'flex', borderBottom: '1px solid #eef2f8', alignItems: 'stretch' }}
+                    style={{
+                      display: 'flex',
+                      borderBottom: '1px solid #eef2f8',
+                      alignItems: 'stretch',
+                      opacity: lokUnpassend ? 0.4 : 1,
+                    }}
                   >
                     <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px' }}>
                       <div
@@ -3217,7 +3295,14 @@ export default function Dienstplan() {
           if (w.art !== 'urlaub') verstoesse++
           hinweisListe.push({
             farbe: w.art === 'ueberschneidung' ? '#dc2626' : '#d97706',
-            titel: w.art === 'ueberschneidung' ? 'Überschneidung' : w.art === 'ruhezeit' ? 'Ruhezeit unter 11 Stunden' : 'Urlaub und Schicht',
+            titel:
+              w.art === 'ueberschneidung'
+                ? 'Überschneidung'
+                : w.art === 'ruhezeit'
+                ? 'Ruhezeit unter 11 Stunden'
+                : w.art === 'lok'
+                ? 'Lok-Kenntnis fehlt'
+                : 'Urlaub und Schicht',
             text: `${m.name}, ${datumKurz(tag)}: ${w.lang}`,
             tag,
             mitarbeiterId: m.id,

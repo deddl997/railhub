@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { LOK_TYPEN } from './qualifikationen'
 
 interface Schichtvorlage {
   id: string
@@ -14,6 +15,7 @@ interface Schichtvorlage {
   aktiv: boolean
   benoetigte_wochentage: number[]
   bereich: string | null
+  benoetigte_loks: string[] | null
 }
 
 const BEREICHE = ['Lokführer', 'Wagenmeister']
@@ -33,6 +35,7 @@ const LEERE_VORLAGE = {
   farbe: '#94a3b8',
   benoetigte_wochentage: [0, 1, 2, 3, 4, 5, 6],
   bereich: 'Lokführer',
+  benoetigte_loks: [] as string[],
 }
 
 export default function SchichtvorlagenVerwaltung() {
@@ -191,6 +194,13 @@ export default function SchichtvorlagenVerwaltung() {
             />
           </label>
           <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
+            Benötigte Loks (nur Mitarbeiter mit allen gewählten Loks sind ohne Warnung einsetzbar)
+            <LokAuswahl
+              ausgewaehlt={neueVorlage.benoetigte_loks}
+              onAendern={(loks) => setNeueVorlage({ ...neueVorlage, benoetigte_loks: loks })}
+            />
+          </label>
+          <label style={{ ...beschriftungStil, gridColumn: '1 / -1' }}>
             Benötigt an
             <WochentagCheckboxen
               ausgewaehlt={neueVorlage.benoetigte_wochentage}
@@ -216,6 +226,7 @@ export default function SchichtvorlagenVerwaltung() {
               <th style={kopfZelleStil}>Ende</th>
               <th style={kopfZelleStil}>Pause</th>
               <th style={kopfZelleStil}>Dienstort</th>
+              <th style={kopfZelleStil}>Loks</th>
               <th style={kopfZelleStil}>Benötigt an</th>
               <th style={kopfZelleStil}>Aktiv</th>
               <th style={kopfZelleStil}></th>
@@ -284,6 +295,13 @@ export default function SchichtvorlagenVerwaltung() {
                   />
                 </td>
                 <td style={zellStil}>
+                  <LokAuswahl
+                    ausgewaehlt={vorlage.benoetigte_loks ?? []}
+                    onAendern={(loks) => vorlageAktualisieren(vorlage, { benoetigte_loks: loks })}
+                    kompakt
+                  />
+                </td>
+                <td style={zellStil}>
                   <WochentagCheckboxen
                     ausgewaehlt={vorlage.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]}
                     onAendern={(tage) => vorlageAktualisieren(vorlage, { benoetigte_wochentage: tage })}
@@ -307,6 +325,47 @@ export default function SchichtvorlagenVerwaltung() {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function LokAuswahl({
+  ausgewaehlt,
+  onAendern,
+  kompakt,
+}: {
+  ausgewaehlt: string[]
+  onAendern: (loks: string[]) => void
+  kompakt?: boolean
+}) {
+  function umschalten(lok: string) {
+    onAendern(ausgewaehlt.includes(lok) ? ausgewaehlt.filter((l) => l !== lok) : [...ausgewaehlt, lok])
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: kompakt ? 3 : 6, flexWrap: 'wrap', maxWidth: kompakt ? 150 : undefined }}>
+      {LOK_TYPEN.map((lok) => {
+        const aktiv = ausgewaehlt.includes(lok)
+        return (
+          <button
+            key={lok}
+            type="button"
+            onClick={() => umschalten(lok)}
+            style={{
+              borderRadius: 5,
+              border: '1px solid ' + (aktiv ? '#0e7490' : 'var(--border)'),
+              background: aktiv ? '#0e7490' : '#ffffff',
+              color: aktiv ? '#ffffff' : 'var(--text-muted)',
+              fontSize: kompakt ? 10 : 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              padding: kompakt ? '2px 5px' : '5px 10px',
+            }}
+          >
+            {lok}
+          </button>
+        )
+      })}
     </div>
   )
 }
