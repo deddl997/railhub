@@ -13,7 +13,10 @@ interface Schichtvorlage {
   farbe: string
   aktiv: boolean
   benoetigte_wochentage: number[]
+  bereich: string | null
 }
+
+const BEREICHE = ['Lokführer', 'Wagenmeister']
 
 // JS-Wochentag-Zahlen (0=Sonntag ... 6=Samstag) in Mo-So Anzeigereihenfolge
 export const WOCHENTAGE_JS_REIHENFOLGE = [1, 2, 3, 4, 5, 6, 0]
@@ -29,6 +32,7 @@ const LEERE_VORLAGE = {
   dienstort: '',
   farbe: '#94a3b8',
   benoetigte_wochentage: [0, 1, 2, 3, 4, 5, 6],
+  bereich: 'Lokführer',
 }
 
 export default function SchichtvorlagenVerwaltung() {
@@ -108,6 +112,20 @@ export default function SchichtvorlagenVerwaltung() {
               style={eingabeStil}
               placeholder="z.B. Nacht Dienstort NRHF"
             />
+          </label>
+          <label style={beschriftungStil}>
+            Bereich
+            <select
+              value={neueVorlage.bereich}
+              onChange={(e) => setNeueVorlage({ ...neueVorlage, bereich: e.target.value })}
+              style={eingabeStil}
+            >
+              {BEREICHE.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
           </label>
           <label style={beschriftungStil}>
             Beginn
@@ -193,6 +211,7 @@ export default function SchichtvorlagenVerwaltung() {
             <tr>
               <th style={kopfZelleStil}>Farbe</th>
               <th style={kopfZelleStil}>Name</th>
+              <th style={kopfZelleStil}>Bereich</th>
               <th style={kopfZelleStil}>Beginn</th>
               <th style={kopfZelleStil}>Ende</th>
               <th style={kopfZelleStil}>Pause</th>
@@ -219,6 +238,19 @@ export default function SchichtvorlagenVerwaltung() {
                     onChange={(e) => vorlageAktualisieren(vorlage, { name: e.target.value })}
                     style={eingabeStil}
                   />
+                </td>
+                <td style={zellStil}>
+                  <select
+                    value={vorlage.bereich ?? 'Lokführer'}
+                    onChange={(e) => vorlageAktualisieren(vorlage, { bereich: e.target.value })}
+                    style={{ ...eingabeStil, width: 130 }}
+                  >
+                    {BEREICHE.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
                 </td>
                 <td style={zellStil}>
                   <input
