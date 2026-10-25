@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { pushSenden } from './pushAbo'
+import BestellungImport from './BestellungImport'
 
 interface Mitarbeiter {
   id: string
@@ -294,6 +295,7 @@ export default function Dienstplan() {
   const [tauschListe, setTauschListe] = useState<Tausch[]>([])
   const [tauschPanelOffen, setTauschPanelOffen] = useState(false)
   const [wunschPanelOffen, setWunschPanelOffen] = useState(false)
+  const [bestellungOffen, setBestellungOffen] = useState(false)
   const [pushHinweis, setPushHinweis] = useState<string | null>(null)
   const [kategorieFilter, setKategorieFilter] = useState<string[]>([])
   const [lokFilter, setLokFilter] = useState<string[]>([])
@@ -1505,6 +1507,14 @@ export default function Dienstplan() {
           Soll-Besetzung
         </button>
 
+        <button
+          onClick={() => setBestellungOffen(true)}
+          title="Bestellung der Autoverkehre per KI einlesen und daraus offene Schichten anlegen"
+          style={sekundaerKnopfStil}
+        >
+          Bestellung einlesen
+        </button>
+
         <button onClick={offenSpotDialogOeffnen} style={primaerKnopfStil}>
           + Offene Spotschicht
         </button>
@@ -1656,6 +1666,20 @@ export default function Dienstplan() {
               })}
           </div>
         </div>
+      )}
+
+      {bestellungOffen && (
+        <BestellungImport
+          onSchliessen={() => setBestellungOffen(false)}
+          onFertig={(ersterTag) => {
+            setBestellungOffen(false)
+            if (ersterTag) {
+              setBezugsdatum(new Date(ersterTag + 'T00:00:00'))
+              setAnsicht('woche')
+            }
+            laden()
+          }}
+        />
       )}
 
       {wunschPanelOffen && (
