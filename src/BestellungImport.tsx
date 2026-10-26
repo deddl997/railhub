@@ -5,8 +5,8 @@ import { datumZuISO } from './datumUtils'
 
 // Dienstbeginn liegt so viele Minuten vor der Abfahrt aus der Bestellung
 const VORLAUF_MINUTEN = 60
-// Mindest-Arbeitszeit (ohne Pause), auch wenn die Fahrt in der Bestellung kuerzer ist
-const MINDEST_ARBEITSZEIT_MINUTEN = 8 * 60
+// Mindest-Dienstdauer von Beginn bis Ende (die Pause ist darin enthalten), auch wenn die Fahrt in der Bestellung kuerzer ist
+const MINDEST_DAUER_MINUTEN = 8 * 60
 const SPOT_FARBE = '#8b1a1a'
 const FARB_AUSWAHL = ['#8b1a1a', '#14325c', '#15803d', '#b45309', '#6d28d9', '#0e7490', '#be185d', '#475569']
 
@@ -148,9 +148,8 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
     if (dauer <= 0) dauer += 1440
     let ende = f.nach_zeit
     let verlaengertVon: string | null = null
-    if (dauer - pauseNachArbZG(dauer) < MINDEST_ARBEITSZEIT_MINUTEN) {
-      // 8 Std. Arbeitszeit plus 30 Min. Pause = 8:30 Std. von Beginn bis Ende
-      dauer = MINDEST_ARBEITSZEIT_MINUTEN + 30
+    if (dauer < MINDEST_DAUER_MINUTEN) {
+      dauer = MINDEST_DAUER_MINUTEN
       ende = minutenAlsZeit((beginnMin + dauer) % 1440)
       verlaengertVon = f.nach_zeit
     }
@@ -367,7 +366,7 @@ export default function BestellungImport({
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 14px' }}>
               Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Fahrt wird eine
-              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Arbeitszeit. Die Pause wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
+              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
             <label
@@ -461,7 +460,7 @@ export default function BestellungImport({
                       <td style={{ padding: '5px 6px' }}>
                         <input type="time" value={z.ende} onChange={(e) => zeileAendern(z.id, { ende: e.target.value })} style={eingabe} />
                         {z.verlaengertVon && (
-                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>auf 8 Std. Arbeitszeit verlängert (Bestellung: {z.verlaengertVon})</div>
+                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>auf 8 Std. verlängert (Bestellung: {z.verlaengertVon})</div>
                         )}
                       </td>
                       <td style={{ padding: '5px 6px' }}>
