@@ -16,15 +16,15 @@ import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
 const ALLE_TABS = [
-  { id: 'meinplan', label: 'Mein Dienstplan', nurAdmin: false },
-  { id: 'antrag', label: 'Antrag einreichen', nurAdmin: false },
-  { id: 'kalender', label: 'Personalplanung', nurAdmin: true },
-  { id: 'antraege', label: 'Anträge', nurAdmin: false },
-  { id: 'uebersicht', label: 'Übersicht', nurAdmin: false },
-  { id: 'mitarbeiter', label: 'Mitarbeiter', nurAdmin: true },
-  { id: 'streckenkunde', label: 'Streckenkunde', nurAdmin: false },
-  { id: 'dienstplan', label: 'Dienstplan', nurAdmin: true },
-  { id: 'schichtvorlagen', label: 'Schichtvorlagen', nurAdmin: true },
+  { id: 'meinplan', label: 'Mein Dienstplan', kurz: 'Dienstplan', nurAdmin: false },
+  { id: 'antrag', label: 'Antrag einreichen', kurz: 'Antrag', nurAdmin: false },
+  { id: 'kalender', label: 'Personalplanung', kurz: 'Planung', nurAdmin: true },
+  { id: 'antraege', label: 'Anträge', kurz: 'Anträge', nurAdmin: false },
+  { id: 'uebersicht', label: 'Übersicht', kurz: 'Übersicht', nurAdmin: false },
+  { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
+  { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
+  { id: 'dienstplan', label: 'Dienstplan', kurz: 'Dienstplan', nurAdmin: true },
+  { id: 'schichtvorlagen', label: 'Schichtvorlagen', kurz: 'Vorlagen', nurAdmin: true },
 ] as const
 
 type TabId = (typeof ALLE_TABS)[number]['id']
@@ -37,6 +37,16 @@ function App() {
   const [logoFehler, setLogoFehler] = useState(false)
   const [passwortDialogOffen, setPasswortDialogOffen] = useState(false)
   const [passwortZuruecksetzen, setPasswortZuruecksetzen] = useState(false)
+  const [handy, setHandy] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches)
+  const [menueOffen, setMenueOffen] = useState(false)
+
+  // Handy-Ansicht: schmale Kopfzeile, Reiter unten am Bildschirmrand
+  useEffect(() => {
+    const abfrage = window.matchMedia('(max-width: 700px)')
+    const aendern = () => setHandy(abfrage.matches)
+    abfrage.addEventListener('change', aendern)
+    return () => abfrage.removeEventListener('change', aendern)
+  }, [])
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
   const [startTabGesetzt, setStartTabGesetzt] = useState(false)
@@ -104,17 +114,20 @@ function App() {
           color: '#ffffff',
           display: 'flex',
           alignItems: 'center',
-          gap: 24,
-          padding: '8px 24px',
-          minHeight: 56,
-          flexWrap: 'wrap',
+          gap: handy ? 10 : 24,
+          padding: handy ? '6px 12px' : '8px 24px',
+          minHeight: handy ? 48 : 56,
+          flexWrap: handy ? 'nowrap' : 'wrap',
+          position: handy ? 'sticky' : 'static',
+          top: 0,
+          zIndex: 500,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div
             style={{
-              height: 44,
-              minWidth: 44,
+              height: handy ? 34 : 44,
+              minWidth: handy ? 34 : 44,
               borderRadius: 8,
               background: '#ffffff',
               color: '#14325c',
@@ -134,16 +147,17 @@ function App() {
                 src="/rbl-logo.png"
                 alt="Rail Bavaria Logistik"
                 onError={() => setLogoFehler(true)}
-                style={{ height: 38, width: 'auto', display: 'block' }}
+                style={{ height: handy ? 28 : 38, width: 'auto', display: 'block' }}
               />
             )}
           </div>
           <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.2 }}>
             RBL Planung
-            <div style={{ fontWeight: 400, fontSize: 11, color: '#c9d6ea' }}>Rail Bavaria Logistik GmbH</div>
+            {!handy && <div style={{ fontWeight: 400, fontSize: 11, color: '#c9d6ea' }}>Rail Bavaria Logistik GmbH</div>}
           </div>
         </div>
 
+        {!handy && (
         <nav style={{ display: 'flex', gap: 4, flexGrow: 1, overflowX: 'auto' }}>
           {sichtbareTabs.map((tab) => (
             <button
@@ -165,7 +179,57 @@ function App() {
             </button>
           ))}
         </nav>
+        )}
 
+        {handy && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <span style={{ fontSize: 12, color: '#c9d6ea', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
+              {mitarbeiter?.name ?? ''}
+            </span>
+            <button
+              onClick={() => setMenueOffen(!menueOffen)}
+              aria-label="Menü"
+              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.4)', color: '#ffffff', borderRadius: 8, width: 38, height: 34, fontSize: 18, lineHeight: 1, cursor: 'pointer' }}
+            >
+              ⋯
+            </button>
+            {menueOffen && (
+              <>
+                <div onClick={() => setMenueOffen(false)} style={{ position: 'fixed', inset: 0, zIndex: 600 }} />
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    right: 8,
+                    zIndex: 700,
+                    background: '#ffffff',
+                    borderRadius: 10,
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+                    padding: 6,
+                    minWidth: 190,
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <button
+                    onClick={() => {
+                      setMenueOffen(false)
+                      setPasswortDialogOffen(true)
+                    }}
+                    style={menueKnopfStil}
+                  >
+                    Passwort ändern
+                  </button>
+                  <button onClick={abmelden} style={menueKnopfStil}>
+                    Abmelden
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {!handy && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13, color: '#c9d6ea' }}>
           <span>
             {istAdmin ? 'Planer · ' : ''}
@@ -200,6 +264,7 @@ function App() {
             Abmelden
           </button>
         </div>
+        )}
       </header>
 
       {passwortDialogOffen && (
@@ -210,7 +275,7 @@ function App() {
         style={{
           maxWidth: aktiverTab === 'dienstplan' ? 1600 : 1100,
           margin: '0 auto',
-          padding: '32px 20px',
+          padding: handy ? '12px 10px 96px' : '32px 20px',
         }}
       >
         {aktiverTab === 'meinplan' && !istAdmin && mitarbeiter && (
@@ -219,7 +284,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
               maxWidth: 720,
               margin: '0 auto',
             }}
@@ -235,7 +300,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
               maxWidth: 640,
             }}
           >
@@ -249,7 +314,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
             }}
           >
             <h3 style={{ marginTop: 0 }}>Personalplanung</h3>
@@ -276,7 +341,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
             }}
           >
             <h3 style={{ marginTop: 0 }}>{istAdmin ? 'Auswertung: Monat und Urlaub' : 'Meine Übersicht'}</h3>
@@ -290,7 +355,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
             }}
           >
             <h3 style={{ marginTop: 0 }}>Mitarbeiterübersicht</h3>
@@ -304,7 +369,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
             }}
           >
             <h3 style={{ marginTop: 0 }}>Streckenkunde{istAdmin ? '-Überwachung' : ''}</h3>
@@ -318,7 +383,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
             }}
           >
             <h3 style={{ marginTop: 0 }}>Dienstplan</h3>
@@ -332,7 +397,7 @@ function App() {
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 12,
-              padding: 24,
+              padding: handy ? 14 : 24,
             }}
           >
             <h3 style={{ marginTop: 0 }}>Schichtvorlagen</h3>
@@ -340,8 +405,59 @@ function App() {
           </div>
         )}
       </main>
+
+      {handy && (
+        <nav
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 500,
+            background: '#ffffff',
+            borderTop: '1px solid #d9e1ee',
+            display: 'flex',
+            overflowX: 'auto',
+            paddingBottom: 'env(safe-area-inset-bottom)',
+            boxShadow: '0 -2px 12px rgba(15, 36, 71, 0.08)',
+          }}
+        >
+          {sichtbareTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setAktiverTab(tab.id)}
+              style={{
+                flex: '1 0 auto',
+                minWidth: sichtbareTabs.length <= 5 ? 0 : 84,
+                background: 'none',
+                border: 'none',
+                borderTop: aktiverTab === tab.id ? '3px solid #14325c' : '3px solid transparent',
+                color: aktiverTab === tab.id ? '#14325c' : '#64748b',
+                fontWeight: aktiverTab === tab.id ? 700 : 500,
+                fontSize: 12,
+                padding: '12px 6px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tab.kurz}
+            </button>
+          ))}
+        </nav>
+      )}
     </div>
   )
+}
+
+const menueKnopfStil: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  textAlign: 'left',
+  padding: '12px 14px',
+  fontSize: 15,
+  color: '#14325c',
+  borderRadius: 8,
+  cursor: 'pointer',
 }
 
 export default App

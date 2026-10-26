@@ -438,7 +438,52 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
 
       {!laedt && sichtbar.length === 0 && <div style={{ fontSize: 14, color: '#94a3b8' }}>Keine Mitarbeiter gefunden.</div>}
 
-      {!laedt && ansicht === 'monat' && sichtbar.length > 0 && (
+      {!laedt && nurEigene && sichtbar.length > 0 && (() => {
+        const id = sichtbar[0].id
+        const kachel = (label: string, wert: string, farbe?: string) => (
+          <div key={label} style={{ background: '#f1f5f9', borderRadius: 10, padding: '10px 12px' }}>
+            <div style={{ fontSize: 12, color: '#64748b' }}>{label}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: farbe ?? 'var(--navy)', marginTop: 2 }}>{wert}</div>
+          </div>
+        )
+        if (ansicht === 'monat') {
+          const w = monatsWerte(id)
+          return (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+                {kachel('Dienste', String(w.dienste))}
+                {kachel('Stunden gesamt', stundenText(w.gesamt))}
+                {kachel('Geplant', stundenText(w.geplant))}
+                {kachel('Mehrzeit', w.mehr === 0 ? '–' : `${w.mehr > 0 ? '+' : '-'}${stundenText(Math.abs(w.mehr))}`, w.mehr > 0 ? '#b45309' : undefined)}
+                {kachel('Nachtdienste', String(w.nacht))}
+                {kachel('Wochenende', String(w.wochenende))}
+                {kachel('Feiertage', String(w.feiertag))}
+                {kachel('Urlaubstage', String(w.urlaub))}
+              </div>
+              <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>Meine Tage</div>
+              {monatsDetail(id)}
+            </>
+          )
+        }
+        const w = urlaubsWerte(id)
+        return (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+              {kachel('Resturlaub', String(w.rest), restFarbe(w.rest))}
+              {kachel('Rest nach offenen', String(w.restNachOffen), restFarbe(w.restNachOffen))}
+              {kachel('Anspruch', String(w.anspruch))}
+              {kachel('Rest Vorjahr', String(w.vorjahr))}
+              {kachel('Genommen', String(w.genommen))}
+              {kachel('Noch geplant', String(w.geplant))}
+              {kachel('Offen beantragt', String(w.offen), w.offen > 0 ? '#b45309' : undefined)}
+            </div>
+            <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>Meine Anträge {jahr}</div>
+            {urlaubsDetail(id)}
+          </>
+        )
+      })()}
+
+      {!laedt && !nurEigene && ansicht === 'monat' && sichtbar.length > 0 && (
         <>
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
             Geplante Stunden sind die Arbeitszeit der Schichten ohne Pause. Mehrzeit sind genehmigte Zeitkorrekturen. Nachtdienste haben mehr als 2 Stunden
@@ -498,7 +543,7 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
         </>
       )}
 
-      {!laedt && ansicht === 'urlaub' && sichtbar.length > 0 && (
+      {!laedt && !nurEigene && ansicht === 'urlaub' && sichtbar.length > 0 && (
         <>
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
             Resturlaub ist der Wert aus der Mitarbeiterübersicht (wird bei Genehmigung automatisch abgezogen). „Rest nach offenen“ zieht noch nicht bearbeitete
