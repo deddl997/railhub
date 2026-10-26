@@ -31,6 +31,7 @@ interface Auftrag {
   kuerzel_planung: string | null
   kontrolle: string | null
   preis: number | null
+  rechnungsnr: string | null
   info_abrechnung: string | null
 }
 
@@ -59,6 +60,7 @@ interface Formular {
   kuerzel_planung: string
   kontrolle: string
   preis: string
+  rechnungsnr: string
   info_abrechnung: string
 }
 
@@ -113,6 +115,7 @@ const FELDNAMEN: Record<string, string> = {
   kuerzel_planung: 'Kürzel Planung',
   kontrolle: 'Kontrolle',
   preis: 'Preis',
+  rechnungsnr: 'Rechnungsnummer',
   info_abrechnung: 'Info an Abrechnung',
 }
 
@@ -188,6 +191,7 @@ function leeresFormular(datum: string): Formular {
     kuerzel_planung: '',
     kontrolle: '',
     preis: '',
+    rechnungsnr: '',
     info_abrechnung: '',
   }
 }
@@ -218,6 +222,7 @@ function auftragZuFormular(a: Auftrag): Formular {
     kuerzel_planung: a.kuerzel_planung ?? '',
     kontrolle: a.kontrolle ?? '',
     preis: a.preis == null ? '' : String(a.preis),
+    rechnungsnr: a.rechnungsnr ?? '',
     info_abrechnung: a.info_abrechnung ?? '',
   }
 }
@@ -250,6 +255,7 @@ function formularZuDaten(f: Formular) {
     kuerzel_planung: leerNull(f.kuerzel_planung),
     kontrolle: leerNull(f.kontrolle),
     preis: f.preis.trim() === '' ? null : Number(f.preis.replace(',', '.')),
+    rechnungsnr: leerNull(f.rechnungsnr),
     info_abrechnung: leerNull(f.info_abrechnung),
   }
 }
@@ -379,7 +385,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       fehlerText = error?.message ?? null
     } else if (bearbeiteId) {
       // Abrechnung darf nur die Abrechnungsfelder aendern, Disposition nur die uebrigen
-      const abrechnungsFelder = ['abrechnung_status', 'kuerzel_abrechnung', 'kuerzel_planung', 'kontrolle', 'preis', 'info_abrechnung']
+      const abrechnungsFelder = ['abrechnung_status', 'kuerzel_abrechnung', 'kuerzel_planung', 'kontrolle', 'preis', 'rechnungsnr', 'info_abrechnung']
       const werte: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(daten)) {
         const istAbrechnung = abrechnungsFelder.includes(k)
@@ -767,6 +773,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               {feld('Kürzel Planung / Dispo', 'kuerzel_planung', { sperre: sperreAbrechnung })}
               {feld('Kontrolle (z. B. 100 %)', 'kontrolle', { sperre: sperreAbrechnung })}
               {feld('Preis (€)', 'preis', { typ: 'number', sperre: sperreAbrechnung })}
+              {feld('Rechnungsnummer', 'rechnungsnr', { sperre: sperreAbrechnung })}
               {text('Info an Abrechnung', 'info_abrechnung', sperreAbrechnung)}
             </div>
 
