@@ -813,8 +813,8 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                   )}
                   {dienst.info ? (
                     <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', borderRadius: 8, padding: '10px 12px', fontSize: 14 }}>
-                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>Info vom Planer</div>
-                      <div style={{ whiteSpace: 'pre-wrap' }}>{dienst.info}</div>
+                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>Fahrten und Info vom Planer</div>
+                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{dienst.info}</div>
                     </div>
                   ) : (
                     <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine zusätzliche Info vom Planer.</div>
