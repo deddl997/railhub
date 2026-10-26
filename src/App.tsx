@@ -117,7 +117,7 @@ function App() {
           gap: handy ? 10 : 24,
           padding: handy ? '6px 12px' : '8px 24px',
           minHeight: handy ? 48 : 56,
-          flexWrap: handy ? 'nowrap' : 'wrap',
+          flexWrap: 'wrap',
           position: handy ? 'sticky' : 'static',
           top: 0,
           zIndex: 500,
@@ -157,8 +157,15 @@ function App() {
           </div>
         </div>
 
-        {!handy && (
-        <nav style={{ display: 'flex', gap: 4, flexGrow: 1, overflowX: 'auto' }}>
+        <nav
+          style={{
+            display: 'flex',
+            gap: 4,
+            flexGrow: 1,
+            overflowX: 'auto',
+            ...(handy ? { order: 3, flexBasis: '100%', margin: '0 -4px' } : {}),
+          }}
+        >
           {sichtbareTabs.map((tab) => (
             <button
               key={tab.id}
@@ -170,7 +177,7 @@ function App() {
                 color: aktiverTab === tab.id ? '#ffffff' : '#c9d6ea',
                 fontWeight: aktiverTab === tab.id ? 600 : 500,
                 fontSize: 14,
-                padding: '8px 14px',
+                padding: handy ? '8px 12px' : '8px 14px',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
@@ -179,7 +186,6 @@ function App() {
             </button>
           ))}
         </nav>
-        )}
 
         {handy && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -275,7 +281,7 @@ function App() {
         style={{
           maxWidth: aktiverTab === 'dienstplan' ? 1600 : 1100,
           margin: '0 auto',
-          padding: handy ? '12px 10px 96px' : '32px 20px',
+          padding: handy ? '12px 10px 24px' : '32px 20px',
         }}
       >
         {aktiverTab === 'meinplan' && !istAdmin && mitarbeiter && (
@@ -406,45 +412,6 @@ function App() {
         )}
       </main>
 
-      {handy && (
-        <nav
-          style={{
-            position: 'fixed',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 500,
-            background: '#ffffff',
-            borderTop: '1px solid #d9e1ee',
-            display: 'flex',
-            overflowX: 'auto',
-            paddingBottom: 'env(safe-area-inset-bottom)',
-            boxShadow: '0 -2px 12px rgba(15, 36, 71, 0.08)',
-          }}
-        >
-          {sichtbareTabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setAktiverTab(tab.id)}
-              style={{
-                flex: '1 0 auto',
-                minWidth: sichtbareTabs.length <= 5 ? 0 : 84,
-                background: 'none',
-                border: 'none',
-                borderTop: aktiverTab === tab.id ? '3px solid #14325c' : '3px solid transparent',
-                color: aktiverTab === tab.id ? '#14325c' : '#64748b',
-                fontWeight: aktiverTab === tab.id ? 700 : 500,
-                fontSize: 12,
-                padding: '12px 6px',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {tab.kurz}
-            </button>
-          ))}
-        </nav>
-      )}
     </div>
   )
 }
