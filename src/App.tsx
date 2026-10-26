@@ -4,6 +4,8 @@ import { supabase } from './lib/supabase'
 import Anmeldung from './Anmeldung'
 import PasswortDialog from './PasswortDialog'
 import Uebersichten from './Uebersichten'
+import Auftraege from './Auftraege'
+import { useRolle } from './useRolle'
 import { useLiveAktualisierung } from './liveAktualisierung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
@@ -22,6 +24,7 @@ const ALLE_TABS = [
   { id: 'kalender', label: 'Personalplanung', kurz: 'Planung', nurAdmin: true },
   { id: 'antraege', label: 'Anträge', kurz: 'Anträge', nurAdmin: false },
   { id: 'uebersicht', label: 'Übersicht', kurz: 'Übersicht', nurAdmin: false },
+  { id: 'auftraege', label: 'Aufträge', kurz: 'Aufträge', nurAdmin: false },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', kurz: 'Dienstplan', nurAdmin: true },
@@ -39,6 +42,7 @@ function App() {
   const [passwortDialogOffen, setPasswortDialogOffen] = useState(false)
   const [passwortZuruecksetzen, setPasswortZuruecksetzen] = useState(false)
   const [neueVersion, setNeueVersion] = useState(false)
+  const rolle = useRolle(!!session)
   const [handy, setHandy] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches)
   const [menueOffen, setMenueOffen] = useState(false)
 
@@ -137,8 +141,10 @@ function App() {
     )
   }
 
+  const darfDisponieren = istAdmin || rolle === 'disponent'
+  const darfAbrechnen = istAdmin || rolle === 'abrechnung'
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'meinplan' ? !istAdmin : !tab.nurAdmin || istAdmin
+    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   return (
@@ -345,7 +351,7 @@ function App() {
 
       <main
         style={{
-          maxWidth: aktiverTab === 'dienstplan' ? 1600 : 1100,
+          maxWidth: aktiverTab === 'dienstplan' || aktiverTab === 'auftraege' ? 1600 : 1100,
           margin: '0 auto',
           padding: handy ? '12px 10px 24px' : '32px 20px',
         }}
@@ -404,6 +410,20 @@ function App() {
             ) : (
               <MeineEigenenAntraege key={neuLadenAuslöser} />
             )}
+          </div>
+        )}
+
+        {aktiverTab === 'auftraege' && (darfDisponieren || darfAbrechnen) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Aufträge</h3>
+            <Auftraege darfDisponieren={darfDisponieren} darfAbrechnen={darfAbrechnen} />
           </div>
         )}
 

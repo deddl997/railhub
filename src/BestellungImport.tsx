@@ -52,6 +52,7 @@ interface Zeile {
   hinweise: string[]
   doppelt: boolean
   verlaengertVon: string | null
+  fahrt: Fahrt
   pause: number
   pauseManuell: boolean
   farbe: string
@@ -167,6 +168,7 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
       hinweise,
       doppelt: false,
       verlaengertVon,
+      fahrt: f,
       pause: pauseNachArbZG(dauer),
       pauseManuell: false,
       farbe: SPOT_FARBE,
@@ -197,6 +199,7 @@ export default function BestellungImport({
   const [zeilen, setZeilen] = useState<Zeile[]>([])
   const [uebersprungen, setUebersprungen] = useState<Uebersprungen[]>([])
   const [speichert, setSpeichert] = useState(false)
+  const [mitSchichten, setMitSchichten] = useState(true)
 
   async function dateiWaehlen(datei: File | undefined) {
     if (!datei) return
@@ -236,7 +239,7 @@ export default function BestellungImport({
       // Schon vorhandene Spotschichten erkennen
       const ersterTag = neueZeilen.reduce((a, z) => (z.datum < a ? z.datum : a), neueZeilen[0].datum)
       const letzterTag = neueZeilen.reduce((a, z) => (z.datum > a ? z.datum : a), neueZeilen[0].datum)
-      const [offen, belegt] = await Promise.all([
+      const [offen, belegt, auftraegeVorhanden] = await Promise.all([
         supabase.from('offene_spotschichten').select('name, datum, beginn_zeit').gte('datum', ersterTag).lte('datum', letzterTag),
         supabase
           .from('dienstplan_eintraege')
@@ -244,12 +247,27 @@ export default function BestellungImport({
           .eq('ist_spotschicht', true)
           .gte('datum', ersterTag)
           .lte('datum', letzterTag),
+        supabase
+          .from('auftraege')
+          .select('referenz, abfahrt_datum, abfahrt_soll')
+          .gte('abfahrt_datum', datumZuISO(new Date(new Date(ersterTag + 'T00:00:00').getTime() - 86400000)))
+          .lte('abfahrt_datum', datumZuISO(new Date(new Date(letzterTag + 'T00:00:00').getTime() + 2 * 86400000))),
       ])
+      const auftragsSchluessel = new Set<string>(
+        (auftraegeVorhanden.data ?? []).map(
+          (a: { referenz: string | null; abfahrt_datum: string; abfahrt_soll: string | null }) =>
+            `${a.abfahrt_datum}|${a.referenz}|${String(a.abfahrt_soll ?? '').slice(0, 5)}`
+        )
+      )
       const vorhanden = new Set<string>()
       for (const o of offen.data ?? []) vorhanden.add(`${o.datum}|${o.name}|${String(o.beginn_zeit).slice(0, 5)}`)
       for (const b of belegt.data ?? []) vorhanden.add(`${b.datum}|${b.spot_name}|${String(b.spot_beginn_zeit).slice(0, 5)}`)
       for (const z of neueZeilen) {
-        if (vorhanden.has(`${z.datum}|${z.name}|${z.beginn}`)) {
+        if (auftragsSchluessel.has(`${z.fahrt.datum}|${z.fahrt.referenz}|${z.fahrt.von_zeit}`)) {
+          z.doppelt = true
+          z.aktiv = false
+          z.hinweise.push('Auftrag gibt es schon')
+        } else if (vorhanden.has(`${z.datum}|${z.name}|${z.beginn}`)) {
           z.doppelt = true
           z.aktiv = false
           z.hinweise.push('Gibt es schon')
@@ -289,24 +307,61 @@ export default function BestellungImport({
     if (aktive.length === 0) return
     setSpeichert(true)
     setFehler(null)
-    const { error } = await supabase.from('offene_spotschichten').insert(
-      aktive.map((z) => ({
-        datum: z.datum,
-        bereich: 'Lokführer',
-        name: z.name.trim() || 'Fahrt',
-        beginn_zeit: z.beginn,
-        ende_zeit: z.ende,
-        pause_minuten: z.pause,
-        dienstort: z.dienstort.trim() || null,
-        farbe: z.farbe || SPOT_FARBE,
-        info: z.info.trim() || null,
-      }))
+    // Zuerst die Auftraege anlegen, dann (wenn gewuenscht) die Schichten dazu
+    const ids = aktive.map(() => crypto.randomUUID())
+    const { error: auftragFehler } = await supabase.from('auftraege').insert(
+      aktive.map((z, i) => {
+        const f = z.fahrt
+        const naechsterTag = zeitInMinuten(f.nach_zeit) < zeitInMinuten(f.von_zeit)
+        let ankunftDatum = f.datum
+        if (naechsterTag) {
+          const d = new Date(f.datum + 'T00:00:00')
+          d.setDate(d.getDate() + 1)
+          ankunftDatum = datumZuISO(d)
+        }
+        return {
+          id: ids[i],
+          referenz: f.referenz,
+          zug_nr: f.referenznummer,
+          evu: 'RBL',
+          abfahrt_ort: f.von,
+          abfahrt_datum: f.datum,
+          abfahrt_soll: f.von_zeit,
+          ankunft_ort: f.nach,
+          ankunft_datum: ankunftDatum,
+          ankunft_soll: f.nach_zeit,
+          lok: f.lok,
+          mitarbeiter_info: z.info.trim() || null,
+        }
+      })
     )
-    setSpeichert(false)
-    if (error) {
-      setFehler('Anlegen fehlgeschlagen: ' + error.message)
+    if (auftragFehler) {
+      setSpeichert(false)
+      setFehler('Aufträge anlegen fehlgeschlagen: ' + auftragFehler.message)
       return
     }
+    if (mitSchichten) {
+      const { error } = await supabase.from('offene_spotschichten').insert(
+        aktive.map((z, i) => ({
+          datum: z.datum,
+          bereich: 'Lokführer',
+          name: z.name.trim() || 'Fahrt',
+          beginn_zeit: z.beginn,
+          ende_zeit: z.ende,
+          pause_minuten: z.pause,
+          dienstort: z.dienstort.trim() || null,
+          farbe: z.farbe || SPOT_FARBE,
+          info: z.info.trim() || null,
+          auftrag_id: ids[i],
+        }))
+      )
+      if (error) {
+        setSpeichert(false)
+        setFehler('Die Aufträge sind angelegt, die Schichten aber nicht: ' + error.message + ' (in der Auftragsliste kannst du sie nachträglich anlegen)')
+        return
+      }
+    }
+    setSpeichert(false)
     const ersterTag = aktive.reduce((a, z) => (z.datum < a ? z.datum : a), aktive[0].datum)
     onFertig(ersterTag)
   }
@@ -365,8 +420,8 @@ export default function BestellungImport({
         {schritt === 'wahl' && (
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 14px' }}>
-              Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Fahrt wird eine
-              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
+              Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Fahrt wird ein
+              Auftrag in der Auftragsliste und, wenn du möchtest, eine offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
             <label
@@ -403,6 +458,10 @@ export default function BestellungImport({
               abwählen. Die Pause wird nach dem Arbeitszeitgesetz berechnet und passt sich bei geänderten Zeiten an. Wenn du sie von Hand änderst, bleibt dein
               Wert stehen.
             </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#475569', marginBottom: 8 }}>
+              <input type="checkbox" checked={mitSchichten} onChange={(e) => setMitSchichten(e.target.checked)} />
+              Zu jedem Auftrag auch eine offene Schicht im Dienstplan anlegen
+            </label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Farbe für alle Schichten:</span>
               {FARB_AUSWAHL.map((f) => (
@@ -544,7 +603,7 @@ export default function BestellungImport({
                   opacity: speichert || aktive.length === 0 ? 0.5 : 1,
                 }}
               >
-                {speichert ? 'Legt an ...' : `${aktive.length} offene Schichten anlegen`}
+                {speichert ? 'Legt an ...' : `${aktive.length} Aufträge anlegen`}
               </button>
             </div>
             {aktive.length > 0 && (

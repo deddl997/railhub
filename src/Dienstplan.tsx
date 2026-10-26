@@ -41,6 +41,7 @@ interface OffeneSpot {
   dienstort: string | null
   farbe: string | null
   info?: string | null
+  auftrag_id?: string | null
 }
 
 interface SollZeile {
@@ -82,6 +83,7 @@ interface DienstplanEintrag {
   spot_dienstort: string | null
   spot_farbe: string | null
   spot_info?: string | null
+  auftrag_id?: string | null
   abw_beginn_zeit?: string | null
   abw_ende_zeit?: string | null
   abw_pause_minuten?: number | null
@@ -650,6 +652,7 @@ export default function Dienstplan() {
         spot_dienstort: quellEintrag.spot_dienstort,
         spot_farbe: quellEintrag.spot_farbe,
         spot_info: quellEintrag.spot_info ?? null,
+        auftrag_id: quellEintrag.auftrag_id ?? null,
         status: quellEintrag.status,
         abw_beginn_zeit: quellEintrag.abw_beginn_zeit ?? null,
         abw_ende_zeit: quellEintrag.abw_ende_zeit ?? null,
@@ -780,6 +783,7 @@ export default function Dienstplan() {
         dienstort: eintrag.spot_dienstort,
         farbe: eintrag.spot_farbe,
         info: eintrag.spot_info ?? null,
+        auftrag_id: eintrag.auftrag_id ?? null,
       })
     }
     await supabase
@@ -811,6 +815,7 @@ export default function Dienstplan() {
         spot_dienstort: spot.dienstort,
         spot_farbe: spot.farbe,
         spot_info: spot.info ?? null,
+        auftrag_id: spot.auftrag_id ?? null,
         status: null,
       },
       { onConflict: 'mitarbeiter_id,datum' }
@@ -1083,6 +1088,7 @@ export default function Dienstplan() {
       spot_dienstort: e.spot_dienstort,
       spot_farbe: e.spot_farbe,
       spot_info: e.spot_info ?? null,
+      auftrag_id: e.auftrag_id ?? null,
       abw_beginn_zeit: e.abw_beginn_zeit ?? null,
       abw_ende_zeit: e.abw_ende_zeit ?? null,
       abw_pause_minuten: e.abw_pause_minuten ?? null,
@@ -1198,6 +1204,7 @@ export default function Dienstplan() {
           dienstort: bestehend.spot_dienstort,
           farbe: bestehend.spot_farbe,
           info: bestehend.spot_info ?? null,
+          auftrag_id: bestehend.auftrag_id ?? null,
         })
       }
     }

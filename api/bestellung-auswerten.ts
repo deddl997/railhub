@@ -37,8 +37,8 @@ export default async function handler(req, res) {
     global: { headers: { Authorization: authKopf } },
     auth: { persistSession: false },
   })
-  const { data: istAdmin, error: adminFehler } = await client.rpc('is_admin')
-  if (adminFehler || istAdmin !== true) return res.status(403).json({ fehler: 'Nur Planer dürfen Bestellungen einlesen' })
+  const { data: istAdmin, error: adminFehler } = await client.rpc('ist_disponent')
+  if (adminFehler || istAdmin !== true) return res.status(403).json({ fehler: 'Nur Planer und Disponenten dürfen Bestellungen einlesen' })
 
   const { art, text, mime, daten } = req.body || {}
   const inhalt = []
