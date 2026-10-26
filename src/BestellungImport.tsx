@@ -5,9 +5,23 @@ import { datumZuISO } from './datumUtils'
 
 // Dienstbeginn liegt so viele Minuten vor der Abfahrt aus der Bestellung
 const VORLAUF_MINUTEN = 60
-// Eine Schicht dauert mindestens so lange, auch wenn die Fahrt in der Bestellung kuerzer ist
-const MINDEST_DAUER_MINUTEN = 8 * 60
+// Mindest-Arbeitszeit (ohne Pause), auch wenn die Fahrt in der Bestellung kuerzer ist
+const MINDEST_ARBEITSZEIT_MINUTEN = 8 * 60
 const SPOT_FARBE = '#8b1a1a'
+const FARB_AUSWAHL = ['#8b1a1a', '#14325c', '#15803d', '#b45309', '#6d28d9', '#0e7490', '#be185d', '#475569']
+
+// Pause nach Arbeitszeitgesetz (§ 4): mehr als 6 Std. = 30 Min., mehr als 9 Std. = 45 Min.
+function pauseNachArbZG(bruttoMinuten: number): number {
+  if (bruttoMinuten > 9 * 60) return 45
+  if (bruttoMinuten > 6 * 60) return 30
+  return 0
+}
+
+function bruttoMinuten(beginn: string, ende: string): number {
+  let d = zeitInMinuten(ende) - zeitInMinuten(beginn)
+  if (d <= 0) d += 1440
+  return d
+}
 
 interface Fahrt {
   referenz: string
@@ -38,6 +52,9 @@ interface Zeile {
   hinweise: string[]
   doppelt: boolean
   verlaengertVon: string | null
+  pause: number
+  pauseManuell: boolean
+  farbe: string
 }
 
 function zeitInMinuten(zeit: string): number {
@@ -131,8 +148,10 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
     if (dauer <= 0) dauer += 1440
     let ende = f.nach_zeit
     let verlaengertVon: string | null = null
-    if (dauer < MINDEST_DAUER_MINUTEN) {
-      ende = minutenAlsZeit((beginnMin + MINDEST_DAUER_MINUTEN) % 1440)
+    if (dauer - pauseNachArbZG(dauer) < MINDEST_ARBEITSZEIT_MINUTEN) {
+      // 8 Std. Arbeitszeit plus 30 Min. Pause = 8:30 Std. von Beginn bis Ende
+      dauer = MINDEST_ARBEITSZEIT_MINUTEN + 30
+      ende = minutenAlsZeit((beginnMin + dauer) % 1440)
       verlaengertVon = f.nach_zeit
     }
     return {
@@ -149,6 +168,9 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
       hinweise,
       doppelt: false,
       verlaengertVon,
+      pause: pauseNachArbZG(dauer),
+      pauseManuell: false,
+      farbe: SPOT_FARBE,
     }
   })
 
@@ -245,7 +267,21 @@ export default function BestellungImport({
   }
 
   function zeileAendern(id: number, aenderung: Partial<Zeile>) {
-    setZeilen((alt) => alt.map((z) => (z.id === id ? { ...z, ...aenderung } : z)))
+    setZeilen((alt) =>
+      alt.map((z) => {
+        if (z.id !== id) return z
+        const neu = { ...z, ...aenderung }
+        // Pause automatisch nachziehen, solange sie nicht von Hand geaendert wurde
+        if (!neu.pauseManuell && (aenderung.beginn !== undefined || aenderung.ende !== undefined)) {
+          neu.pause = pauseNachArbZG(bruttoMinuten(neu.beginn, neu.ende))
+        }
+        return neu
+      })
+    )
+  }
+
+  function alleFarbeSetzen(farbe: string) {
+    setZeilen((alt) => alt.map((z) => ({ ...z, farbe })))
   }
 
   const aktive = zeilen.filter((z) => z.aktiv)
@@ -261,9 +297,9 @@ export default function BestellungImport({
         name: z.name.trim() || 'Fahrt',
         beginn_zeit: z.beginn,
         ende_zeit: z.ende,
-        pause_minuten: 0,
+        pause_minuten: z.pause,
         dienstort: z.dienstort.trim() || null,
-        farbe: SPOT_FARBE,
+        farbe: z.farbe || SPOT_FARBE,
         info: z.info.trim() || null,
       }))
     )
@@ -331,7 +367,7 @@ export default function BestellungImport({
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 14px' }}>
               Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Fahrt wird eine
-              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer.
+              offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Arbeitszeit. Die Pause wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
             <label
@@ -365,10 +401,24 @@ export default function BestellungImport({
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 10px' }}>
               {zeilen.length} Fahrten erkannt, {aktive.length} werden angelegt. Du kannst Name, Datum, Zeiten, Dienstort und Info ändern oder Zeilen
-              abwählen.
+              abwählen. Die Pause wird nach dem Arbeitszeitgesetz berechnet und passt sich bei geänderten Zeiten an. Wenn du sie von Hand änderst, bleibt dein
+              Wert stehen.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Farbe für alle Schichten:</span>
+              {FARB_AUSWAHL.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => alleFarbeSetzen(f)}
+                  title={f}
+                  style={{ width: 24, height: 24, borderRadius: 6, border: '2px solid #ffffff', outline: '1px solid #cbd5e1', background: f, cursor: 'pointer', padding: 0 }}
+                />
+              ))}
+              <input type="color" onChange={(e) => alleFarbeSetzen(e.target.value)} title="Eigene Farbe wählen" style={{ width: 32, height: 28, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>Einzelne Farben änderst du in der Spalte „Farbe“.</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 960, fontSize: 12 }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1100, fontSize: 12 }}>
                 <thead>
                   <tr style={{ textAlign: 'left', color: '#64748b' }}>
                     <th style={{ padding: '4px 6px' }}>
@@ -382,7 +432,9 @@ export default function BestellungImport({
                     <th style={{ padding: '4px 6px' }}>Name</th>
                     <th style={{ padding: '4px 6px' }}>Beginn</th>
                     <th style={{ padding: '4px 6px' }}>Ende</th>
+                    <th style={{ padding: '4px 6px' }}>Pause (Min.)</th>
                     <th style={{ padding: '4px 6px' }}>Dienstort</th>
+                    <th style={{ padding: '4px 6px' }}>Farbe</th>
                     <th style={{ padding: '4px 6px' }}>Info</th>
                   </tr>
                 </thead>
@@ -409,11 +461,29 @@ export default function BestellungImport({
                       <td style={{ padding: '5px 6px' }}>
                         <input type="time" value={z.ende} onChange={(e) => zeileAendern(z.id, { ende: e.target.value })} style={eingabe} />
                         {z.verlaengertVon && (
-                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>auf 8 Std. verlängert (Bestellung: {z.verlaengertVon})</div>
+                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>auf 8 Std. Arbeitszeit verlängert (Bestellung: {z.verlaengertVon})</div>
                         )}
                       </td>
                       <td style={{ padding: '5px 6px' }}>
+                        <input
+                          type="number"
+                          min={0}
+                          max={240}
+                          value={z.pause}
+                          onChange={(e) => zeileAendern(z.id, { pause: Math.max(0, Number(e.target.value) || 0), pauseManuell: true })}
+                          style={{ ...eingabe, width: 64 }}
+                        />
+                      </td>
+                      <td style={{ padding: '5px 6px' }}>
                         <input value={z.dienstort} onChange={(e) => zeileAendern(z.id, { dienstort: e.target.value })} style={{ ...eingabe, width: 90 }} />
+                      </td>
+                      <td style={{ padding: '5px 6px' }}>
+                        <input
+                          type="color"
+                          value={z.farbe}
+                          onChange={(e) => zeileAendern(z.id, { farbe: e.target.value })}
+                          style={{ width: 36, height: 28, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                        />
                       </td>
                       <td style={{ padding: '5px 6px' }}>
                         <textarea
