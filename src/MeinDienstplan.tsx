@@ -5,6 +5,8 @@ import { pushAktivieren, pushDeaktivieren, pushStatus } from './pushAbo'
 import type { PushStatus } from './pushAbo'
 import ZeitkorrekturMitarbeiter from './ZeitkorrekturMitarbeiter'
 import { useLiveAktualisierung } from './liveAktualisierung'
+import { fahrtenPruefen, infoAusFahrten } from './auftragSchicht'
+import type { Fahrtzeile } from './auftragSchicht'
 
 interface Vorlage {
   id: string
@@ -20,6 +22,7 @@ interface Vorlage {
 
 interface Eintrag {
   datum: string
+  auftrag_id?: string | null
   schichtvorlage_id: string | null
   ist_spotschicht: boolean
   spot_name: string | null
@@ -128,6 +131,21 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [wunschFehler, setWunschFehler] = useState<string | null>(null)
   const [neuLadenZaehler, setNeuLadenZaehler] = useState(0)
   const stillNeuLaden = useRef(false)
+  const [offeneFahrten, setOffeneFahrten] = useState<Fahrtzeile[]>([])
+  const offenerAuftragId = offenerTag ? (eintraege.find((e) => e.datum === offenerTag)?.auftrag_id ?? null) : null
+
+  // Fahrten (Lokzuführung, Zugfahrt, Rückführung) der geöffneten Schicht laden
+  useEffect(() => {
+    setOffeneFahrten([])
+    if (!offenerAuftragId) return
+    let abgebrochen = false
+    supabase.rpc('meine_fahrten', { p_auftrag_id: offenerAuftragId }).then(({ data }) => {
+      if (!abgebrochen) setOffeneFahrten(fahrtenPruefen(data))
+    })
+    return () => {
+      abgebrochen = true
+    }
+  }, [offenerAuftragId])
 
   const heute = new Date()
   heute.setHours(0, 0, 0, 0)
@@ -811,14 +829,59 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                       {dienst.standard ? ` (Standard: ${dienst.standard})` : ''}.
                     </div>
                   )}
-                  {dienst.info ? (
-                    <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', borderRadius: 8, padding: '10px 12px', fontSize: 14 }}>
-                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>Fahrten und Info vom Planer</div>
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{dienst.info}</div>
+                  {offeneFahrten.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: '#0f2447', marginBottom: 6 }}>Deine Fahrten</div>
+                      {offeneFahrten.map((f, i) => {
+                        const zug = f.art === 'Zugfahrt'
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              gap: 10,
+                              alignItems: 'flex-start',
+                              border: '1px solid #e2e8f0',
+                              borderLeft: `5px solid ${zug ? '#14325c' : '#b45309'}`,
+                              borderRadius: 8,
+                              padding: '8px 10px',
+                              marginBottom: 6,
+                              background: '#ffffff',
+                            }}
+                          >
+                            <div style={{ minWidth: 56, fontWeight: 700, fontSize: 15, lineHeight: 1.3 }}>
+                              <div>{f.von_zeit || '–'}</div>
+                              <div style={{ color: '#64748b', fontWeight: 500 }}>{f.nach_zeit || '–'}</div>
+                            </div>
+                            <div style={{ fontSize: 14, flex: 1 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: zug ? '#14325c' : '#b45309', textTransform: 'uppercase' }}>
+                                {f.art}
+                                {f.zug ? ` · ${f.zug}` : ''}
+                              </div>
+                              <div>
+                                <b>{f.von || '?'}</b> → <b>{f.nach || '?'}</b>
+                              </div>
+                              {f.lok && <div style={{ fontSize: 12, color: '#64748b' }}>Lok {f.lok}</div>}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
-                  ) : (
-                    <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine zusätzliche Info vom Planer.</div>
                   )}
+                  {(() => {
+                    const erzeugt = offeneFahrten.length > 0 ? infoAusFahrten(offeneFahrten, null) : ''
+                    let rest = dienst.info ?? ''
+                    if (erzeugt && rest.startsWith(erzeugt)) rest = rest.slice(erzeugt.length).trim()
+                    else if (erzeugt) rest = dienst.info ?? ''
+                    return rest ? (
+                      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', borderRadius: 8, padding: '10px 12px', fontSize: 14 }}>
+                        <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>{offeneFahrten.length > 0 ? 'Weitere Info vom Planer' : 'Fahrten und Info vom Planer'}</div>
+                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{rest}</div>
+                      </div>
+                    ) : offeneFahrten.length > 0 ? null : (
+                      <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine zusätzliche Info vom Planer.</div>
+                    )
+                  })()}
 
                 </div>
               ) : urlaub ? (

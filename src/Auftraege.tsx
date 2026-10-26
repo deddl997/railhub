@@ -5,6 +5,7 @@ import { useLiveAktualisierung } from './liveAktualisierung'
 import { schichtAusAuftrag } from './auftragSchicht'
 import BestellungImport from './BestellungImport'
 import SchichtDialog from './SchichtDialog'
+import { fahrtenPruefen } from './auftragSchicht'
 
 interface Auftrag {
   id: string
@@ -714,6 +715,23 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                         {a.preis != null && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{a.preis.toFixed(2).replace('.', ',')} €</div>}
                       </td>
                     </tr>
+                    {(() => {
+                      const zusatz = fahrtenPruefen(a.fahrten).filter((f) => f.art !== 'Zugfahrt' && (f.von || f.nach))
+                      if (zusatz.length === 0) return null
+                      return (
+                        <tr onClick={() => bearbeitenOeffnen(a)} style={{ cursor: 'pointer', opacity: a.status === 'storniert' ? 0.55 : 1 }}>
+                          <td colSpan={9} style={{ ...td, paddingTop: 0, fontSize: 12, color: '#92400e' }}>
+                            {zusatz.map((f, i) => (
+                              <span key={i} style={{ display: 'inline-block', marginRight: 16 }}>
+                                ↳ <b>{f.art}</b>
+                                {f.zug ? ` ${f.zug}` : ''}: {f.von} {f.von_zeit} → {f.nach} {f.nach_zeit}
+                                {f.lok ? ` (Lok ${f.lok})` : ''}
+                              </span>
+                            ))}
+                          </td>
+                        </tr>
+                      )
+                    })()}
                   </Fragment>
                 )
               })}
