@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import Anmeldung from './Anmeldung'
 import PasswortDialog from './PasswortDialog'
+import Uebersichten from './Uebersichten'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
 import MeineEigenenAntraege from './MeineEigenenAntraege'
@@ -19,6 +20,7 @@ const ALLE_TABS = [
   { id: 'antrag', label: 'Antrag einreichen', nurAdmin: false },
   { id: 'kalender', label: 'Personalplanung', nurAdmin: true },
   { id: 'antraege', label: 'Anträge', nurAdmin: false },
+  { id: 'uebersicht', label: 'Übersicht', nurAdmin: false },
   { id: 'mitarbeiter', label: 'Mitarbeiter', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', nurAdmin: true },
@@ -265,6 +267,20 @@ function App() {
             ) : (
               <MeineEigenenAntraege />
             )}
+          </div>
+        )}
+
+        {aktiverTab === 'uebersicht' && (istAdmin || mitarbeiter) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>{istAdmin ? 'Auswertung: Monat und Urlaub' : 'Meine Übersicht'}</h3>
+            <Uebersichten eigeneId={istAdmin ? null : mitarbeiter?.id ?? null} />
           </div>
         )}
 
