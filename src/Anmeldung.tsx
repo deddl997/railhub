@@ -7,7 +7,7 @@ interface MitarbeiterOhneLogin {
 }
 
 export default function Anmeldung() {
-  const [modus, setModus] = useState<'anmelden' | 'registrieren'>('anmelden')
+  const [modus, setModus] = useState<'anmelden' | 'registrieren' | 'vergessen'>('anmelden')
   const [email, setEmail] = useState('')
   const [passwort, setPasswort] = useState('')
   const [passwortWiederholen, setPasswortWiederholen] = useState('')
@@ -34,6 +34,27 @@ export default function Anmeldung() {
     const { error } = await supabase.auth.signInWithPassword({ email, password: passwort })
     if (error) setFehler('Anmeldung fehlgeschlagen: ' + error.message)
     setLadeVorgang(false)
+  }
+
+  async function passwortVergessen() {
+    setFehler(null)
+    setHinweis(null)
+    if (!email.trim()) {
+      setFehler('Bitte gib deine E-Mail-Adresse ein.')
+      return
+    }
+    setLadeVorgang(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin,
+    })
+    setLadeVorgang(false)
+    if (error) {
+      setFehler('Die E-Mail konnte nicht gesendet werden: ' + error.message)
+      return
+    }
+    setHinweis(
+      'Wenn diese E-Mail-Adresse bei uns registriert ist, haben wir dir einen Link zum Zurücksetzen geschickt. Bitte auch den Spam-Ordner prüfen.'
+    )
   }
 
   async function registrieren() {
@@ -110,6 +131,16 @@ export default function Anmeldung() {
           </div>
         </div>
 
+        {modus === 'vergessen' && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--navy)' }}>Passwort vergessen?</div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+              Gib deine E-Mail-Adresse ein. Du bekommst einen Link, mit dem du ein neues Passwort festlegst.
+            </div>
+          </div>
+        )}
+
+        {modus !== 'vergessen' && (
         <div style={{ display: 'flex', marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
           <button
             onClick={() => {
@@ -132,6 +163,7 @@ export default function Anmeldung() {
             Registrieren
           </button>
         </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {modus === 'registrieren' && (
@@ -162,15 +194,17 @@ export default function Anmeldung() {
             />
           </label>
 
-          <label style={beschriftungStil}>
-            Passwort
-            <input
-              type="password"
-              value={passwort}
-              onChange={(e) => setPasswort(e.target.value)}
-              style={eingabeStil}
-            />
-          </label>
+          {modus !== 'vergessen' && (
+            <label style={beschriftungStil}>
+              Passwort
+              <input
+                type="password"
+                value={passwort}
+                onChange={(e) => setPasswort(e.target.value)}
+                style={eingabeStil}
+              />
+            </label>
+          )}
 
           {modus === 'registrieren' && (
             <label style={beschriftungStil}>
@@ -188,7 +222,7 @@ export default function Anmeldung() {
           {hinweis && <p style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}>{hinweis}</p>}
 
           <button
-            onClick={modus === 'anmelden' ? anmelden : registrieren}
+            onClick={modus === 'anmelden' ? anmelden : modus === 'registrieren' ? registrieren : passwortVergessen}
             disabled={ladeVorgang}
             style={{
               background: 'var(--navy)',
@@ -202,12 +236,47 @@ export default function Anmeldung() {
               marginTop: 4,
             }}
           >
-            {modus === 'anmelden' ? 'Anmelden' : 'Registrieren'}
+            {modus === 'anmelden' ? 'Anmelden' : modus === 'registrieren' ? 'Registrieren' : 'Link senden'}
           </button>
+
+          {modus === 'anmelden' && (
+            <button
+              onClick={() => {
+                setModus('vergessen')
+                setFehler(null)
+                setHinweis(null)
+              }}
+              style={linkKnopfStil}
+            >
+              Passwort vergessen?
+            </button>
+          )}
+          {modus === 'vergessen' && (
+            <button
+              onClick={() => {
+                setModus('anmelden')
+                setFehler(null)
+                setHinweis(null)
+              }}
+              style={linkKnopfStil}
+            >
+              Zurück zur Anmeldung
+            </button>
+          )}
         </div>
       </div>
     </div>
   )
+}
+
+const linkKnopfStil: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: 'var(--navy)',
+  fontSize: 13,
+  textDecoration: 'underline',
+  cursor: 'pointer',
+  padding: 4,
 }
 
 function tabKnopfStil(aktiv: boolean): React.CSSProperties {

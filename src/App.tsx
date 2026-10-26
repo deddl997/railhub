@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import Anmeldung from './Anmeldung'
+import PasswortDialog from './PasswortDialog'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
 import MeineEigenenAntraege from './MeineEigenenAntraege'
@@ -32,6 +33,8 @@ function App() {
   const [neuLadenAuslöser, setNeuLadenAuslöser] = useState(0)
   const [aktiverTab, setAktiverTab] = useState<TabId>('antrag')
   const [logoFehler, setLogoFehler] = useState(false)
+  const [passwortDialogOffen, setPasswortDialogOffen] = useState(false)
+  const [passwortZuruecksetzen, setPasswortZuruecksetzen] = useState(false)
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
   const [startTabGesetzt, setStartTabGesetzt] = useState(false)
@@ -50,8 +53,10 @@ function App() {
       setLadeSession(false)
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, neueSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, neueSession) => {
       setSession(neueSession)
+      // Nutzer kommt ueber den Link aus der E-Mail "Passwort vergessen"
+      if (event === 'PASSWORD_RECOVERY') setPasswortZuruecksetzen(true)
     })
 
     return () => listener.subscription.unsubscribe()
@@ -69,6 +74,10 @@ function App() {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>Lädt...</div>
     )
+  }
+
+  if (session && passwortZuruecksetzen) {
+    return <PasswortDialog modus="zuruecksetzen" onFertig={() => setPasswortZuruecksetzen(false)} />
   }
 
   if (!session) {
@@ -161,6 +170,20 @@ function App() {
             {mitarbeiter?.name ?? ''}
           </span>
           <button
+            onClick={() => setPasswortDialogOffen(true)}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.4)',
+              color: '#ffffff',
+              borderRadius: 8,
+              padding: '6px 12px',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            Passwort ändern
+          </button>
+          <button
             onClick={abmelden}
             style={{
               background: 'transparent',
@@ -176,6 +199,10 @@ function App() {
           </button>
         </div>
       </header>
+
+      {passwortDialogOffen && (
+        <PasswortDialog modus="aendern" onFertig={() => setPasswortDialogOffen(false)} onAbbrechen={() => setPasswortDialogOffen(false)} />
+      )}
 
       <main
         style={{
