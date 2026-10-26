@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase'
 import Anmeldung from './Anmeldung'
 import PasswortDialog from './PasswortDialog'
 import Uebersichten from './Uebersichten'
+import { useLiveAktualisierung } from './liveAktualisierung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
 import MeineAntraege from './MeineAntraege'
 import MeineEigenenAntraege from './MeineEigenenAntraege'
@@ -37,6 +38,7 @@ function App() {
   const [logoFehler, setLogoFehler] = useState(false)
   const [passwortDialogOffen, setPasswortDialogOffen] = useState(false)
   const [passwortZuruecksetzen, setPasswortZuruecksetzen] = useState(false)
+  const [neueVersion, setNeueVersion] = useState(false)
   const [handy, setHandy] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches)
   const [menueOffen, setMenueOffen] = useState(false)
 
@@ -72,6 +74,39 @@ function App() {
     })
 
     return () => listener.subscription.unsubscribe()
+  }, [])
+
+  // Antraege und Urlaubsdaten aktualisieren sich von selbst
+  useLiveAktualisierung(['urlaubsantraege', 'mitarbeiter_jahresdaten', 'mitarbeiter'], neuLaden, !!session)
+
+  // Erkennt, wenn eine neue Version der App veroeffentlicht wurde
+  useEffect(() => {
+    let startVersion: string | null = null
+    async function version(): Promise<string | null> {
+      try {
+        const antwort = await fetch('/?v=' + Date.now(), { cache: 'no-store' })
+        const text = await antwort.text()
+        return text.match(/assets\/index-[^"']+\.js/)?.[0] ?? null
+      } catch {
+        return null
+      }
+    }
+    async function pruefen() {
+      const aktuell = await version()
+      if (!aktuell) return
+      if (startVersion === null) startVersion = aktuell
+      else if (aktuell !== startVersion) setNeueVersion(true)
+    }
+    pruefen()
+    const timer = setInterval(pruefen, 5 * 60 * 1000)
+    const beiSichtbar = () => {
+      if (!document.hidden) pruefen()
+    }
+    document.addEventListener('visibilitychange', beiSichtbar)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', beiSichtbar)
+    }
   }, [])
 
   function neuLaden() {
@@ -273,6 +308,37 @@ function App() {
         )}
       </header>
 
+      {neueVersion && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 12,
+            right: 12,
+            bottom: 12,
+            zIndex: 3000,
+            background: '#14325c',
+            color: '#ffffff',
+            borderRadius: 12,
+            padding: '12px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+            maxWidth: 520,
+            margin: '0 auto',
+          }}
+        >
+          <span style={{ fontSize: 14 }}>Eine neue Version der App ist verfügbar.</span>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ background: '#ffffff', color: '#14325c', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+          >
+            Jetzt aktualisieren
+          </button>
+        </div>
+      )}
+
       {passwortDialogOffen && (
         <PasswortDialog modus="aendern" onFertig={() => setPasswortDialogOffen(false)} onAbbrechen={() => setPasswortDialogOffen(false)} />
       )}
@@ -336,7 +402,7 @@ function App() {
             {istAdmin ? (
               <MeineAntraege neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />
             ) : (
-              <MeineEigenenAntraege />
+              <MeineEigenenAntraege key={neuLadenAuslöser} />
             )}
           </div>
         )}

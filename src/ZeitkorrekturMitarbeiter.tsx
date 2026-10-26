@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
+import { useLiveAktualisierung } from './liveAktualisierung'
 import {
   arbeitsMinuten,
   datumDeutsch,
@@ -140,6 +141,11 @@ export default function ZeitkorrekturMitarbeiter({ mitarbeiterId }: { mitarbeite
     laden()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mitarbeiterId])
+
+  useLiveAktualisierung(['zeitkorrekturen', 'dienstplan_eintraege'], () => {
+    // nicht neu laden, waehrend der Mitarbeiter gerade das Formular ausfuellt
+    if (offen === null) laden()
+  })
 
   function korrekturFuer(datum: string): Zeitkorrektur | undefined {
     return korrekturen.find((k) => k.datum === datum)

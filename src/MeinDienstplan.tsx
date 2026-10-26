@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
 import { pushAktivieren, pushDeaktivieren, pushStatus } from './pushAbo'
 import type { PushStatus } from './pushAbo'
 import ZeitkorrekturMitarbeiter from './ZeitkorrekturMitarbeiter'
+import { useLiveAktualisierung } from './liveAktualisierung'
 
 interface Vorlage {
   id: string
@@ -125,6 +126,8 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [wunschDatum, setWunschDatum] = useState('')
   const [wunschNotiz, setWunschNotiz] = useState('')
   const [wunschFehler, setWunschFehler] = useState<string | null>(null)
+  const [neuLadenZaehler, setNeuLadenZaehler] = useState(0)
+  const stillNeuLaden = useRef(false)
 
   const heute = new Date()
   heute.setHours(0, 0, 0, 0)
@@ -133,7 +136,9 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
   useEffect(() => {
     async function laden() {
-      setLadeVorgang(true)
+      // beim automatischen Neuladen keine Ladeanzeige, damit nichts flackert
+      if (!stillNeuLaden.current) setLadeVorgang(true)
+      stillNeuLaden.current = false
       setFehler(null)
       const vonIso = datumZuISO(ersteWoche)
       const bisIso = datumZuISO(addTage(ersteWoche, anzahlWochen * 7 - 1))
@@ -165,7 +170,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     }
     laden()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mitarbeiterId, anzahlWochen])
+  }, [mitarbeiterId, anzahlWochen, neuLadenZaehler])
 
   async function extraLaden() {
     const [gel, wun] = await Promise.all([
@@ -181,6 +186,16 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     pushStatus().then(setPushZustand)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mitarbeiterId])
+
+  // Aenderungen vom Planer erscheinen von selbst
+  useLiveAktualisierung(
+    ['dienstplan_eintraege', 'dienstplan_freigaben', 'schichtvorlagen', 'wunschfrei', 'dienstplan_gelesen', 'urlaubsantraege'],
+    () => {
+      stillNeuLaden.current = true
+      setNeuLadenZaehler((z) => z + 1)
+      extraLaden()
+    }
+  )
 
   async function gelesenBestaetigen(wocheIso: string) {
     const { error } = await supabase

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { pushSenden } from './pushAbo'
+import { useLiveAktualisierung } from './liveAktualisierung'
 import { datumDeutsch, differenzText, mehrzeitMinuten, stundenText, arbeitsMinuten, zeitKurz } from './zeitkorrekturUtils'
 import type { Zeitkorrektur } from './zeitkorrekturUtils'
 
@@ -64,6 +65,8 @@ export default function ZeitkorrekturPlaner() {
   useEffect(() => {
     laden()
   }, [])
+
+  useLiveAktualisierung(['zeitkorrekturen'], laden)
 
   const offene = liste.filter((k) => k.status === 'offen')
   const angezeigt = nurOffene ? offene : liste.filter((k) => k.status !== 'offen')

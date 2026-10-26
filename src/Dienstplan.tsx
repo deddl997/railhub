@@ -5,6 +5,7 @@ import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { pushSenden } from './pushAbo'
 import BestellungImport from './BestellungImport'
 import ZeitkorrekturPlaner from './ZeitkorrekturPlaner'
+import { useLiveAktualisierung } from './liveAktualisierung'
 
 interface Mitarbeiter {
   id: string
@@ -335,8 +336,8 @@ export default function Dienstplan() {
   )
   const ladeSchluessel = ansicht === 'monat' ? `m-${datumZuISO(monatsErster)}` : `w-${wochenStartIso}`
 
-  async function laden() {
-    setLadeVorgang(true)
+  async function laden(still = false) {
+    if (!still) setLadeVorgang(true)
     // ein Tag davor wird mitgeladen, damit Nachtschichten vom Vortag sichtbar sind
     const bereichStart = ansicht === 'monat' ? monatsErster : wochenStart
     const bereichEnde = ansicht === 'monat' ? monatsTage[monatsTage.length - 1] : tage[6]
@@ -413,6 +414,23 @@ export default function Dienstplan() {
   // Beim Ziehen einer Schicht automatisch scrollen: am oberen/unteren Fensterrand
   // und zusaetzlich mit dem Mausrad (falls der Browser Mausrad-Ereignisse beim Ziehen liefert)
   const ziehtGerade = gezogeneVorlage !== null || gezogenerEintrag !== null
+
+  // Aenderungen anderer Personen erscheinen von selbst (nicht waehrend man gerade eine Schicht zieht)
+  useLiveAktualisierung(
+    [
+      'dienstplan_eintraege',
+      'offene_spotschichten',
+      'wunschfrei',
+      'dienstplan_freigaben',
+      'dienstplan_gelesen',
+      'urlaubsantraege',
+      'schichtvorlagen',
+      'schicht_soll',
+    ],
+    () => {
+      if (!ziehtGerade) laden(true)
+    }
+  )
   useEffect(() => {
     if (!ziehtGerade) return
     let letzteY: number | null = null

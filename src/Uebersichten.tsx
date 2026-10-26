@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
 import { feiertageBayern } from './feiertage'
 import { KATEGORIEN } from './qualifikationen'
+import { useLiveAktualisierung } from './liveAktualisierung'
 import { arbeitsMinuten, datumDeutsch, stundenText, zeitKurz } from './zeitkorrekturUtils'
 
 interface Person {
@@ -123,10 +124,18 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
   const [antraege, setAntraege] = useState<Antrag[]>([])
   const [jahresdaten, setJahresdaten] = useState<Jahresdaten[]>([])
   const [aufgeklappt, setAufgeklappt] = useState<string | null>(null)
+  const [neuLadenZaehler, setNeuLadenZaehler] = useState(0)
+  const stillNeuLaden = useRef(false)
+
+  useLiveAktualisierung(['dienstplan_eintraege', 'urlaubsantraege', 'zeitkorrekturen', 'mitarbeiter_jahresdaten'], () => {
+    stillNeuLaden.current = true
+    setNeuLadenZaehler((z) => z + 1)
+  })
 
   useEffect(() => {
     async function laden() {
-      setLaedt(true)
+      if (!stillNeuLaden.current) setLaedt(true)
+      stillNeuLaden.current = false
       setFehler(null)
       const von = datumZuISO(new Date(jahr, monat, 1))
       const bis = monatsEnde(jahr, monat)
@@ -245,7 +254,7 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
       setLaedt(false)
     }
     laden()
-  }, [jahr, monat, nurEigene, eigeneId])
+  }, [jahr, monat, nurEigene, eigeneId, neuLadenZaehler])
 
   const sichtbar = personen
     .filter((p) => kategorie === 'alle' || p.kategorie === kategorie)
