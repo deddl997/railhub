@@ -79,3 +79,108 @@ export function schichtAusAuftrag(a: AuftragKern): SchichtDaten | null {
     info: (a.mitarbeiter_info && a.mitarbeiter_info.trim()) || standardInfo,
   }
 }
+
+// ============================================================
+// Fahrten innerhalb einer Schicht (Zugfahrt, Lokzufuehrung, ...)
+// ============================================================
+
+export const FAHRT_ARTEN = ['Zugfahrt', 'Lokzuführung', 'Lokrückführung', 'Rangieren', 'Wartezeit', 'Sonstiges']
+
+export interface Fahrtzeile {
+  art: string
+  zug: string
+  von: string
+  von_zeit: string
+  nach: string
+  nach_zeit: string
+  lok: string
+}
+
+export function leereFahrt(art = 'Zugfahrt'): Fahrtzeile {
+  return { art, zug: '', von: '', von_zeit: '', nach: '', nach_zeit: '', lok: '' }
+}
+
+export function fahrtenAusAuftrag(a: AuftragKern): Fahrtzeile[] {
+  return [
+    {
+      art: 'Zugfahrt',
+      zug: [a.referenz, a.zug_nr ? `(${a.zug_nr})` : ''].filter(Boolean).join(' '),
+      von: a.abfahrt_ort ?? '',
+      von_zeit: a.abfahrt_soll ? a.abfahrt_soll.slice(0, 5) : '',
+      nach: a.ankunft_ort ?? '',
+      nach_zeit: a.ankunft_soll ? a.ankunft_soll.slice(0, 5) : '',
+      lok: a.lok ?? '',
+    },
+  ]
+}
+
+export function fahrtenPruefen(roh: unknown): Fahrtzeile[] {
+  if (!Array.isArray(roh)) return []
+  return roh.map((f) => ({ ...leereFahrt(), ...(f as Partial<Fahrtzeile>) }))
+}
+
+function zeitInMinuten(z: string): number {
+  const [h, m] = z.split(':').map(Number)
+  return h * 60 + m
+}
+
+// Text fuer das Info-Feld der Schicht (wird dem Lokfuehrer angezeigt)
+export function infoAusFahrten(fahrten: Fahrtzeile[], zusatz: string | null): string {
+  const zeilen = fahrten
+    .filter((f) => f.von || f.nach || f.von_zeit || f.nach_zeit)
+    .map((f, i) => {
+      const teile = [
+        f.von_zeit && f.von ? `${f.von} ${f.von_zeit}` : f.von || f.von_zeit,
+        f.nach_zeit && f.nach ? `${f.nach} ${f.nach_zeit}` : f.nach || f.nach_zeit,
+      ].filter(Boolean)
+      const kopf = f.zug ? `${f.art} ${f.zug}` : f.art
+      return `${i + 1}. ${kopf}: ${teile.join(' → ')}${f.lok ? ` (Lok ${f.lok})` : ''}`
+    })
+  const text = zeilen.join('\n')
+  return [text, zusatz?.trim() ?? ''].filter(Boolean).join('\n\n')
+}
+
+export interface ZeitenErgebnis {
+  datum: string
+  beginn: string
+  ende: string
+  brutto: number
+  pause: number
+}
+
+// Dienstbeginn = erste Zeit der Fahrten minus Vorlauf, Dienstende = letzte Zeit (mindestens 8 Std.)
+export function zeitenAusFahrten(abfahrtDatum: string, abfahrtSoll: string | null, fahrten: Fahrtzeile[]): ZeitenErgebnis | null {
+  const zeiten: string[] = []
+  for (const f of fahrten) {
+    if (f.von_zeit) zeiten.push(f.von_zeit)
+    if (f.nach_zeit) zeiten.push(f.nach_zeit)
+  }
+  if (zeiten.length === 0) return null
+  const [j, m, t] = abfahrtDatum.split('-').map(Number)
+  const tag0 = Date.UTC(j, m - 1, t) / 60000
+  let versatz = 0
+  // liegt die erste Zeit viel spaeter als die Abfahrt des Auftrags, war sie am Vortag (z. B. Lokzufuehrung abends)
+  if (abfahrtSoll && zeitInMinuten(zeiten[0]) - zeitInMinuten(abfahrtSoll.slice(0, 5)) > 720) versatz = -1440
+  const absolut: number[] = []
+  let letzte = -Infinity
+  for (const z of zeiten) {
+    let a = tag0 + versatz + zeitInMinuten(z)
+    while (a < letzte) a += 1440
+    absolut.push(a)
+    letzte = a
+  }
+  const beginnAbs = absolut[0] - VORLAUF_MINUTEN
+  let brutto = absolut[absolut.length - 1] - beginnAbs
+  if (brutto < MINDEST_DAUER_MINUTEN) brutto = MINDEST_DAUER_MINUTEN
+  const d = new Date(beginnAbs * 60000)
+  const rest = ((beginnAbs % 1440) + 1440) % 1440
+  const alsZeitText = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
+  const endeRest = (((beginnAbs + brutto) % 1440) + 1440) % 1440
+  return {
+    datum: datumZuISO(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())),
+    beginn: alsZeitText(rest),
+    ende: alsZeitText(endeRest),
+    brutto,
+    pause: pauseNachArbZG(brutto),
+  }
+}

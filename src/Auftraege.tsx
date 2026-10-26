@@ -4,6 +4,7 @@ import { datumZuISO } from './datumUtils'
 import { useLiveAktualisierung } from './liveAktualisierung'
 import { schichtAusAuftrag } from './auftragSchicht'
 import BestellungImport from './BestellungImport'
+import SchichtDialog from './SchichtDialog'
 
 interface Auftrag {
   id: string
@@ -33,6 +34,7 @@ interface Auftrag {
   preis: number | null
   rechnungsnr: string | null
   info_abrechnung: string | null
+  fahrten: unknown
 }
 
 interface Formular {
@@ -75,6 +77,7 @@ interface Historie {
 interface Besetzung {
   namen: string[]
   offen: boolean
+  spotId: string | null
 }
 
 const STATUS: Record<string, { text: string; farbe: string; hell: string }> = {
@@ -286,6 +289,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
   const [speichert, setSpeichert] = useState(false)
   const [meldung, setMeldung] = useState<string | null>(null)
   const [importOffen, setImportOffen] = useState(false)
+  const [schichtDialog, setSchichtDialog] = useState<{ auftrag: Auftrag; spotId: string | null } | null>(null)
   const still = useRef(false)
   const [zaehler, setZaehler] = useState(0)
 
@@ -317,19 +321,22 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       const liste = (antwort.data ?? []) as Auftrag[]
       const ids = liste.map((a) => a.id)
       const neueBesetzung: Record<string, Besetzung> = {}
-      for (const id of ids) neueBesetzung[id] = { namen: [], offen: false }
+      for (const id of ids) neueBesetzung[id] = { namen: [], offen: false, spotId: null }
       if (ids.length > 0) {
         const [eintraege, offene, personen] = await Promise.all([
           supabase.from('dienstplan_eintraege').select('mitarbeiter_id, auftrag_id').eq('ist_spotschicht', true).in('auftrag_id', ids),
-          supabase.from('offene_spotschichten').select('auftrag_id').in('auftrag_id', ids),
+          supabase.from('offene_spotschichten').select('id, auftrag_id').in('auftrag_id', ids),
           supabase.from('mitarbeiter').select('id, name'),
         ])
         const namen = new Map<string, string>((personen.data ?? []).map((p: { id: string; name: string }) => [p.id, p.name]))
         for (const e of (eintraege.data ?? []) as { mitarbeiter_id: string; auftrag_id: string }[]) {
           neueBesetzung[e.auftrag_id]?.namen.push(namen.get(e.mitarbeiter_id) ?? 'Unbekannt')
         }
-        for (const o of (offene.data ?? []) as { auftrag_id: string }[]) {
-          if (neueBesetzung[o.auftrag_id]) neueBesetzung[o.auftrag_id].offen = true
+        for (const o of (offene.data ?? []) as { id: string; auftrag_id: string }[]) {
+          if (neueBesetzung[o.auftrag_id]) {
+            neueBesetzung[o.auftrag_id].offen = true
+            neueBesetzung[o.auftrag_id].spotId = neueBesetzung[o.auftrag_id].spotId ?? o.id
+          }
         }
       }
       const kunden = await supabase.from('auftraege').select('kunde').not('kunde', 'is', null).limit(500)
@@ -435,14 +442,9 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
     return error ? error.message : null
   }
 
-  async function einzelneSchichtAnlegen(a: Auftrag) {
+  function schichtDialogOeffnen(a: Auftrag, spotId: string | null = null) {
     setFehler(null)
-    const f = await schichtAnlegen(a)
-    if (f) setFehler('Schicht konnte nicht angelegt werden: ' + f)
-    else {
-      still.current = true
-      setZaehler((z) => z + 1)
-    }
+    setSchichtDialog({ auftrag: a, spotId })
   }
 
   async function alleSchichtenAnlegen() {
@@ -690,9 +692,16 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                         {b.namen.length > 0 ? (
                           <span style={{ fontWeight: 600, color: '#15803d' }}>{b.namen.join(', ')}</span>
                         ) : b.offen ? (
-                          <span style={{ fontWeight: 600, color: '#b45309' }}>Schicht offen</span>
-                        ) : a.abfahrt_soll && a.status !== 'storniert' && darfDisponieren ? (
-                          <button onClick={() => einzelneSchichtAnlegen(a)} style={{ ...knopf, padding: '4px 8px', fontSize: 12 }}>
+                          <span>
+                            <span style={{ fontWeight: 600, color: '#b45309' }}>Schicht offen</span>
+                            {darfDisponieren && (
+                              <button onClick={() => schichtDialogOeffnen(a, b.spotId)} style={{ ...knopf, padding: '2px 7px', fontSize: 11, marginLeft: 6 }}>
+                                ändern
+                              </button>
+                            )}
+                          </span>
+                        ) : a.status !== 'storniert' && darfDisponieren ? (
+                          <button onClick={() => schichtDialogOeffnen(a)} style={{ ...knopf, padding: '4px 8px', fontSize: 12 }}>
                             Schicht anlegen
                           </button>
                         ) : (
@@ -711,6 +720,19 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
             </tbody>
           </table>
         </div>
+      )}
+
+      {schichtDialog && (
+        <SchichtDialog
+          auftrag={schichtDialog.auftrag}
+          spotId={schichtDialog.spotId}
+          onSchliessen={() => setSchichtDialog(null)}
+          onFertig={() => {
+            setSchichtDialog(null)
+            still.current = true
+            setZaehler((z) => z + 1)
+          }}
+        />
       )}
 
       {importOffen && (
@@ -786,15 +808,15 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               <button onClick={() => setBearbeiteId(null)} style={knopf}>
                 Abbrechen
               </button>
-              {aktuellerAuftrag && darfDisponieren && aktuellerAuftrag.abfahrt_soll && !(besetzung[aktuellerAuftrag.id]?.namen.length || besetzung[aktuellerAuftrag.id]?.offen) && (
+              {aktuellerAuftrag && darfDisponieren && (
                 <button
-                  onClick={async () => {
-                    await einzelneSchichtAnlegen(aktuellerAuftrag)
+                  onClick={() => {
                     setBearbeiteId(null)
+                    schichtDialogOeffnen(aktuellerAuftrag)
                   }}
                   style={knopf}
                 >
-                  Schicht im Dienstplan anlegen
+                  {besetzung[aktuellerAuftrag.id]?.namen.length || besetzung[aktuellerAuftrag.id]?.offen ? 'Weitere Schicht anlegen (z. B. Ablöser)' : 'Schicht im Dienstplan anlegen'}
                 </button>
               )}
               <div style={{ flex: 1 }} />
