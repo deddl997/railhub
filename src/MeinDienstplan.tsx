@@ -57,36 +57,6 @@ interface Wunsch {
   status: string
 }
 
-interface Tausch {
-  id: string
-  datum: string
-  von_mitarbeiter_id: string
-  von_name: string
-  von_schicht: string | null
-  mit_mitarbeiter_id: string
-  mit_name: string
-  mit_schicht: string | null
-  nachricht: string | null
-  status: string
-  created_at: string
-}
-
-interface Kandidat {
-  mitarbeiter_id: string
-  name: string
-  schicht: string
-  beginn: string
-  ende: string
-}
-
-const TAUSCH_STATUS: Record<string, { text: string; farbe: string }> = {
-  angefragt: { text: 'Wartet auf Zustimmung des Kollegen', farbe: '#b45309' },
-  zugestimmt: { text: 'Kollege hat zugestimmt, der Planer entscheidet noch', farbe: '#1d4ed8' },
-  genehmigt: { text: 'Genehmigt, der Dienstplan ist angepasst', farbe: '#15803d' },
-  abgelehnt: { text: 'Abgelehnt', farbe: '#b91c1c' },
-  zurueckgezogen: { text: 'Zurückgezogen', farbe: '#64748b' },
-}
-
 const WOCHENTAGE = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
 
 function addTage(datum: Date, anzahl: number): Date {
@@ -147,22 +117,14 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [freigegeben, setFreigegeben] = useState<string[]>([])
   const [offenerTag, setOffenerTag] = useState<string | null>(null)
   const [urlaube, setUrlaube] = useState<{ erster_tag: string; letzter_tag: string }[]>([])
-  const [ansicht, setAnsicht] = useState<'plan' | 'wunsch' | 'tausch' | 'zeit'>('plan')
+  const [ansicht, setAnsicht] = useState<'plan' | 'wunsch' | 'zeit'>('plan')
   const [gelesen, setGelesen] = useState<string[]>([])
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
-  const [tauschListe, setTauschListe] = useState<Tausch[]>([])
-  const [meinName, setMeinName] = useState('')
   const [pushZustand, setPushZustand] = useState<PushStatus>('aus')
   const [pushMeldung, setPushMeldung] = useState<string | null>(null)
   const [wunschDatum, setWunschDatum] = useState('')
   const [wunschNotiz, setWunschNotiz] = useState('')
   const [wunschFehler, setWunschFehler] = useState<string | null>(null)
-  const [tauschOffen, setTauschOffen] = useState(false)
-  const [kandidaten, setKandidaten] = useState<Kandidat[]>([])
-  const [kandidatenLaden, setKandidatenLaden] = useState(false)
-  const [gewaehlterKandidat, setGewaehlterKandidat] = useState('')
-  const [tauschNachricht, setTauschNachricht] = useState('')
-  const [tauschFehler, setTauschFehler] = useState<string | null>(null)
 
   const heute = new Date()
   heute.setHours(0, 0, 0, 0)
@@ -206,16 +168,12 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   }, [mitarbeiterId, anzahlWochen])
 
   async function extraLaden() {
-    const [gel, wun, tau, ich] = await Promise.all([
+    const [gel, wun] = await Promise.all([
       supabase.from('dienstplan_gelesen').select('woche_start').eq('mitarbeiter_id', mitarbeiterId),
       supabase.from('wunschfrei').select('id, datum, notiz, status').gte('datum', heuteIso).order('datum'),
-      supabase.from('tauschwuensche').select('*').order('created_at', { ascending: false }).limit(40),
-      supabase.from('mitarbeiter').select('name').eq('id', mitarbeiterId).maybeSingle(),
     ])
     setGelesen((gel.data ?? []).map((g) => String(g.woche_start)))
     setWuensche((wun.data ?? []) as Wunsch[])
-    setTauschListe((tau.data ?? []) as Tausch[])
-    setMeinName((ich.data as { name: string } | null)?.name ?? '')
   }
 
   useEffect(() => {
@@ -265,66 +223,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     await extraLaden()
   }
 
-  async function tauschStarten(datumIso: string) {
-    setTauschOffen(true)
-    setTauschFehler(null)
-    setGewaehlterKandidat('')
-    setTauschNachricht('')
-    setKandidaten([])
-    setKandidatenLaden(true)
-    const { data, error } = await supabase.rpc('tausch_kandidaten', { p_datum: datumIso })
-    if (error) setTauschFehler('Kollegen konnten nicht geladen werden: ' + error.message)
-    setKandidaten((data ?? []) as Kandidat[])
-    setKandidatenLaden(false)
-  }
-
-  async function tauschAnfragen(datumIso: string, eigeneSchicht: string) {
-    setTauschFehler(null)
-    const ziel = kandidaten.find((k) => k.mitarbeiter_id === gewaehlterKandidat)
-    if (!ziel) {
-      setTauschFehler('Bitte einen Kollegen wählen.')
-      return
-    }
-    if (tauschListe.some((t) => t.von_mitarbeiter_id === mitarbeiterId && t.datum === datumIso && (t.status === 'angefragt' || t.status === 'zugestimmt'))) {
-      setTauschFehler('Für diesen Tag läuft schon eine Tauschanfrage.')
-      return
-    }
-    const { error } = await supabase.from('tauschwuensche').insert({
-      datum: datumIso,
-      von_mitarbeiter_id: mitarbeiterId,
-      von_name: meinName || 'Mitarbeiter',
-      von_schicht: eigeneSchicht,
-      mit_mitarbeiter_id: ziel.mitarbeiter_id,
-      mit_name: ziel.name,
-      mit_schicht: `${ziel.schicht} ${kurz(ziel.beginn)}–${kurz(ziel.ende)}`,
-      nachricht: tauschNachricht.trim() || null,
-      status: 'angefragt',
-    })
-    if (error) {
-      setTauschFehler('Anfrage fehlgeschlagen: ' + error.message)
-      return
-    }
-    setTauschOffen(false)
-    setOffenerTag(null)
-    setAnsicht('tausch')
-    await extraLaden()
-  }
-
-  async function tauschAntworten(id: string, zustimmen: boolean) {
-    const { error } = await supabase
-      .from('tauschwuensche')
-      .update({ status: zustimmen ? 'zugestimmt' : 'abgelehnt' })
-      .eq('id', id)
-    if (error) setFehler('Antwort fehlgeschlagen: ' + error.message)
-    await extraLaden()
-  }
-
-  async function tauschZurueckziehen(id: string) {
-    const { error } = await supabase.from('tauschwuensche').update({ status: 'zurueckgezogen' }).eq('id', id)
-    if (error) setFehler('Zurückziehen fehlgeschlagen: ' + error.message)
-    await extraLaden()
-  }
-
   async function pushUmschalten() {
     setPushMeldung(null)
     if (pushZustand === 'aktiv') {
@@ -338,8 +236,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
   function tagSchliessen() {
     setOffenerTag(null)
-    setTauschOffen(false)
-    setTauschFehler(null)
   }
 
   function dienstFuer(eintrag: Eintrag | undefined): Dienst | null {
@@ -479,9 +375,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     boxSizing: 'border-box',
   }
 
-  const eingehendOffen = tauschListe.filter((t) => t.mit_mitarbeiter_id === mitarbeiterId && t.status === 'angefragt')
-  const meineAnfragen = tauschListe.filter((t) => t.von_mitarbeiter_id === mitarbeiterId)
-  const eingehendVerlauf = tauschListe.filter((t) => t.mit_mitarbeiter_id === mitarbeiterId && t.status !== 'angefragt')
   const datumLang = (iso: string) => {
     const d = new Date(iso + 'T00:00:00')
     return `${WOCHENTAGE[d.getDay()].slice(0, 2)}, ${datumKurz(d)}${d.getFullYear()}`
@@ -493,7 +386,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         [
           ['plan', 'Dienstplan'],
           ['wunsch', 'Wunschfrei'],
-          ['tausch', eingehendOffen.length > 0 ? `Tausch (${eingehendOffen.length})` : 'Tausch'],
           ['zeit', 'Zeiten'],
         ] as const
       ).map(([id, label]) => (
@@ -621,75 +513,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     </div>
   )
 
-  const tauschKarte = (t: Tausch, ich: 'von' | 'mit') => {
-    const status = TAUSCH_STATUS[t.status] ?? { text: t.status, farbe: '#64748b' }
-    return (
-      <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 10, background: '#ffffff' }}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>{datumLang(t.datum)}</div>
-        <div style={{ fontSize: 13, marginTop: 4 }}>
-          {ich === 'von' ? (
-            <>
-              Du gibst <b>{t.von_schicht}</b> an <b>{t.mit_name}</b> und bekommst <b>{t.mit_schicht}</b>.
-            </>
-          ) : (
-            <>
-              <b>{t.von_name}</b> gibt <b>{t.von_schicht}</b> an dich und bekommt deine Schicht <b>{t.mit_schicht}</b>.
-            </>
-          )}
-        </div>
-        {t.nachricht && (
-          <div style={{ fontSize: 12, color: '#475569', background: '#f1f5f9', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
-            „{t.nachricht}“
-          </div>
-        )}
-        <div style={{ fontSize: 12, fontWeight: 600, color: status.farbe, marginTop: 6 }}>{status.text}</div>
-        {ich === 'mit' && t.status === 'angefragt' && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button onClick={() => tauschAntworten(t.id, true)} style={knopfVoll}>
-              Zustimmen
-            </button>
-            <button onClick={() => tauschAntworten(t.id, false)} style={knopfLeise}>
-              Ablehnen
-            </button>
-          </div>
-        )}
-        {ich === 'von' && (t.status === 'angefragt' || t.status === 'zugestimmt') && (
-          <div style={{ marginTop: 10 }}>
-            <button onClick={() => tauschZurueckziehen(t.id)} style={knopfLeise}>
-              Anfrage zurückziehen
-            </button>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const tauschTab = (
-    <div>
-      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>
-        So tauschst du: Öffne im Dienstplan einen Dienst und tippe auf „Tausch anfragen“. Dein Kollege muss zustimmen, danach entscheidet der Planer.
-      </div>
-      <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 8 }}>Anfragen an dich</div>
-      {eingehendOffen.length === 0 ? (
-        <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 16 }}>Keine offenen Anfragen.</div>
-      ) : (
-        <div style={{ marginBottom: 6 }}>{eingehendOffen.map((t) => tauschKarte(t, 'mit'))}</div>
-      )}
-      <div style={{ fontWeight: 700, color: 'var(--navy)', margin: '16px 0 8px' }}>Meine Anfragen</div>
-      {meineAnfragen.length === 0 ? (
-        <div style={{ color: '#94a3b8', fontSize: 13 }}>Du hast noch nichts angefragt.</div>
-      ) : (
-        meineAnfragen.map((t) => tauschKarte(t, 'von'))
-      )}
-      {eingehendVerlauf.length > 0 && (
-        <>
-          <div style={{ fontWeight: 700, color: 'var(--navy)', margin: '16px 0 8px' }}>Verlauf: Anfragen an dich</div>
-          {eingehendVerlauf.map((t) => tauschKarte(t, 'mit'))}
-        </>
-      )}
-    </div>
-  )
-
   return (
     <div>
       {fehler && (
@@ -706,7 +529,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         </div>
       )}
       {ansicht === 'wunsch' && wunschTab}
-      {ansicht === 'tausch' && tauschTab}
       {ansicht === 'zeit' && <ZeitkorrekturMitarbeiter mitarbeiterId={mitarbeiterId} />}
       {ansicht === 'plan' && (
         <>
@@ -894,8 +716,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         const urlaub = istUrlaub(offenerTag)
         const dienst = urlaub ? null : dienstFuer(eintrag)
         const kachel: React.CSSProperties = { background: '#f1f5f9', borderRadius: 8, padding: '8px 12px' }
-        const kannTauschen =
-          !!dienst && offenerTag >= heuteIso && freigegeben.includes(datumZuISO(montagDerWoche(tag)))
         return (
           <div
             onClick={tagSchliessen}
@@ -985,58 +805,6 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                     <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine zusätzliche Info vom Planer.</div>
                   )}
 
-                  {kannTauschen && dienst && (
-                    <div style={{ borderTop: '1px solid #eef2f8', marginTop: 16, paddingTop: 14 }}>
-                      {!tauschOffen ? (
-                        <button onClick={() => tauschStarten(offenerTag)} style={{ ...knopfLeise, width: '100%' }}>
-                          Tausch anfragen
-                        </button>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div style={{ fontWeight: 700, color: 'var(--navy)' }}>Mit wem möchtest du tauschen?</div>
-                          {kandidatenLaden ? (
-                            <div style={{ fontSize: 13, color: '#64748b' }}>Lade Kollegen ...</div>
-                          ) : kandidaten.length === 0 ? (
-                            <div style={{ fontSize: 13, color: '#64748b' }}>
-                              An diesem Tag hat kein Kollege im gleichen Bereich einen veröffentlichten Dienst.
-                            </div>
-                          ) : (
-                            <>
-                              <select
-                                value={gewaehlterKandidat}
-                                onChange={(e) => setGewaehlterKandidat(e.target.value)}
-                                style={eingabe}
-                              >
-                                <option value="">Kollege wählen ...</option>
-                                {kandidaten.map((k) => (
-                                  <option key={k.mitarbeiter_id} value={k.mitarbeiter_id}>
-                                    {k.name} · {k.schicht} {kurz(k.beginn)}–{kurz(k.ende)}
-                                  </option>
-                                ))}
-                              </select>
-                              <textarea
-                                value={tauschNachricht}
-                                onChange={(e) => setTauschNachricht(e.target.value)}
-                                rows={2}
-                                placeholder="Nachricht an den Kollegen (optional)"
-                                style={{ ...eingabe, resize: 'vertical', fontFamily: 'inherit' }}
-                              />
-                              <button
-                                onClick={() => tauschAnfragen(offenerTag, `${dienst.name} ${kurz(dienst.beginn)}–${kurz(dienst.ende)}`)}
-                                style={knopfVoll}
-                              >
-                                Anfrage senden
-                              </button>
-                            </>
-                          )}
-                          {tauschFehler && <div style={{ color: '#b91c1c', fontSize: 13 }}>{tauschFehler}</div>}
-                          <button onClick={() => setTauschOffen(false)} style={{ ...knopfLeise, borderColor: '#cbd5e1', color: '#64748b' }}>
-                            Abbrechen
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               ) : urlaub ? (
                 <div style={{ fontSize: 14, color: '#475569' }}>Dein Urlaub ist genehmigt.</div>

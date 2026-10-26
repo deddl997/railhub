@@ -55,19 +55,6 @@ interface Wunsch {
   notiz: string | null
 }
 
-interface Tausch {
-  id: string
-  datum: string
-  von_mitarbeiter_id: string
-  von_name: string
-  von_schicht: string | null
-  mit_mitarbeiter_id: string
-  mit_name: string
-  mit_schicht: string | null
-  nachricht: string | null
-  status: string
-}
-
 interface Warnung {
   art: 'ueberschneidung' | 'ruhezeit' | 'urlaub' | 'lok'
   kurz: string
@@ -293,8 +280,6 @@ export default function Dienstplan() {
   const [gelesenIds, setGelesenIds] = useState<string[]>([])
   const [gelesenOffen, setGelesenOffen] = useState(false)
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
-  const [tauschListe, setTauschListe] = useState<Tausch[]>([])
-  const [tauschPanelOffen, setTauschPanelOffen] = useState(false)
   const [wunschPanelOffen, setWunschPanelOffen] = useState(false)
   const [bestellungOffen, setBestellungOffen] = useState(false)
   const [pushHinweis, setPushHinweis] = useState<string | null>(null)
@@ -369,7 +354,6 @@ export default function Dienstplan() {
       { data: sollData },
       { data: gelesenData },
       { data: wunschData },
-      { data: tauschData },
     ] = await Promise.all([
         supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen').order('name'),
         supabase.from('schichtvorlagen').select('*').eq('aktiv', true).order('name'),
@@ -398,11 +382,6 @@ export default function Dienstplan() {
           .eq('status', 'offen')
           .gte('datum', datumZuISO(heuteOhneUhrzeit()))
           .order('datum'),
-        supabase
-          .from('tauschwuensche')
-          .select('*')
-          .in('status', ['angefragt', 'zugestimmt'])
-          .order('created_at'),
     ])
 
     const sortierteMitarbeiter = [...(mitarbeiterData ?? [])].sort((a, b) => {
@@ -422,7 +401,6 @@ export default function Dienstplan() {
     setSollZeilen((sollData ?? []) as SollZeile[])
     setGelesenIds((gelesenData ?? []).map((g) => String(g.mitarbeiter_id)))
     setWuensche((wunschData ?? []) as Wunsch[])
-    setTauschListe((tauschData ?? []) as Tausch[])
     setLadeVorgang(false)
     setErstesLaden(false)
   }
@@ -1178,47 +1156,6 @@ export default function Dienstplan() {
     return iso.split('-').reverse().join('.')
   }
 
-  async function tauschGenehmigen(t: Tausch) {
-    const { data, error } = await supabase
-      .from('dienstplan_eintraege')
-      .select('*')
-      .eq('datum', t.datum)
-      .in('mitarbeiter_id', [t.von_mitarbeiter_id, t.mit_mitarbeiter_id])
-    if (error) {
-      window.alert('Laden fehlgeschlagen: ' + error.message)
-      return
-    }
-    const eA = (data ?? []).find((e) => e.mitarbeiter_id === t.von_mitarbeiter_id) as DienstplanEintrag | undefined
-    const eB = (data ?? []).find((e) => e.mitarbeiter_id === t.mit_mitarbeiter_id) as DienstplanEintrag | undefined
-    if (!eA || !eB) {
-      window.alert('Der Tausch ist nicht mehr möglich: Einer von beiden hat an diesem Tag keinen Eintrag mehr.')
-      return
-    }
-    const bestaetigt = window.confirm(
-      `Am ${datumDeutsch(t.datum)} tauschen:\n${t.von_name} (${t.von_schicht}) ⇄ ${t.mit_name} (${t.mit_schicht})?`
-    )
-    if (!bestaetigt) return
-    await supabase
-      .from('dienstplan_eintraege')
-      .delete()
-      .eq('datum', t.datum)
-      .in('mitarbeiter_id', [t.von_mitarbeiter_id, t.mit_mitarbeiter_id])
-    await supabase
-      .from('dienstplan_eintraege')
-      .upsert(eintragPayload(eA, t.mit_mitarbeiter_id, t.datum), { onConflict: 'mitarbeiter_id,datum' })
-    await supabase
-      .from('dienstplan_eintraege')
-      .upsert(eintragPayload(eB, t.von_mitarbeiter_id, t.datum), { onConflict: 'mitarbeiter_id,datum' })
-    await supabase.from('tauschwuensche').update({ status: 'genehmigt' }).eq('id', t.id)
-    const ergebnis = await pushSenden(
-      'Tausch genehmigt',
-      `Dein Dienst-Tausch am ${datumDeutsch(t.datum)} wurde genehmigt. Bitte Dienstplan prüfen.`,
-      [t.von_mitarbeiter_id, t.mit_mitarbeiter_id]
-    )
-    setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Tausch genehmigt. Push nicht gesendet: ' + ergebnis.meldung)
-    await laden()
-  }
-
   async function wunschGenehmigen(w: Wunsch) {
     const person = mitarbeiterListe.find((m) => m.id === w.mitarbeiter_id)
     const { data: bestehendListe } = await supabase
@@ -1269,19 +1206,6 @@ export default function Dienstplan() {
     if (!ok) return
     await supabase.from('wunschfrei').update({ status: 'abgelehnt' }).eq('id', w.id)
     const ergebnis = await pushSenden('Wunschfrei abgelehnt', `Dein Wunschfrei am ${datumDeutsch(w.datum)} konnte leider nicht genehmigt werden.`, [w.mitarbeiter_id])
-    setPushHinweis(ergebnis.ok ? ergebnis.meldung : null)
-    await laden()
-  }
-
-  async function tauschAblehnen(t: Tausch) {
-    const bestaetigt = window.confirm(`Tausch am ${datumDeutsch(t.datum)} zwischen ${t.von_name} und ${t.mit_name} ablehnen?`)
-    if (!bestaetigt) return
-    await supabase.from('tauschwuensche').update({ status: 'abgelehnt' }).eq('id', t.id)
-    const ergebnis = await pushSenden(
-      'Tausch abgelehnt',
-      `Dein Dienst-Tausch am ${datumDeutsch(t.datum)} wurde vom Planer abgelehnt.`,
-      [t.von_mitarbeiter_id, t.mit_mitarbeiter_id]
-    )
     setPushHinweis(ergebnis.ok ? ergebnis.meldung : null)
     await laden()
   }
@@ -1493,17 +1417,6 @@ export default function Dienstplan() {
           }}
         >
           Wunschfrei{wuensche.length > 0 ? ` (${wuensche.length})` : ''}
-        </button>
-
-        <button
-          onClick={() => setTauschPanelOffen(true)}
-          style={{
-            ...sekundaerKnopfStil,
-            borderColor: tauschListe.some((t) => t.status === 'zugestimmt') ? '#2563eb' : 'var(--navy)',
-            color: tauschListe.some((t) => t.status === 'zugestimmt') ? '#1d4ed8' : 'var(--navy)',
-          }}
-        >
-          Tauschwünsche{tauschListe.length > 0 ? ` (${tauschListe.length})` : ''}
         </button>
 
         <button onClick={sollDialogOeffnen} style={sekundaerKnopfStil} title="Wie viele Personen pro Schicht und Wochentag gebraucht werden">
@@ -1763,94 +1676,6 @@ export default function Dienstplan() {
                 </div>
               )
             })}
-          </div>
-        </div>
-      )}
-
-      {tauschPanelOffen && (
-        <div
-          onClick={() => setTauschPanelOffen(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#ffffff',
-              borderRadius: 12,
-              padding: 20,
-              width: 560,
-              maxWidth: '100%',
-              maxHeight: '85vh',
-              overflowY: 'auto',
-              boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>Tauschwünsche</div>
-              <button
-                onClick={() => setTauschPanelOffen(false)}
-                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}
-              >
-                ✕
-              </button>
-            </div>
-            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-              Genehmigen kannst du, sobald der Kollege zugestimmt hat. Beim Genehmigen werden die beiden Dienste im Plan getauscht.
-            </div>
-            {tauschListe.length === 0 && <div style={{ fontSize: 13, color: '#94a3b8' }}>Keine offenen Tauschwünsche.</div>}
-            {tauschListe.map((t) => (
-              <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 10 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{datumDeutsch(t.datum)}</div>
-                <div style={{ fontSize: 13, marginTop: 4 }}>
-                  <b>{t.von_name}</b> ({t.von_schicht}) ⇄ <b>{t.mit_name}</b> ({t.mit_schicht})
-                </div>
-                {t.nachricht && (
-                  <div style={{ fontSize: 12, color: '#475569', background: '#f1f5f9', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
-                    „{t.nachricht}“
-                  </div>
-                )}
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    marginTop: 6,
-                    color: t.status === 'zugestimmt' ? '#1d4ed8' : '#b45309',
-                  }}
-                >
-                  {t.status === 'zugestimmt' ? 'Kollege hat zugestimmt' : 'Wartet auf Zustimmung des Kollegen'}
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                  <button
-                    onClick={() => tauschGenehmigen(t)}
-                    disabled={t.status !== 'zugestimmt'}
-                    style={{ ...primaerKnopfStil, opacity: t.status === 'zugestimmt' ? 1 : 0.4 }}
-                  >
-                    Genehmigen
-                  </button>
-                  <button onClick={() => tauschAblehnen(t)} style={loeschenKnopfStil}>
-                    Ablehnen
-                  </button>
-                  <button
-                    onClick={() => {
-                      setTauschPanelOffen(false)
-                      zuTagSpringen(new Date(t.datum + 'T00:00:00'), t.von_mitarbeiter_id)
-                    }}
-                    style={sekundaerKnopfStil}
-                  >
-                    Zum Tag
-                  </button>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       )}
