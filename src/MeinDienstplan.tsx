@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
 import { pushAktivieren, pushDeaktivieren, pushStatus } from './pushAbo'
 import type { PushStatus } from './pushAbo'
+import ZeitkorrekturMitarbeiter from './ZeitkorrekturMitarbeiter'
 
 interface Vorlage {
   id: string
@@ -146,7 +147,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [freigegeben, setFreigegeben] = useState<string[]>([])
   const [offenerTag, setOffenerTag] = useState<string | null>(null)
   const [urlaube, setUrlaube] = useState<{ erster_tag: string; letzter_tag: string }[]>([])
-  const [ansicht, setAnsicht] = useState<'plan' | 'wunsch' | 'tausch'>('plan')
+  const [ansicht, setAnsicht] = useState<'plan' | 'wunsch' | 'tausch' | 'zeit'>('plan')
   const [gelesen, setGelesen] = useState<string[]>([])
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
   const [tauschListe, setTauschListe] = useState<Tausch[]>([])
@@ -493,6 +494,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
           ['plan', 'Dienstplan'],
           ['wunsch', 'Wunschfrei'],
           ['tausch', eingehendOffen.length > 0 ? `Tausch (${eingehendOffen.length})` : 'Tausch'],
+          ['zeit', 'Zeiten'],
         ] as const
       ).map(([id, label]) => (
         <button
@@ -705,6 +707,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
       )}
       {ansicht === 'wunsch' && wunschTab}
       {ansicht === 'tausch' && tauschTab}
+      {ansicht === 'zeit' && <ZeitkorrekturMitarbeiter mitarbeiterId={mitarbeiterId} />}
       {ansicht === 'plan' && (
         <>
       {naechster ? (

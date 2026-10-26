@@ -4,6 +4,7 @@ import { datumZuISO } from './datumUtils'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { pushSenden } from './pushAbo'
 import BestellungImport from './BestellungImport'
+import ZeitkorrekturPlaner from './ZeitkorrekturPlaner'
 
 interface Mitarbeiter {
   id: string
@@ -1478,6 +1479,8 @@ export default function Dienstplan() {
             </button>
           </>
         )}
+
+        <ZeitkorrekturPlaner />
 
         <button
           onClick={() => setWunschPanelOffen(true)}
