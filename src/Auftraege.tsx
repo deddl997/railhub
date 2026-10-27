@@ -75,11 +75,20 @@ interface Historie {
   aenderungen: Record<string, { alt: unknown; neu: unknown }>
 }
 
-interface Besetzung {
+interface WgmBesetzung {
   namen: string[]
   offen: boolean
   spotId: string | null
 }
+
+interface Besetzung {
+  namen: string[]
+  offen: boolean
+  spotId: string | null
+  wgm: WgmBesetzung
+}
+
+const LEERE_WGM: WgmBesetzung = { namen: [], offen: false, spotId: null }
 
 const STATUS: Record<string, { text: string; farbe: string; hell: string }> = {
   geplant: { text: 'Geplant', farbe: '#475569', hell: '#e2e8f0' },
@@ -290,7 +299,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
   const [speichert, setSpeichert] = useState(false)
   const [meldung, setMeldung] = useState<string | null>(null)
   const [importOffen, setImportOffen] = useState(false)
-  const [schichtDialog, setSchichtDialog] = useState<{ auftrag: Auftrag; spotId: string | null } | null>(null)
+  const [schichtDialog, setSchichtDialog] = useState<{ auftrag: Auftrag; spotId: string | null; bereich: 'Lokführer' | 'Wagenmeister' } | null>(null)
   const still = useRef(false)
   const [zaehler, setZaehler] = useState(0)
 
@@ -322,22 +331,26 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       const liste = (antwort.data ?? []) as Auftrag[]
       const ids = liste.map((a) => a.id)
       const neueBesetzung: Record<string, Besetzung> = {}
-      for (const id of ids) neueBesetzung[id] = { namen: [], offen: false, spotId: null }
+      for (const id of ids) neueBesetzung[id] = { namen: [], offen: false, spotId: null, wgm: { namen: [], offen: false, spotId: null } }
       if (ids.length > 0) {
         const [eintraege, offene, personen] = await Promise.all([
           supabase.from('dienstplan_eintraege').select('mitarbeiter_id, auftrag_id').eq('ist_spotschicht', true).in('auftrag_id', ids),
-          supabase.from('offene_spotschichten').select('id, auftrag_id').in('auftrag_id', ids),
-          supabase.from('mitarbeiter').select('id, name'),
+          supabase.from('offene_spotschichten').select('id, auftrag_id, bereich').in('auftrag_id', ids),
+          supabase.from('mitarbeiter').select('id, name, kategorie'),
         ])
-        const namen = new Map<string, string>((personen.data ?? []).map((p: { id: string; name: string }) => [p.id, p.name]))
+        const personenListe = (personen.data ?? []) as { id: string; name: string; kategorie: string | null }[]
+        const namen = new Map<string, string>(personenListe.map((p) => [p.id, p.name]))
+        const istWgm = new Map<string, boolean>(personenListe.map((p) => [p.id, (p.kategorie ?? '').toLowerCase().includes('wagen')]))
         for (const e of (eintraege.data ?? []) as { mitarbeiter_id: string; auftrag_id: string }[]) {
-          neueBesetzung[e.auftrag_id]?.namen.push(namen.get(e.mitarbeiter_id) ?? 'Unbekannt')
+          const ziel = istWgm.get(e.mitarbeiter_id) ? neueBesetzung[e.auftrag_id]?.wgm : neueBesetzung[e.auftrag_id]
+          ziel?.namen.push(namen.get(e.mitarbeiter_id) ?? 'Unbekannt')
         }
-        for (const o of (offene.data ?? []) as { id: string; auftrag_id: string }[]) {
-          if (neueBesetzung[o.auftrag_id]) {
-            neueBesetzung[o.auftrag_id].offen = true
-            neueBesetzung[o.auftrag_id].spotId = neueBesetzung[o.auftrag_id].spotId ?? o.id
-          }
+        for (const o of (offene.data ?? []) as { id: string; auftrag_id: string; bereich: string }[]) {
+          const b = neueBesetzung[o.auftrag_id]
+          if (!b) continue
+          const ziel = o.bereich === 'Wagenmeister' ? b.wgm : b
+          ziel.offen = true
+          ziel.spotId = ziel.spotId ?? o.id
         }
       }
       const kunden = await supabase.from('auftraege').select('kunde').not('kunde', 'is', null).limit(500)
@@ -443,9 +456,9 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
     return error ? error.message : null
   }
 
-  function schichtDialogOeffnen(a: Auftrag, spotId: string | null = null) {
+  function schichtDialogOeffnen(a: Auftrag, spotId: string | null = null, bereich: 'Lokführer' | 'Wagenmeister' = 'Lokführer') {
     setFehler(null)
-    setSchichtDialog({ auftrag: a, spotId })
+    setSchichtDialog({ auftrag: a, spotId, bereich })
   }
 
   async function alleSchichtenAnlegen() {
@@ -636,13 +649,14 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                 <th style={th}>Ankunft</th>
                 <th style={th}>Wagen / Lok</th>
                 <th style={th}>Lokführer</th>
+                <th style={th}>Wagenmeister</th>
                 <th style={th}>Status</th>
                 <th style={th}>Abrechnung</th>
               </tr>
             </thead>
             <tbody>
               {sichtbar.map((a) => {
-                const b = besetzung[a.id] ?? { namen: [], offen: false }
+                const b = besetzung[a.id] ?? { namen: [], offen: false, spotId: null, wgm: LEERE_WGM }
                 const tag = new Date(a.abfahrt_datum + 'T00:00:00')
                 const spaet = verspaetung(a.ankunft_soll, a.ankunft_ist)
                 const spaetAb = verspaetung(a.abfahrt_soll, a.abfahrt_ist)
@@ -709,6 +723,26 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                           <span style={{ color: '#94a3b8' }}>–</span>
                         )}
                       </td>
+                      <td style={td} onClick={(e) => e.stopPropagation()}>
+                        {b.wgm.namen.length > 0 ? (
+                          <span style={{ fontWeight: 600, color: '#15803d' }}>{b.wgm.namen.join(', ')}</span>
+                        ) : b.wgm.offen ? (
+                          <span>
+                            <span style={{ fontWeight: 600, color: '#b45309' }}>Schicht offen</span>
+                            {darfDisponieren && (
+                              <button onClick={() => schichtDialogOeffnen(a, b.wgm.spotId, 'Wagenmeister')} style={{ ...knopf, padding: '2px 7px', fontSize: 11, marginLeft: 6 }}>
+                                ändern
+                              </button>
+                            )}
+                          </span>
+                        ) : a.status !== 'storniert' && darfDisponieren ? (
+                          <button onClick={() => schichtDialogOeffnen(a, null, 'Wagenmeister')} style={{ ...knopf, padding: '4px 8px', fontSize: 12 }}>
+                            Schicht anlegen
+                          </button>
+                        ) : (
+                          <span style={{ color: '#94a3b8' }}>–</span>
+                        )}
+                      </td>
                       <td style={td}>{badge(STATUS[a.status] ?? STATUS.geplant)}</td>
                       <td style={td}>
                         {badge(ABRECHNUNG[a.abrechnung_status] ?? ABRECHNUNG.offen)}
@@ -720,7 +754,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                       if (zusatz.length === 0) return null
                       return (
                         <tr onClick={() => bearbeitenOeffnen(a)} style={{ cursor: 'pointer', opacity: a.status === 'storniert' ? 0.55 : 1 }}>
-                          <td colSpan={9} style={{ ...td, paddingTop: 0, fontSize: 12, color: '#92400e' }}>
+                          <td colSpan={10} style={{ ...td, paddingTop: 0, fontSize: 12, color: '#92400e' }}>
                             {zusatz.map((f, i) => (
                               <span key={i} style={{ display: 'inline-block', marginRight: 16 }}>
                                 ↳ <b>{f.art}</b>
@@ -744,6 +778,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
         <SchichtDialog
           auftrag={schichtDialog.auftrag}
           spotId={schichtDialog.spotId}
+          bereich={schichtDialog.bereich}
           onSchliessen={() => setSchichtDialog(null)}
           onFertig={() => {
             setSchichtDialog(null)
@@ -834,7 +869,18 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                   }}
                   style={knopf}
                 >
-                  {besetzung[aktuellerAuftrag.id]?.namen.length || besetzung[aktuellerAuftrag.id]?.offen ? 'Weitere Schicht anlegen (z. B. Ablöser)' : 'Schicht im Dienstplan anlegen'}
+                  {besetzung[aktuellerAuftrag.id]?.namen.length || besetzung[aktuellerAuftrag.id]?.offen ? 'Weitere Lokführer-Schicht (z. B. Ablöser)' : 'Lokführer-Schicht anlegen'}
+                </button>
+              )}
+              {aktuellerAuftrag && darfDisponieren && (
+                <button
+                  onClick={() => {
+                    setBearbeiteId(null)
+                    schichtDialogOeffnen(aktuellerAuftrag, null, 'Wagenmeister')
+                  }}
+                  style={knopf}
+                >
+                  {besetzung[aktuellerAuftrag.id]?.wgm.namen.length || besetzung[aktuellerAuftrag.id]?.wgm.offen ? 'Weitere Wagenmeister-Schicht' : 'Wagenmeister-Schicht anlegen'}
                 </button>
               )}
               <div style={{ flex: 1 }} />

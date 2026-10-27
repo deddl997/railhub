@@ -14,6 +14,7 @@ import type { AuftragKern, Fahrtzeile } from './auftragSchicht'
 export interface DialogAuftrag extends AuftragKern {
   id: string
   fahrten: unknown
+  anzahl_wagen: number | null
 }
 
 const FARBEN = ['#8b1a1a', '#14325c', '#15803d', '#b45309', '#6d28d9', '#0e7490', '#be185d', '#475569']
@@ -29,23 +30,28 @@ function bruttoVon(beginn: string, ende: string): number {
 export default function SchichtDialog({
   auftrag,
   spotId,
+  bereich = 'Lokführer',
   onSchliessen,
   onFertig,
 }: {
   auftrag: DialogAuftrag
   spotId: string | null
+  bereich?: 'Lokführer' | 'Wagenmeister'
   onSchliessen: () => void
   onFertig: () => void
 }) {
+  const wgm = bereich === 'Wagenmeister'
   const gespeicherte = fahrtenPruefen(auftrag.fahrten)
-  const [fahrten, setFahrten] = useState<Fahrtzeile[]>(gespeicherte.length > 0 ? gespeicherte : fahrtenAusAuftrag(auftrag))
-  const [name, setName] = useState(`${auftrag.referenz ?? 'Fahrt'} ${auftrag.abfahrt_ort ?? ''}–${auftrag.ankunft_ort ?? ''}`)
+  const [fahrten, setFahrten] = useState<Fahrtzeile[]>(!wgm && gespeicherte.length > 0 ? gespeicherte : fahrtenAusAuftrag(auftrag))
+  const [name, setName] = useState(
+    wgm ? `Wagenmeister ${auftrag.referenz ?? ''} ${auftrag.abfahrt_ort ?? ''}`.trim() : `${auftrag.referenz ?? 'Fahrt'} ${auftrag.abfahrt_ort ?? ''}–${auftrag.ankunft_ort ?? ''}`
+  )
   const [datum, setDatum] = useState(auftrag.abfahrt_datum)
   const [beginn, setBeginn] = useState('')
   const [ende, setEnde] = useState('')
   const [pause, setPause] = useState(0)
   const [dienstort, setDienstort] = useState(auftrag.abfahrt_ort ?? '')
-  const [farbe, setFarbe] = useState('#8b1a1a')
+  const [farbe, setFarbe] = useState(wgm ? '#0e7490' : '#8b1a1a')
   const [info, setInfo] = useState('')
   const [zeitenManuell, setZeitenManuell] = useState(false)
   const [pauseManuell, setPauseManuell] = useState(false)
@@ -91,7 +97,16 @@ export default function SchichtDialog({
         setEnde(z.ende)
       }
     }
-    if (!infoManuell) setInfo(infoAusFahrten(fahrten, auftrag.mitarbeiter_info))
+    if (!infoManuell) {
+      if (wgm) {
+        const teile = [
+          `Zug ${auftrag.referenz ?? ''}${auftrag.zug_nr ? ` (${auftrag.zug_nr})` : ''}`.trim(),
+          auftrag.abfahrt_ort ? `ab ${auftrag.abfahrt_ort}${auftrag.abfahrt_soll ? ' ' + auftrag.abfahrt_soll.slice(0, 5) : ''}` : '',
+          auftrag.anzahl_wagen != null ? `${auftrag.anzahl_wagen} Wagen` : '',
+        ].filter(Boolean)
+        setInfo(teile.join(', '))
+      } else setInfo(infoAusFahrten(fahrten, auftrag.mitarbeiter_info))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fahrten, zeitenManuell, infoManuell, laedt])
 
@@ -130,7 +145,7 @@ export default function SchichtDialog({
     setSpeichert(true)
     const werte = {
       datum,
-      bereich: 'Lokführer',
+      bereich,
       name: name.trim(),
       beginn_zeit: beginn,
       ende_zeit: ende,
@@ -149,7 +164,7 @@ export default function SchichtDialog({
       return
     }
     // Fahrten am Auftrag merken (fuer spaetere Aenderungen)
-    await supabase.from('auftraege').update({ fahrten }).eq('id', auftrag.id)
+    if (!wgm) await supabase.from('auftraege').update({ fahrten }).eq('id', auftrag.id)
     setSpeichert(false)
     onFertig()
   }
@@ -169,20 +184,24 @@ export default function SchichtDialog({
         style={{ background: '#ffffff', borderRadius: 12, padding: 20, width: 900, maxWidth: '100%', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>{spotId ? 'Schicht ändern' : 'Schicht anlegen'}</div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>{spotId ? `${bereich}-Schicht ändern` : `${bereich}-Schicht anlegen`}</div>
           <button onClick={onSchliessen} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}>
             ✕
           </button>
         </div>
         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-          Auftrag {auftrag.referenz} · {auftrag.abfahrt_ort} → {auftrag.ankunft_ort}. Trage unten alle Fahrten der Schicht ein, auch Lokzuführungen. Dienstbeginn,
-          Dienstende und Pause werden daraus berechnet und lassen sich ändern.
+          Auftrag {auftrag.referenz} · {auftrag.abfahrt_ort} → {auftrag.ankunft_ort}.{' '}
+          {wgm
+            ? 'Trage Dienstort, Datum und Zeiten für den Wagenmeister ein. Die Vorschläge kommen aus dem Auftrag und lassen sich ändern.'
+            : 'Trage unten alle Fahrten der Schicht ein, auch Lokzuführungen. Dienstbeginn, Dienstende und Pause werden daraus berechnet und lassen sich ändern.'}
         </div>
 
         {laedt ? (
           <div style={{ fontSize: 14, color: '#64748b' }}>Wird geladen …</div>
         ) : (
           <>
+            {!wgm && (
+              <>
             <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13, marginBottom: 6 }}>Fahrten in dieser Schicht</div>
             <div style={{ overflowX: 'auto', marginBottom: 8 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 800, fontSize: 12 }}>
@@ -258,6 +277,9 @@ export default function SchichtDialog({
               </button>
             </div>
 
+              </>
+            )}
+
             <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13, marginBottom: 6 }}>Schicht</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
               <label style={{ fontSize: 12, color: '#475569', gridColumn: '1 / -1' }}>
@@ -315,7 +337,7 @@ export default function SchichtDialog({
                 />
               </label>
               <label style={{ fontSize: 12, color: '#475569' }}>
-                Dienstort
+                {wgm ? 'Ort (Dienstort)' : 'Dienstort'}
                 <input value={dienstort} onChange={(e) => setDienstort(e.target.value)} style={eingabe} />
               </label>
               <div style={{ fontSize: 12, color: '#475569' }}>
@@ -347,13 +369,13 @@ export default function SchichtDialog({
                   }}
                   style={{ ...knopf, padding: '3px 8px', fontSize: 11 }}
                 >
-                  Zeiten und Pause aus den Fahrten berechnen
+                  Zeiten und Pause neu berechnen
                 </button>
               )}
             </div>
 
             <label style={{ fontSize: 12, color: '#475569', display: 'block', marginTop: 12 }}>
-              Info an den Lokführer
+              {wgm ? 'Info an den Wagenmeister' : 'Info an den Lokführer'}
               <textarea
                 value={info}
                 rows={5}
@@ -366,7 +388,7 @@ export default function SchichtDialog({
             </label>
             {infoManuell && (
               <button onClick={() => setInfoManuell(false)} style={{ ...knopf, padding: '3px 8px', fontSize: 11, marginTop: 4 }}>
-                Info aus den Fahrten neu erzeugen
+                Info neu erzeugen
               </button>
             )}
 
