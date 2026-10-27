@@ -6,6 +6,8 @@ import { schichtAusAuftrag } from './auftragSchicht'
 import BestellungImport from './BestellungImport'
 import SchichtDialog from './SchichtDialog'
 import { fahrtenPruefen } from './auftragSchicht'
+import { Ablauf, AuftragKarte, tagUeberschrift } from './AuftragKarten'
+import StatusMailDialog from './StatusMailDialog'
 
 interface Auftrag {
   id: string
@@ -299,6 +301,22 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
   const [speichert, setSpeichert] = useState(false)
   const [meldung, setMeldung] = useState<string | null>(null)
   const [importOffen, setImportOffen] = useState(false)
+  const [mailOffen, setMailOffen] = useState(false)
+  const [ansicht, setAnsichtZustand] = useState<'karten' | 'liste'>(() => {
+    try {
+      return localStorage.getItem('auftraege_ansicht') === 'liste' ? 'liste' : 'karten'
+    } catch {
+      return 'karten'
+    }
+  })
+  function ansichtWaehlen(neu: 'karten' | 'liste') {
+    setAnsichtZustand(neu)
+    try {
+      localStorage.setItem('auftraege_ansicht', neu)
+    } catch {
+      /* egal */
+    }
+  }
   const [schichtDialog, setSchichtDialog] = useState<{ auftrag: Auftrag; spotId: string | null; bereich: 'Lokführer' | 'Wagenmeister' } | null>(null)
   const still = useRef(false)
   const [zaehler, setZaehler] = useState(0)
@@ -353,6 +371,16 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
           ziel.spotId = ziel.spotId ?? o.id
         }
       }
+      // Zugewiesenen Wagenmeister automatisch in den Auftrag uebernehmen
+      if (darfDisponieren) {
+        for (const a of liste) {
+          const n = neueBesetzung[a.id]?.wgm.namen.join(', ') ?? ''
+          if (n && n !== (a.wgm_info ?? '')) {
+            const { error } = await supabase.from('auftraege').update({ wgm_info: n }).eq('id', a.id)
+            if (!error) a.wgm_info = n
+          }
+        }
+      }
       const kunden = await supabase.from('auftraege').select('kunde').not('kunde', 'is', null).limit(500)
       setKundenListe(Array.from(new Set((kunden.data ?? []).map((k: { kunde: string | null }) => k.kunde ?? '').filter(Boolean))).sort())
       setAuftraege(liste)
@@ -384,7 +412,8 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
   }
 
   async function bearbeitenOeffnen(a: Auftrag) {
-    setForm(auftragZuFormular(a))
+    const wgmNamen = besetzung[a.id]?.wgm.namen ?? []
+    setForm({ ...auftragZuFormular(a), wgm_info: wgmNamen.length > 0 ? wgmNamen.join(', ') : (a.wgm_info ?? '') })
     setHistorie([])
     setMeldung(null)
     setBearbeiteId(a.id)
@@ -400,6 +429,9 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
     setSpeichert(true)
     setMeldung(null)
     const daten = formularZuDaten(form)
+    // Ankunft Ist neu eingetragen: der Zug gilt als gefahren
+    const ankunftNeu = bearbeiteId === 'neu' || zeit(auftraege.find((x) => x.id === bearbeiteId)?.ankunft_ist ?? null) !== form.ankunft_ist
+    if (daten.ankunft_ist && ankunftNeu && (daten.status === 'geplant' || daten.status === 'bestaetigt')) daten.status = 'gefahren'
     let fehlerText: string | null = null
     if (bearbeiteId === 'neu') {
       const { error } = await supabase.from('auftraege').insert(daten)
@@ -569,6 +601,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
 
   const aktuellerAuftrag = bearbeiteId && bearbeiteId !== 'neu' ? auftraege.find((a) => a.id === bearbeiteId) : undefined
   const sperreDispo = !darfDisponieren
+  const wgmZugewiesen = !!aktuellerAuftrag && (besetzung[aktuellerAuftrag.id]?.wgm.namen.length ?? 0) > 0
   const sperreAbrechnung = !darfAbrechnen
 
   return (
@@ -593,6 +626,17 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
           Heute
         </button>
         <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', border: '1px solid var(--navy)', borderRadius: 8, overflow: 'hidden' }}>
+          {(['karten', 'liste'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => ansichtWaehlen(v)}
+              style={{ background: ansicht === v ? 'var(--navy)' : 'transparent', color: ansicht === v ? '#ffffff' : 'var(--navy)', border: 'none', padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}
+            >
+              {v === 'karten' ? 'Karten' : 'Liste'}
+            </button>
+          ))}
+        </div>
         <input placeholder="Suchen (Zug, Kunde, Ort, Lok …)" value={suche} onChange={(e) => setSuche(e.target.value)} style={{ ...eingabe, width: 230 }} />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ ...eingabe, width: 140 }}>
           <option value="alle">Alle Status</option>
@@ -637,7 +681,34 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
 
       {!laedt && sichtbar.length === 0 && <div style={{ fontSize: 14, color: '#94a3b8', padding: '20px 0' }}>Keine Aufträge in dieser Woche.</div>}
 
-      {!laedt && sichtbar.length > 0 && (
+      {!laedt && sichtbar.length > 0 && ansicht === 'karten' && (
+        <div>
+          {Array.from(new Set(sichtbar.map((x) => x.abfahrt_datum))).map((tagIso) => (
+            <div key={tagIso} style={{ marginBottom: 18 }}>
+              <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 14, margin: '4px 2px 8px' }}>{tagUeberschrift(tagIso)}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 400px), 1fr))', gap: 12 }}>
+                {sichtbar
+                  .filter((x) => x.abfahrt_datum === tagIso)
+                  .map((a) => (
+                    <AuftragKarte
+                      key={a.id}
+                      a={a}
+                      b={besetzung[a.id] ?? { namen: [], offen: false, spotId: null, wgm: LEERE_WGM }}
+                      darfDisponieren={darfDisponieren}
+                      zeigePreis={darfAbrechnen}
+                      statusBadge={badge(STATUS[a.status] ?? STATUS.geplant)}
+                      abrechnungBadge={badge(ABRECHNUNG[a.abrechnung_status] ?? ABRECHNUNG.offen)}
+                      onOeffnen={() => bearbeitenOeffnen(a)}
+                      onSchicht={(bereich, spotId) => schichtDialogOeffnen(a, spotId, bereich)}
+                    />
+                  ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!laedt && sichtbar.length > 0 && ansicht === 'liste' && (
         <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10, background: '#ffffff' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1080 }}>
             <thead>
@@ -788,6 +859,14 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
         />
       )}
 
+      {mailOffen && aktuellerAuftrag && (
+        <StatusMailDialog
+          auftrag={{ ...aktuellerAuftrag, ...formularZuDaten(form), abfahrt_datum: form.abfahrt_datum }}
+          darfSpeichern={darfDisponieren}
+          onSchliessen={() => setMailOffen(false)}
+        />
+      )}
+
       {importOffen && (
         <BestellungImport
           onSchliessen={() => setImportOffen(false)}
@@ -816,6 +895,13 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               </button>
             </div>
 
+            {aktuellerAuftrag && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13, marginBottom: 6 }}>Ablauf</div>
+                <Ablauf a={aktuellerAuftrag} />
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
               {abschnitt('Auftrag')}
               {feld('Kunde', 'kunde', { liste: 'kunden-liste', sperre: sperreDispo })}
@@ -838,7 +924,13 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               {feld('Anzahl Wagen', 'anzahl_wagen', { typ: 'number', sperre: sperreDispo })}
               {feld('Last / Leer, Zuschläge', 'ggk', { sperre: sperreDispo })}
               {feld('Lok', 'lok', { sperre: sperreDispo })}
-              {feld('Wagenmeister', 'wgm_info', { sperre: sperreDispo })}
+              {aktuellerAuftrag && (besetzung[aktuellerAuftrag.id]?.namen.length ?? 0) > 0 && (
+                <label style={{ fontSize: 12, color: '#475569' }}>
+                  Lokführer (aus dem Dienstplan)
+                  <input value={besetzung[aktuellerAuftrag.id].namen.join(', ')} disabled style={{ ...eingabe, background: '#f1f5f9' }} />
+                </label>
+              )}
+              {feld(wgmZugewiesen ? 'Wagenmeister (aus dem Dienstplan)' : 'Wagenmeister', 'wgm_info', { sperre: sperreDispo || wgmZugewiesen })}
               {text('Infos, Ablöser, Ereignisse', 'infos', sperreDispo)}
               {text('Mitarbeiter-Info (geht als Info an den Lokführer in die Schicht)', 'mitarbeiter_info', sperreDispo)}
 
@@ -881,6 +973,11 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                   style={knopf}
                 >
                   {besetzung[aktuellerAuftrag.id]?.wgm.namen.length || besetzung[aktuellerAuftrag.id]?.wgm.offen ? 'Weitere Wagenmeister-Schicht' : 'Wagenmeister-Schicht anlegen'}
+                </button>
+              )}
+              {aktuellerAuftrag && form.abfahrt_soll && (
+                <button onClick={() => setMailOffen(true)} style={knopf}>
+                  Status-Mail an Kunden
                 </button>
               )}
               <div style={{ flex: 1 }} />
