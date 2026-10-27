@@ -149,6 +149,22 @@ function App() {
     tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' ? darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
+  // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
+  const GRUPPEN: { id: string; label: string; tabs: TabId[] }[] = [
+    {
+      id: 'plan',
+      label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
+      tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen'],
+    },
+    { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege'] },
+    { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung'] },
+    { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter'] },
+    { id: 'streckenkunde', label: 'Streckenkunde', tabs: ['streckenkunde'] },
+  ]
+  const UNTERPUNKT_NAME: Partial<Record<TabId, string>> = { meinplan: 'Mein Plan', dienstplan: 'Dienstplan', antraege: istAdmin ? 'Anträge' : 'Meine Anträge' }
+  const sichtbareGruppen = GRUPPEN.map((g) => ({ ...g, tabs: g.tabs.filter((t) => sichtbareTabs.some((x) => x.id === t)) })).filter((g) => g.tabs.length > 0)
+  const aktiveGruppe = sichtbareGruppen.find((g) => g.tabs.includes(aktiverTab)) ?? sichtbareGruppen[0]
+
   return (
     <div style={{ background: '#f1f4f9', minHeight: '100vh' }}>
       <header
@@ -209,23 +225,23 @@ function App() {
             ...(handy ? { order: 3, flexBasis: '100%', margin: '0 -4px' } : {}),
           }}
         >
-          {sichtbareTabs.map((tab) => (
+          {sichtbareGruppen.map((g) => (
             <button
-              key={tab.id}
-              onClick={() => setAktiverTab(tab.id)}
+              key={g.id}
+              onClick={() => setAktiverTab(g.tabs[0])}
               style={{
-                background: aktiverTab === tab.id ? 'rgba(255,255,255,0.14)' : 'transparent',
+                background: aktiveGruppe?.id === g.id ? 'rgba(255,255,255,0.14)' : 'transparent',
                 border: 'none',
                 borderRadius: 8,
-                color: aktiverTab === tab.id ? '#ffffff' : '#c9d6ea',
-                fontWeight: aktiverTab === tab.id ? 600 : 500,
+                color: aktiveGruppe?.id === g.id ? '#ffffff' : '#c9d6ea',
+                fontWeight: aktiveGruppe?.id === g.id ? 600 : 500,
                 fontSize: 14,
                 padding: handy ? '8px 12px' : '8px 14px',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
             >
-              {tab.label}
+              {g.label}
             </button>
           ))}
         </nav>
@@ -315,6 +331,34 @@ function App() {
         </div>
         )}
       </header>
+
+      {aktiveGruppe && aktiveGruppe.tabs.length > 1 && (
+        <div style={{ background: '#ffffff', borderBottom: '1px solid #d9e0ec', padding: handy ? '6px 10px' : '8px 24px', display: 'flex', gap: 6, overflowX: 'auto' }}>
+          {aktiveGruppe.tabs.map((id) => {
+            const tab = ALLE_TABS.find((t) => t.id === id)
+            const aktiv = aktiverTab === id
+            return (
+              <button
+                key={id}
+                onClick={() => setAktiverTab(id)}
+                style={{
+                  background: aktiv ? '#14325c' : '#eef2f8',
+                  color: aktiv ? '#ffffff' : '#14325c',
+                  border: 'none',
+                  borderRadius: 999,
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  fontWeight: aktiv ? 600 : 500,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {UNTERPUNKT_NAME[id] ?? tab?.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {neueVersion && (
         <div
