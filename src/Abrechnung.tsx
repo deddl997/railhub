@@ -26,6 +26,9 @@ interface Auftrag {
   preis: number | null
   rechnungsnr: string | null
   info_abrechnung: string | null
+  storno_datum: string | null
+  storno_zeit: string | null
+  storno_grund: string | null
 }
 
 type Feld = 'kontrolle' | 'kuerzel_abrechnung' | 'preis' | 'rechnungsnr' | 'info_abrechnung'
@@ -76,7 +79,7 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
   const [fehler, setFehler] = useState<string | null>(null)
   const [kundeFilter, setKundeFilter] = useState('alle')
   const [statusFilter, setStatusFilter] = useState('alle')
-  const [mitStornierten, setMitStornierten] = useState(false)
+  const [mitStornierten, setMitStornierten] = useState(true)
   const [gruppieren, setGruppieren] = useState(true)
   const [suche, setSuche] = useState('')
   const [auswahl, setAuswahl] = useState<Set<string>>(new Set())
@@ -143,7 +146,8 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
 
   const summe = (liste: Auftrag[], status?: string) =>
     liste.filter((a) => !status || a.abrechnung_status === status).reduce((s, a) => s + (a.preis ?? 0), 0)
-  const ohnePreis = sichtbar.filter((a) => a.preis == null && a.status !== 'storniert').length
+  const ohnePreis = sichtbar.filter((a) => a.preis == null).length
+  const stornierte = sichtbar.filter((a) => a.status === 'storniert')
 
   async function speichern(a: Auftrag, daten: Record<string, unknown>) {
     setFehler(null)
@@ -203,7 +207,7 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
   function exportieren() {
     csvSpeichern(
       `Abrechnung_${jahr}-${String(monat + 1).padStart(2, '0')}${kundeFilter !== 'alle' ? '_' + kundeFilter.replace(/[^\wäöüÄÖÜß-]+/g, '_') : ''}.csv`,
-      ['Datum', 'Kunde', 'Referenz', 'Zugnummer', 'Von', 'Nach', 'Abfahrt Soll', 'Abfahrt Ist', 'Ankunft Soll', 'Ankunft Ist', 'Wagen', 'Last/Leer, Zuschläge', 'Lok', 'Lokführer', 'Kontrolle', 'Kürzel Abrechnung', 'Kürzel Planung', 'Preis', 'Rechnungsnr', 'Abrechnung', 'Info an Abrechnung'],
+      ['Datum', 'Kunde', 'Referenz', 'Zugnummer', 'Von', 'Nach', 'Abfahrt Soll', 'Abfahrt Ist', 'Ankunft Soll', 'Ankunft Ist', 'Wagen', 'Last/Leer, Zuschläge', 'Lok', 'Lokführer', 'Kontrolle', 'Kürzel Abrechnung', 'Kürzel Planung', 'Preis', 'Rechnungsnr', 'Abrechnung', 'Info an Abrechnung', 'Auftragsstatus', 'Storno Datum', 'Storno Uhrzeit', 'Storno Grund'],
       sichtbar.map((a) => [
         datumDeutsch(a.abfahrt_datum),
         a.kunde ?? '',
@@ -226,6 +230,10 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
         a.rechnungsnr ?? '',
         ABRECHNUNG[a.abrechnung_status]?.text ?? a.abrechnung_status,
         a.info_abrechnung ?? '',
+        a.status === 'storniert' ? 'Storniert' : '',
+        a.storno_datum ? datumDeutsch(a.storno_datum) : '',
+        zeit(a.storno_zeit),
+        a.storno_grund ?? '',
       ])
     )
   }
@@ -285,7 +293,7 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
     const gesperrt = a.abrechnung_status === 'abgerechnet'
     const stil = ABRECHNUNG[a.abrechnung_status] ?? ABRECHNUNG.offen
     return (
-      <tr key={a.id} style={{ background: auswahl.has(a.id) ? '#eff6ff' : gesperrt ? '#f8fafc' : undefined, opacity: a.status === 'storniert' ? 0.55 : 1 }}>
+      <tr key={a.id} style={{ background: auswahl.has(a.id) ? '#eff6ff' : a.status === 'storniert' ? '#fef2f2' : gesperrt ? '#f8fafc' : undefined }}>
         <td style={td}>
           <input type="checkbox" checked={auswahl.has(a.id)} onChange={() => umschalten(a.id)} />
         </td>
@@ -295,7 +303,14 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
         <td style={td}>
           <div style={{ fontWeight: 700, color: 'var(--navy)' }}>{a.referenz ?? '–'}</div>
           {a.zug_nr && <div style={{ fontSize: 11, color: '#64748b' }}>{a.zug_nr}</div>}
-          {a.status === 'storniert' && <div style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>storniert</div>}
+          {a.status === 'storniert' && (
+            <div style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700, maxWidth: 200, whiteSpace: 'normal' }}>
+              STORNIERT
+              {a.storno_datum ? ` ${datumDeutsch(a.storno_datum).slice(0, 5)}` : ''}
+              {a.storno_zeit ? ` ${zeit(a.storno_zeit)} Uhr` : ''}
+              {a.storno_grund ? `: ${a.storno_grund}` : ''}
+            </div>
+          )}
         </td>
         <td style={td}>
           {a.abfahrt_ort} → {a.ankunft_ort}
@@ -419,7 +434,7 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
         </label>
         <label style={{ fontSize: 13, color: '#475569', display: 'flex', gap: 5, alignItems: 'center' }}>
           <input type="checkbox" checked={mitStornierten} onChange={(e) => setMitStornierten(e.target.checked)} />
-          mit stornierten
+          stornierte anzeigen
         </label>
         <button onClick={exportieren} style={knopf} title="Als Excel-Datei (CSV) speichern">
           Export
@@ -432,6 +447,7 @@ export default function Abrechnung({ istAdmin }: { istAdmin: boolean }) {
         {kachel('Noch offen', euro(summe(sichtbar, 'offen')), '#b45309')}
         {kachel('Geprüft', euro(summe(sichtbar, 'geprueft')), '#1d4ed8')}
         {kachel('Abgerechnet', euro(summe(sichtbar, 'abgerechnet')), '#15803d')}
+        {stornierte.length > 0 && kachel('Davon storniert', `${stornierte.length} · ${euro(summe(stornierte))}`, '#b91c1c')}
         {ohnePreis > 0 && kachel('Ohne Preis', String(ohnePreis), '#b91c1c')}
       </div>
 

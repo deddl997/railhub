@@ -17,6 +17,8 @@ export interface MailAuftrag {
   ankunft_ist: string | null
   anzahl_wagen: number | null
   lok: string | null
+  storno_datum?: string | null
+  storno_zeit?: string | null
 }
 
 const kurz = (z: string | null) => (z ? z.slice(0, 5) : '')
@@ -35,7 +37,10 @@ function abwWort(min: number | null, art: 'ab' | 'an'): string {
 }
 
 function statusSatz(a: MailAuftrag): string {
-  if (a.status === 'storniert') return 'Der Auftrag wurde storniert.'
+  if (a.status === 'storniert') {
+    const wann = a.storno_datum ? ` am ${a.storno_datum.split('-').reverse().join('.')}${a.storno_zeit ? ` um ${a.storno_zeit.slice(0, 5)} Uhr` : ''}` : ''
+    return `Der Auftrag wurde${wann} storniert.`
+  }
   if (a.status === 'gefahren' || a.ankunft_ist) return 'Der Zug ist gefahren.'
   if (a.abfahrt_ist) return 'Der Zug ist abgefahren und unterwegs.'
   if (a.status === 'bestaetigt') return 'Der Zug ist bestätigt und disponiert.'

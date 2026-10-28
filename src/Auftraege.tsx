@@ -38,6 +38,9 @@ interface Auftrag {
   rechnungsnr: string | null
   info_abrechnung: string | null
   fahrten: unknown
+  storno_datum: string | null
+  storno_zeit: string | null
+  storno_grund: string | null
 }
 
 interface Formular {
@@ -67,6 +70,9 @@ interface Formular {
   preis: string
   rechnungsnr: string
   info_abrechnung: string
+  storno_datum: string
+  storno_zeit: string
+  storno_grund: string
 }
 
 interface Historie {
@@ -132,6 +138,9 @@ const FELDNAMEN: Record<string, string> = {
   preis: 'Preis',
   rechnungsnr: 'Rechnungsnummer',
   info_abrechnung: 'Info an Abrechnung',
+  storno_datum: 'Storno Datum',
+  storno_zeit: 'Storno Uhrzeit',
+  storno_grund: 'Storno Grund',
 }
 
 const WOCHENTAGE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
@@ -208,6 +217,9 @@ function leeresFormular(datum: string): Formular {
     preis: '',
     rechnungsnr: '',
     info_abrechnung: '',
+    storno_datum: '',
+    storno_zeit: '',
+    storno_grund: '',
   }
 }
 
@@ -239,6 +251,9 @@ function auftragZuFormular(a: Auftrag): Formular {
     preis: a.preis == null ? '' : String(a.preis),
     rechnungsnr: a.rechnungsnr ?? '',
     info_abrechnung: a.info_abrechnung ?? '',
+    storno_datum: a.storno_datum ?? '',
+    storno_zeit: zeit(a.storno_zeit),
+    storno_grund: a.storno_grund ?? '',
   }
 }
 
@@ -272,6 +287,9 @@ function formularZuDaten(f: Formular) {
     preis: f.preis.trim() === '' ? null : Number(f.preis.replace(',', '.')),
     rechnungsnr: leerNull(f.rechnungsnr),
     info_abrechnung: leerNull(f.info_abrechnung),
+    storno_datum: f.status === 'storniert' ? leerNull(f.storno_datum) : null,
+    storno_zeit: f.status === 'storniert' ? leerNull(f.storno_zeit) : null,
+    storno_grund: f.status === 'storniert' ? leerNull(f.storno_grund) : null,
   }
 }
 
@@ -426,6 +444,10 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       setMeldung('Bitte das Abfahrtsdatum eintragen.')
       return
     }
+    if (form.status === 'storniert' && (!form.storno_datum || !form.storno_zeit || !form.storno_grund.trim())) {
+      setMeldung('Bei einer Stornierung bitte Datum, Uhrzeit und Grund der Stornierung eintragen.')
+      return
+    }
     setSpeichert(true)
     setMeldung(null)
     const daten = formularZuDaten(form)
@@ -570,7 +592,14 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       <select
         value={form[schluessel]}
         disabled={sperre}
-        onChange={(e) => setForm({ ...form, [schluessel]: e.target.value })}
+        onChange={(e) => {
+          const wert = e.target.value
+          if (schluessel === 'status' && wert === 'storniert' && !form.storno_zeit) {
+            // Zeitpunkt der Stornierung mit "jetzt" vorbelegen
+            const jetzt = new Date()
+            setForm({ ...form, status: wert, storno_datum: datumZuISO(jetzt), storno_zeit: `${String(jetzt.getHours()).padStart(2, '0')}:${String(jetzt.getMinutes()).padStart(2, '0')}` })
+          } else setForm({ ...form, [schluessel]: wert })
+        }}
         style={{ ...eingabe, background: sperre ? '#f1f5f9' : '#ffffff' }}
       >
         {Object.entries(optionen).map(([k, v]) => (
@@ -742,6 +771,12 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                       <td style={td}>
                         <div style={{ fontWeight: 700, color: 'var(--navy)' }}>{a.referenz ?? '–'}</div>
                         {a.zug_nr && <div style={{ fontSize: 11, color: '#64748b' }}>{a.zug_nr}</div>}
+                        {a.status === 'storniert' && (
+                          <div style={{ fontSize: 11, color: '#b91c1c', fontWeight: 600, maxWidth: 180 }}>
+                            Storno {a.storno_datum ? datumDeutsch(a.storno_datum).slice(0, 5) : ''} {zeit(a.storno_zeit)}
+                            {a.storno_grund ? `: ${a.storno_grund}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td style={td}>
                         <div>{a.kunde ?? '–'}</div>
@@ -909,6 +944,15 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               {feld('Zugnummer (ZN/LZ)', 'zug_nr', { sperre: sperreDispo })}
               {feld('EVU', 'evu', { sperre: sperreDispo })}
               {auswahl('Status', 'status', STATUS, sperreDispo)}
+
+              {form.status === 'storniert' && (
+                <>
+                  {abschnitt('Stornierung')}
+                  {feld('Storniert am', 'storno_datum', { typ: 'date', sperre: sperreDispo })}
+                  {feld('Uhrzeit der Stornierung', 'storno_zeit', { typ: 'time', sperre: sperreDispo })}
+                  {text('Grund der Stornierung (Pflicht)', 'storno_grund', sperreDispo)}
+                </>
+              )}
 
               {abschnitt('Fahrt')}
               {feld('Abfahrt Ort', 'abfahrt_ort', { sperre: sperreDispo })}

@@ -20,6 +20,9 @@ export interface KartenAuftrag {
   infos: string | null
   preis: number | null
   fahrten: unknown
+  storno_datum?: string | null
+  storno_zeit?: string | null
+  storno_grund?: string | null
 }
 
 export interface KartenBesetzung {
@@ -232,6 +235,15 @@ export function AuftragKarte({
           {abrechnungBadge}
         </div>
       </div>
+
+      {a.status === 'storniert' && (
+        <div onClick={onOeffnen} style={{ cursor: 'pointer', background: '#fee2e2', color: '#991b1b', borderRadius: 8, padding: '7px 10px', fontSize: 12.5 }}>
+          <b>Storniert</b>
+          {a.storno_datum ? ` am ${a.storno_datum.split('-').reverse().join('.')}` : ''}
+          {a.storno_zeit ? ` um ${a.storno_zeit.slice(0, 5)} Uhr` : ''}
+          {a.storno_grund ? ` – ${a.storno_grund}` : ''}
+        </div>
+      )}
 
       <div onClick={onOeffnen} style={{ cursor: 'pointer' }}>
         <Ablauf a={a} />
