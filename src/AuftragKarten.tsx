@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { fahrtenPruefen } from './auftragSchicht'
+import { fahrtenPruefen, teilName, teilstrecken } from './auftragSchicht'
 
 export interface KartenAuftrag {
   id: string
@@ -30,6 +30,7 @@ export interface KartenBesetzung {
   offen: boolean
   spotId: string | null
   wgm: { namen: string[]; offen: boolean; spotId: string | null }
+  lok: { name: string; person: string | null; spotId: string | null }[]
 }
 
 const kurz = (z: string | null | undefined) => (z ? z.slice(0, 5) : '')
@@ -56,10 +57,27 @@ interface Schritt {
   nachZeit: string
   lok: string
   haupt: boolean
+  istAb: boolean
+  istAn: boolean
+  wechselVor: string | null
 }
 
-// Reihenfolge: Lokzuführung → Zugfahrt → Rückführung. Die Zugfahrt kommt immer aktuell aus dem Auftrag.
+// Reihenfolge: Lokzuführung → Zugfahrt(en) → Rückführung. Bei einer einzelnen Zugfahrt kommt sie immer aktuell aus dem Auftrag.
+// Bei mehreren Zugfahrten (Personalwechsel) werden alle Teilstrecken angezeigt.
 export function ablaufSchritte(a: KartenAuftrag): Schritt[] {
+  const gespeichert = fahrtenPruefen(a.fahrten).filter((f) => f.von || f.nach || f.von_zeit || f.nach_zeit)
+  if (teilstrecken(a.fahrten).length >= 2) {
+    const zugIndexe = gespeichert.map((f, k) => (f.art === 'Zugfahrt' ? k : -1)).filter((k) => k >= 0)
+    const ersterZug = zugIndexe[0]
+    const letzterZug = zugIndexe[zugIndexe.length - 1]
+    return gespeichert.map((f, k) => ({
+      ...zuSchritt(f),
+      haupt: f.art === 'Zugfahrt',
+      istAb: k === ersterZug,
+      istAn: k === letzterZug,
+      wechselVor: f.art === 'Zugfahrt' && k !== ersterZug ? f.von : null,
+    }))
+  }
   const haupt: Schritt = {
     art: 'Zugfahrt',
     zug: [a.referenz, a.zug_nr ? `(${a.zug_nr})` : ''].filter(Boolean).join(' '),
@@ -69,19 +87,22 @@ export function ablaufSchritte(a: KartenAuftrag): Schritt[] {
     nachZeit: kurz(a.ankunft_soll),
     lok: a.lok ?? '',
     haupt: true,
+    istAb: true,
+    istAn: true,
+    wechselVor: null,
   }
-  const gespeichert = fahrtenPruefen(a.fahrten).filter((f) => f.von || f.nach || f.von_zeit || f.nach_zeit)
   const index = gespeichert.findIndex((f) => f.art === 'Zugfahrt')
-  if (gespeichert.length === 0 || index < 0) {
+  if (gespeichert.length === 0) return [haupt]
+  if (index < 0) {
     const davor = gespeichert.filter((f) => f.art === 'Lokzuführung')
     const danach = gespeichert.filter((f) => f.art !== 'Lokzuführung')
-    return [...davor, ...danach].length === 0 ? [haupt] : [...davor.map(zuSchritt), haupt, ...danach.map(zuSchritt)]
+    return [...davor.map(zuSchritt), haupt, ...danach.map(zuSchritt)]
   }
-  return gespeichert.map((f, i) => (i === index ? haupt : zuSchritt(f)))
+  return gespeichert.map((f, k) => (k === index ? haupt : zuSchritt(f)))
 }
 
 function zuSchritt(f: ReturnType<typeof fahrtenPruefen>[number]): Schritt {
-  return { art: f.art, zug: f.zug, von: f.von, nach: f.nach, vonZeit: f.von_zeit, nachZeit: f.nach_zeit, lok: f.lok, haupt: false }
+  return { art: f.art, zug: f.zug, von: f.von, nach: f.nach, vonZeit: f.von_zeit, nachZeit: f.nach_zeit, lok: f.lok, haupt: false, istAb: false, istAn: false, wechselVor: null }
 }
 
 function abwText(min: number | null): ReactNode {
@@ -100,8 +121,11 @@ export function Ablauf({ a }: { a: KartenAuftrag }) {
   return (
     <div>
       {schritte.map((s, i) => (
+        <div key={i}>
+          {s.wechselVor && (
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: '#6d28d9', margin: '2px 0 5px 4px' }}>↔ Personalwechsel in {s.wechselVor}</div>
+          )}
         <div
-          key={i}
           style={{
             display: 'flex',
             gap: 10,
@@ -126,14 +150,26 @@ export function Ablauf({ a }: { a: KartenAuftrag }) {
               <b>{s.von || '?'}</b> → <b>{s.nach || '?'}</b>
             </div>
             {s.lok && <div style={{ fontSize: 11.5, color: '#64748b' }}>Lok {s.lok}</div>}
-            {s.haupt && (a.abfahrt_ist || a.ankunft_ist) && (
+            {s.haupt && (s.istAb || s.istAn) && (a.abfahrt_ist || a.ankunft_ist) && (
               <div style={{ fontSize: 12, marginTop: 2 }}>
-                Ist: ab {a.abfahrt_ist ? kurz(a.abfahrt_ist) : '–'}
-                {abwText(abweichung(a.abfahrt_soll, a.abfahrt_ist))} · an {a.ankunft_ist ? kurz(a.ankunft_ist) : '–'}
-                {abwText(abweichung(a.ankunft_soll, a.ankunft_ist))}
+                Ist:
+                {s.istAb && (
+                  <>
+                    {' '}ab {a.abfahrt_ist ? kurz(a.abfahrt_ist) : '–'}
+                    {abwText(abweichung(a.abfahrt_soll, a.abfahrt_ist))}
+                  </>
+                )}
+                {s.istAb && s.istAn ? ' ·' : ''}
+                {s.istAn && (
+                  <>
+                    {' '}an {a.ankunft_ist ? kurz(a.ankunft_ist) : '–'}
+                    {abwText(abweichung(a.ankunft_soll, a.ankunft_ist))}
+                  </>
+                )}
               </div>
             )}
           </div>
+        </div>
         </div>
       ))}
     </div>
@@ -190,6 +226,57 @@ function Person({
   )
 }
 
+export function LokTeile({
+  a,
+  b,
+  darfDisponieren,
+  onSchicht,
+}: {
+  a: KartenAuftrag
+  b: KartenBesetzung
+  darfDisponieren: boolean
+  onSchicht: (bereich: 'Lokführer' | 'Wagenmeister', spotId: string | null, teil?: number) => void
+}) {
+  const teile = teilstrecken(a.fahrten)
+  const knopf: React.CSSProperties = { background: 'none', border: '1px solid #14325c', color: '#14325c', borderRadius: 6, padding: '2px 8px', fontSize: 11.5, cursor: 'pointer' }
+  const benutzt = new Set<number>()
+  return (
+    <div style={{ flex: 2, minWidth: 200 }}>
+      <div style={{ fontSize: 10.5, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.3 }}>Lokführer ({teile.length} Schichten)</div>
+      {teile.map((t, i) => {
+        const index = b.lok.findIndex((x, k) => !benutzt.has(k) && x.name.endsWith(teilName(t)))
+        if (index >= 0) benutzt.add(index)
+        const x = index >= 0 ? b.lok[index] : null
+        return (
+          <div key={i} style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span style={{ color: '#64748b', fontSize: 12 }}>
+              {t.von}→{t.nach}:
+            </span>
+            {x?.person ? (
+              <span style={{ fontWeight: 600, color: '#15803d' }}>{x.person}</span>
+            ) : x ? (
+              <span>
+                <span style={{ fontWeight: 600, color: '#b45309' }}>Schicht offen</span>{' '}
+                {darfDisponieren && (
+                  <button onClick={() => onSchicht('Lokführer', x.spotId, i)} style={knopf}>
+                    ändern
+                  </button>
+                )}
+              </span>
+            ) : darfDisponieren && a.status !== 'storniert' ? (
+              <button onClick={() => onSchicht('Lokführer', null, i)} style={knopf}>
+                Schicht anlegen
+              </button>
+            ) : (
+              <span style={{ color: '#94a3b8' }}>–</span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function AuftragKarte({
   a,
   b,
@@ -207,7 +294,7 @@ export function AuftragKarte({
   statusBadge: ReactNode
   abrechnungBadge: ReactNode
   onOeffnen: () => void
-  onSchicht: (bereich: 'Lokführer' | 'Wagenmeister', spotId: string | null) => void
+  onSchicht: (bereich: 'Lokführer' | 'Wagenmeister', spotId: string | null, teil?: number) => void
 }) {
   return (
     <div
@@ -257,15 +344,19 @@ export function AuftragKarte({
       </div>
 
       <div style={{ display: 'flex', gap: 12, borderTop: '1px solid #eef2f8', paddingTop: 8, flexWrap: 'wrap' }}>
-        <Person
-          titel="Lokführer"
-          namen={b.namen}
-          offen={b.offen}
-          darfDisponieren={darfDisponieren}
-          storniert={a.status === 'storniert'}
-          onAnlegen={() => onSchicht('Lokführer', null)}
-          onAendern={() => onSchicht('Lokführer', b.spotId)}
-        />
+        {teilstrecken(a.fahrten).length >= 2 ? (
+          <LokTeile a={a} b={b} darfDisponieren={darfDisponieren} onSchicht={onSchicht} />
+        ) : (
+          <Person
+            titel="Lokführer"
+            namen={b.namen}
+            offen={b.offen}
+            darfDisponieren={darfDisponieren}
+            storniert={a.status === 'storniert'}
+            onAnlegen={() => onSchicht('Lokführer', null)}
+            onAendern={() => onSchicht('Lokführer', b.spotId)}
+          />
+        )}
         <Person
           titel="Wagenmeister"
           namen={b.wgm.namen}

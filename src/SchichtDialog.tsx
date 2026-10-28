@@ -7,6 +7,8 @@ import {
   infoAusFahrten,
   leereFahrt,
   pauseNachArbZG,
+  teilstrecken,
+  wechselHinweis,
   zeitenAusFahrten,
 } from './auftragSchicht'
 import type { AuftragKern, Fahrtzeile } from './auftragSchicht'
@@ -28,19 +30,38 @@ function bruttoVon(beginn: string, ende: string): number {
 }
 
 export default function SchichtDialog({
-  auftrag,
+  auftrag: originalAuftrag,
   spotId,
   bereich = 'Lokführer',
+  teilstrecke = null,
   onSchliessen,
   onFertig,
 }: {
   auftrag: DialogAuftrag
   spotId: string | null
   bereich?: 'Lokführer' | 'Wagenmeister'
+  teilstrecke?: number | null
   onSchliessen: () => void
   onFertig: () => void
 }) {
   const wgm = bereich === 'Wagenmeister'
+  // Bei Aufträgen mit Personalwechsel gilt der Dialog für eine Teilstrecke
+  const alleTeile = teilstrecken(originalAuftrag.fahrten)
+  const teilLeg = !wgm && teilstrecke !== null ? alleTeile[teilstrecke] : undefined
+  const auftrag: DialogAuftrag = teilLeg
+    ? {
+        ...originalAuftrag,
+        abfahrt_ort: teilLeg.von,
+        abfahrt_datum: teilLeg.datum ?? originalAuftrag.abfahrt_datum,
+        abfahrt_soll: teilLeg.von_zeit || null,
+        ankunft_ort: teilLeg.nach,
+        ankunft_datum: null,
+        ankunft_soll: teilLeg.nach_zeit || null,
+        lok: teilLeg.lok || originalAuftrag.lok,
+        mitarbeiter_info: wechselHinweis(teilstrecke ?? 0, alleTeile).trim() || null,
+        fahrten: [teilLeg],
+      }
+    : originalAuftrag
   const gespeicherte = fahrtenPruefen(auftrag.fahrten)
   const [fahrten, setFahrten] = useState<Fahrtzeile[]>(!wgm && gespeicherte.length > 0 ? gespeicherte : fahrtenAusAuftrag(auftrag))
   const [name, setName] = useState(
@@ -164,7 +185,7 @@ export default function SchichtDialog({
       return
     }
     // Fahrten am Auftrag merken (fuer spaetere Aenderungen)
-    if (!wgm) await supabase.from('auftraege').update({ fahrten }).eq('id', auftrag.id)
+    if (!wgm && !teilLeg) await supabase.from('auftraege').update({ fahrten }).eq('id', auftrag.id)
     setSpeichert(false)
     onFertig()
   }
@@ -184,7 +205,7 @@ export default function SchichtDialog({
         style={{ background: '#ffffff', borderRadius: 12, padding: 20, width: 900, maxWidth: '100%', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>{spotId ? `${bereich}-Schicht ändern` : `${bereich}-Schicht anlegen`}</div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)' }}>{spotId ? `${bereich}-Schicht ändern` : `${bereich}-Schicht anlegen`}{teilLeg ? ` · ${teilLeg.von} → ${teilLeg.nach}` : ''}</div>
           <button onClick={onSchliessen} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}>
             ✕
           </button>

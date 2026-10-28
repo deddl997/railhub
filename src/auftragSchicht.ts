@@ -94,6 +94,7 @@ export interface Fahrtzeile {
   nach: string
   nach_zeit: string
   lok: string
+  datum?: string
 }
 
 export function leereFahrt(art = 'Zugfahrt'): Fahrtzeile {
@@ -184,3 +185,52 @@ export function zeitenAusFahrten(abfahrtDatum: string, abfahrtSoll: string | nul
     pause: pauseNachArbZG(brutto),
   }
 }
+
+
+// ============================================================
+// Mehrere Teilstrecken mit Personalwechsel (z. B. MDIF -> FFU -> HBHSK)
+// ============================================================
+
+// Teilstrecken eines Auftrags: mindestens zwei Zugfahrten in der Liste. Zwischen ihnen ist Personalwechsel.
+export function teilstrecken(fahrten: unknown): Fahrtzeile[] {
+  const zug = fahrtenPruefen(fahrten).filter((f) => f.art === 'Zugfahrt' && f.von && f.nach)
+  return zug.length >= 2 ? zug : []
+}
+
+export function teilName(f: Fahrtzeile): string {
+  return `${f.von}–${f.nach}`
+}
+
+function wechselHinweis(i: number, legs: Fahrtzeile[]): string {
+  const teile: string[] = []
+  if (i > 0) teile.push(`Übernahme von Kollegen in ${legs[i].von} um ${legs[i].von_zeit}.`)
+  if (i < legs.length - 1) teile.push(`Übergabe an Kollegen in ${legs[i].nach} um ${legs[i].nach_zeit}.`)
+  return teile.length > 0 ? ' Personalwechsel: ' + teile.join(' ') : ''
+}
+
+// Eine Schicht pro Teilstrecke, oder eine einzelne Schicht bei normalen Aufträgen
+export function schichtenAusAuftrag(a: AuftragKern & { fahrten: unknown }): SchichtDaten[] {
+  const legs = teilstrecken(a.fahrten)
+  if (legs.length === 0) {
+    const s = schichtAusAuftrag(a)
+    return s ? [s] : []
+  }
+  const ergebnis: SchichtDaten[] = []
+  legs.forEach((leg, i) => {
+    const s = schichtAusAuftrag({
+      ...a,
+      abfahrt_ort: leg.von,
+      abfahrt_datum: leg.datum ?? a.abfahrt_datum,
+      abfahrt_soll: leg.von_zeit || null,
+      ankunft_ort: leg.nach,
+      ankunft_datum: null,
+      ankunft_soll: leg.nach_zeit || null,
+      lok: leg.lok || a.lok,
+      mitarbeiter_info: null,
+    })
+    if (s) ergebnis.push({ ...s, info: (s.info ?? '') + wechselHinweis(i, legs) })
+  })
+  return ergebnis
+}
+
+export { wechselHinweis }

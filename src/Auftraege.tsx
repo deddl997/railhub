@@ -2,11 +2,11 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
 import { useLiveAktualisierung } from './liveAktualisierung'
-import { schichtAusAuftrag } from './auftragSchicht'
+import { schichtenAusAuftrag, teilstrecken } from './auftragSchicht'
 import BestellungImport from './BestellungImport'
 import SchichtDialog from './SchichtDialog'
 import { fahrtenPruefen } from './auftragSchicht'
-import { Ablauf, AuftragKarte, tagUeberschrift } from './AuftragKarten'
+import { Ablauf, AuftragKarte, LokTeile, tagUeberschrift } from './AuftragKarten'
 import StatusMailDialog from './StatusMailDialog'
 
 interface Auftrag {
@@ -94,6 +94,7 @@ interface Besetzung {
   offen: boolean
   spotId: string | null
   wgm: WgmBesetzung
+  lok: { name: string; person: string | null; spotId: string | null }[]
 }
 
 const LEERE_WGM: WgmBesetzung = { namen: [], offen: false, spotId: null }
@@ -335,7 +336,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       /* egal */
     }
   }
-  const [schichtDialog, setSchichtDialog] = useState<{ auftrag: Auftrag; spotId: string | null; bereich: 'Lokführer' | 'Wagenmeister' } | null>(null)
+  const [schichtDialog, setSchichtDialog] = useState<{ auftrag: Auftrag; spotId: string | null; bereich: 'Lokführer' | 'Wagenmeister'; teil: number | null } | null>(null)
   const still = useRef(false)
   const [zaehler, setZaehler] = useState(0)
 
@@ -367,23 +368,25 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
       const liste = (antwort.data ?? []) as Auftrag[]
       const ids = liste.map((a) => a.id)
       const neueBesetzung: Record<string, Besetzung> = {}
-      for (const id of ids) neueBesetzung[id] = { namen: [], offen: false, spotId: null, wgm: { namen: [], offen: false, spotId: null } }
+      for (const id of ids) neueBesetzung[id] = { namen: [], offen: false, spotId: null, wgm: { namen: [], offen: false, spotId: null }, lok: [] }
       if (ids.length > 0) {
         const [eintraege, offene, personen] = await Promise.all([
-          supabase.from('dienstplan_eintraege').select('mitarbeiter_id, auftrag_id').eq('ist_spotschicht', true).in('auftrag_id', ids),
-          supabase.from('offene_spotschichten').select('id, auftrag_id, bereich').in('auftrag_id', ids),
+          supabase.from('dienstplan_eintraege').select('mitarbeiter_id, auftrag_id, spot_name').eq('ist_spotschicht', true).in('auftrag_id', ids),
+          supabase.from('offene_spotschichten').select('id, auftrag_id, bereich, name').in('auftrag_id', ids),
           supabase.from('mitarbeiter').select('id, name, kategorie'),
         ])
         const personenListe = (personen.data ?? []) as { id: string; name: string; kategorie: string | null }[]
         const namen = new Map<string, string>(personenListe.map((p) => [p.id, p.name]))
         const istWgm = new Map<string, boolean>(personenListe.map((p) => [p.id, (p.kategorie ?? '').toLowerCase().includes('wagen')]))
-        for (const e of (eintraege.data ?? []) as { mitarbeiter_id: string; auftrag_id: string }[]) {
+        for (const e of (eintraege.data ?? []) as { mitarbeiter_id: string; auftrag_id: string; spot_name: string | null }[]) {
           const ziel = istWgm.get(e.mitarbeiter_id) ? neueBesetzung[e.auftrag_id]?.wgm : neueBesetzung[e.auftrag_id]
           ziel?.namen.push(namen.get(e.mitarbeiter_id) ?? 'Unbekannt')
+          if (!istWgm.get(e.mitarbeiter_id)) neueBesetzung[e.auftrag_id]?.lok.push({ name: e.spot_name ?? '', person: namen.get(e.mitarbeiter_id) ?? 'Unbekannt', spotId: null })
         }
-        for (const o of (offene.data ?? []) as { id: string; auftrag_id: string; bereich: string }[]) {
+        for (const o of (offene.data ?? []) as { id: string; auftrag_id: string; bereich: string; name: string }[]) {
           const b = neueBesetzung[o.auftrag_id]
           if (!b) continue
+          if (o.bereich !== 'Wagenmeister') b.lok.push({ name: o.name ?? '', person: null, spotId: o.id })
           const ziel = o.bereich === 'Wagenmeister' ? b.wgm : b
           ziel.offen = true
           ziel.spotId = ziel.spotId ?? o.id
@@ -493,26 +496,29 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
   }
 
   async function schichtAnlegen(a: Auftrag): Promise<string | null> {
-    const s = schichtAusAuftrag(a)
-    if (!s) return 'Für ' + (a.referenz ?? 'den Auftrag') + ' fehlt die Abfahrtszeit.'
-    const { error } = await supabase.from('offene_spotschichten').insert({
-      datum: s.datum,
-      bereich: 'Lokführer',
-      name: s.name,
-      beginn_zeit: s.beginn_zeit,
-      ende_zeit: s.ende_zeit,
-      pause_minuten: s.pause_minuten,
-      dienstort: s.dienstort,
-      farbe: '#8b1a1a',
-      info: s.info,
-      auftrag_id: a.id,
-    })
+    // Bei Personalwechsel gibt es pro Teilstrecke eine Schicht
+    const schichten = schichtenAusAuftrag(a)
+    if (schichten.length === 0) return 'Für ' + (a.referenz ?? 'den Auftrag') + ' fehlt die Abfahrtszeit.'
+    const { error } = await supabase.from('offene_spotschichten').insert(
+      schichten.map((s) => ({
+        datum: s.datum,
+        bereich: 'Lokführer',
+        name: s.name,
+        beginn_zeit: s.beginn_zeit,
+        ende_zeit: s.ende_zeit,
+        pause_minuten: s.pause_minuten,
+        dienstort: s.dienstort,
+        farbe: '#8b1a1a',
+        info: s.info,
+        auftrag_id: a.id,
+      }))
+    )
     return error ? error.message : null
   }
 
-  function schichtDialogOeffnen(a: Auftrag, spotId: string | null = null, bereich: 'Lokführer' | 'Wagenmeister' = 'Lokführer') {
+  function schichtDialogOeffnen(a: Auftrag, spotId: string | null = null, bereich: 'Lokführer' | 'Wagenmeister' = 'Lokführer', teil: number | null = null) {
     setFehler(null)
-    setSchichtDialog({ auftrag: a, spotId, bereich })
+    setSchichtDialog({ auftrag: a, spotId, bereich, teil })
   }
 
   async function alleSchichtenAnlegen() {
@@ -722,13 +728,13 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                     <AuftragKarte
                       key={a.id}
                       a={a}
-                      b={besetzung[a.id] ?? { namen: [], offen: false, spotId: null, wgm: LEERE_WGM }}
+                      b={besetzung[a.id] ?? { namen: [], offen: false, spotId: null, wgm: LEERE_WGM, lok: [] }}
                       darfDisponieren={darfDisponieren}
                       zeigePreis={darfAbrechnen}
                       statusBadge={badge(STATUS[a.status] ?? STATUS.geplant)}
                       abrechnungBadge={badge(ABRECHNUNG[a.abrechnung_status] ?? ABRECHNUNG.offen)}
                       onOeffnen={() => bearbeitenOeffnen(a)}
-                      onSchicht={(bereich, spotId) => schichtDialogOeffnen(a, spotId, bereich)}
+                      onSchicht={(bereich, spotId, teil) => schichtDialogOeffnen(a, spotId, bereich, teil ?? null)}
                     />
                   ))}
               </div>
@@ -756,7 +762,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
             </thead>
             <tbody>
               {sichtbar.map((a) => {
-                const b = besetzung[a.id] ?? { namen: [], offen: false, spotId: null, wgm: LEERE_WGM }
+                const b = besetzung[a.id] ?? { namen: [], offen: false, spotId: null, wgm: LEERE_WGM, lok: [] }
                 const tag = new Date(a.abfahrt_datum + 'T00:00:00')
                 const spaet = verspaetung(a.ankunft_soll, a.ankunft_ist)
                 const spaetAb = verspaetung(a.abfahrt_soll, a.abfahrt_ist)
@@ -810,7 +816,9 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
                         <div style={{ fontSize: 11, color: '#64748b' }}>{a.lok}</div>
                       </td>
                       <td style={td} onClick={(e) => e.stopPropagation()}>
-                        {b.namen.length > 0 ? (
+                        {teilstrecken(a.fahrten).length >= 2 ? (
+                          <LokTeile a={a} b={b} darfDisponieren={darfDisponieren} onSchicht={(bereich, spotId, teil) => schichtDialogOeffnen(a, spotId, bereich, teil ?? null)} />
+                        ) : b.namen.length > 0 ? (
                           <span style={{ fontWeight: 600, color: '#15803d' }}>{b.namen.join(', ')}</span>
                         ) : b.offen ? (
                           <span>
@@ -885,6 +893,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
           auftrag={schichtDialog.auftrag}
           spotId={schichtDialog.spotId}
           bereich={schichtDialog.bereich}
+          teilstrecke={schichtDialog.teil}
           onSchliessen={() => setSchichtDialog(null)}
           onFertig={() => {
             setSchichtDialog(null)
@@ -997,7 +1006,23 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               <button onClick={() => setBearbeiteId(null)} style={knopf}>
                 Abbrechen
               </button>
-              {aktuellerAuftrag && darfDisponieren && (
+              {aktuellerAuftrag && darfDisponieren && teilstrecken(aktuellerAuftrag.fahrten).length >= 2 && (besetzung[aktuellerAuftrag.id]?.lok.length ?? 0) === 0 && (
+                <button
+                  onClick={async () => {
+                    const f = await schichtAnlegen(aktuellerAuftrag)
+                    if (f) setMeldung('Schichten konnten nicht angelegt werden: ' + f)
+                    else {
+                      setBearbeiteId(null)
+                      still.current = true
+                      setZaehler((z) => z + 1)
+                    }
+                  }}
+                  style={knopf}
+                >
+                  Lokführer-Schichten anlegen ({teilstrecken(aktuellerAuftrag.fahrten).length} Teilstrecken)
+                </button>
+              )}
+              {aktuellerAuftrag && darfDisponieren && teilstrecken(aktuellerAuftrag.fahrten).length < 2 && (
                 <button
                   onClick={() => {
                     setBearbeiteId(null)

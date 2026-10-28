@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
@@ -56,6 +56,9 @@ interface Zeile {
   pause: number
   pauseManuell: boolean
   farbe: string
+  gruppe: number
+  teil: number
+  teile: number
 }
 
 function zeitInMinuten(zeit: string): number {
@@ -134,45 +137,87 @@ function dateiAlsBase64(datei: File): Promise<string> {
   })
 }
 
+// Absolute Minuten (Datum + Uhrzeit), fuer den Vergleich von Teilstrecken
+function absMin(datum: string, zeit: string): number {
+  const [j, m, t] = datum.split('-').map(Number)
+  const [h, min] = zeit.split(':').map(Number)
+  return Date.UTC(j, m - 1, t, h, min) / 60000
+}
+
+// Fahrten mit gleicher Referenz, die lueckenlos aneinander anschliessen (Nach = naechstes Von), sind ein Auftrag mit Personalwechsel
+function fahrtenGruppieren(fahrten: Fahrt[]): Fahrt[][] {
+  const gruppen: Fahrt[][] = []
+  for (const f of fahrten) {
+    const letzte = gruppen[gruppen.length - 1]
+    const vorher = letzte ? letzte[letzte.length - 1] : null
+    if (vorher && vorher.referenz === f.referenz && vorher.nach.trim().toLowerCase() === f.von.trim().toLowerCase()) {
+      let ende = absMin(vorher.datum, vorher.nach_zeit)
+      if (ende < absMin(vorher.datum, vorher.von_zeit)) ende += 1440
+      const start = absMin(f.datum, f.von_zeit)
+      if (start >= ende && start - ende <= 12 * 60) {
+        letzte.push(f)
+        continue
+      }
+    }
+    gruppen.push([f])
+  }
+  return gruppen
+}
+
 function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
-  const zeilen: Zeile[] = fahrten.map((f, i) => {
-    const hinweise: string[] = f.tf_hinweis ? [`In der Bestellung vermerkt: ${f.tf_hinweis}`] : []
-    let beginnMin = zeitInMinuten(f.von_zeit) - VORLAUF_MINUTEN
-    let datum = f.datum
-    if (beginnMin < 0) {
-      beginnMin += 1440
-      datum = tagVorher(datum)
-    }
-    const nummer = f.referenznummer ? ` (${f.referenznummer})` : ''
-    // Dauer der Schicht von Dienstbeginn bis Ankunft (ueber Mitternacht moeglich)
-    let dauer = zeitInMinuten(f.nach_zeit) - beginnMin
-    if (dauer <= 0) dauer += 1440
-    let ende = f.nach_zeit
-    let verlaengertVon: string | null = null
-    if (dauer < MINDEST_DAUER_MINUTEN) {
-      dauer = MINDEST_DAUER_MINUTEN
-      ende = minutenAlsZeit((beginnMin + dauer) % 1440)
-      verlaengertVon = f.nach_zeit
-    }
-    return {
-      id: i,
-      aktiv: !f.tf_hinweis,
-      name: `${f.referenz} ${f.von}–${f.nach}`,
-      datum,
-      beginn: minutenAlsZeit(beginnMin),
-      ende,
-      dienstort: f.von,
-      info:
-        `Zug ${f.referenz}${nummer}: ${f.von} ${f.von_zeit} → ${f.nach} ${f.nach_zeit}.` +
-        (f.lok ? ` Geplante Lok: ${f.lok}.` : ''),
-      hinweise,
-      doppelt: false,
-      verlaengertVon,
-      fahrt: f,
-      pause: pauseNachArbZG(dauer),
-      pauseManuell: false,
-      farbe: SPOT_FARBE,
-    }
+  const gruppen = fahrtenGruppieren(fahrten)
+  const zeilen: Zeile[] = []
+  gruppen.forEach((legs, g) => {
+    const tfHinweis = legs.map((l) => l.tf_hinweis).find(Boolean) ?? null
+    legs.forEach((f, teil) => {
+      const hinweise: string[] = tfHinweis ? [`In der Bestellung vermerkt: ${tfHinweis}`] : []
+      let beginnMin = zeitInMinuten(f.von_zeit) - VORLAUF_MINUTEN
+      let datum = f.datum
+      if (beginnMin < 0) {
+        beginnMin += 1440
+        datum = tagVorher(datum)
+      }
+      const nummer = f.referenznummer ? ` (${f.referenznummer})` : ''
+      let dauer = zeitInMinuten(f.nach_zeit) - beginnMin
+      if (dauer <= 0) dauer += 1440
+      let ende = f.nach_zeit
+      let verlaengertVon: string | null = null
+      if (dauer < MINDEST_DAUER_MINUTEN) {
+        dauer = MINDEST_DAUER_MINUTEN
+        ende = minutenAlsZeit((beginnMin + dauer) % 1440)
+        verlaengertVon = f.nach_zeit
+      }
+      let wechsel = ''
+      if (legs.length > 1) {
+        const teile: string[] = []
+        if (teil > 0) teile.push(`Übernahme von Kollegen in ${f.von} um ${f.von_zeit}.`)
+        if (teil < legs.length - 1) teile.push(`Übergabe an Kollegen in ${f.nach} um ${f.nach_zeit}.`)
+        wechsel = ' Personalwechsel: ' + teile.join(' ')
+      }
+      zeilen.push({
+        id: 0,
+        aktiv: !tfHinweis,
+        name: `${f.referenz} ${f.von}–${f.nach}`,
+        datum,
+        beginn: minutenAlsZeit(beginnMin),
+        ende,
+        dienstort: f.von,
+        info:
+          `Zug ${f.referenz}${nummer}: ${f.von} ${f.von_zeit} → ${f.nach} ${f.nach_zeit}.` +
+          (f.lok ? ` Geplante Lok: ${f.lok}.` : '') +
+          wechsel,
+        hinweise,
+        doppelt: false,
+        verlaengertVon,
+        fahrt: f,
+        pause: pauseNachArbZG(dauer),
+        pauseManuell: false,
+        farbe: SPOT_FARBE,
+        gruppe: g,
+        teil,
+        teile: legs.length,
+      })
+    })
   })
 
   // Ausreisser beim Datum markieren (z.B. Tippfehler in der Bestellung)
@@ -184,7 +229,11 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
       if (Math.abs(t - median) > 4) z.hinweise.push('Datum prüfen: weicht stark von den übrigen ab')
     }
   }
-  return zeilen.sort((a, b) => (a.datum + a.beginn).localeCompare(b.datum + b.beginn)).map((z, i) => ({ ...z, id: i }))
+  // Auftraege nach erstem Abfahrtstag sortieren, Teilstrecken bleiben zusammen
+  const ersteZeit = new Map<number, string>()
+  for (const z of zeilen) if (z.teil === 0) ersteZeit.set(z.gruppe, z.datum + z.beginn)
+  zeilen.sort((a, b) => (ersteZeit.get(a.gruppe) ?? '').localeCompare(ersteZeit.get(b.gruppe) ?? '') || a.gruppe - b.gruppe || a.teil - b.teil)
+  return zeilen.map((z, i) => ({ ...z, id: i }))
 }
 
 export default function BestellungImport({
@@ -263,7 +312,8 @@ export default function BestellungImport({
       for (const o of offen.data ?? []) vorhanden.add(`${o.datum}|${o.name}|${String(o.beginn_zeit).slice(0, 5)}`)
       for (const b of belegt.data ?? []) vorhanden.add(`${b.datum}|${b.spot_name}|${String(b.spot_beginn_zeit).slice(0, 5)}`)
       for (const z of neueZeilen) {
-        if (auftragsSchluessel.has(`${z.fahrt.datum}|${z.fahrt.referenz}|${z.fahrt.von_zeit}`)) {
+        const ersteFahrt = neueZeilen.find((x) => x.gruppe === z.gruppe && x.teil === 0)?.fahrt ?? z.fahrt
+        if (auftragsSchluessel.has(`${ersteFahrt.datum}|${ersteFahrt.referenz}|${ersteFahrt.von_zeit}`)) {
           z.doppelt = true
           z.aktiv = false
           z.hinweise.push('Auftrag gibt es schon')
@@ -302,39 +352,57 @@ export default function BestellungImport({
   }
 
   const aktive = zeilen.filter((z) => z.aktiv)
+  const gruppenIds = Array.from(new Set(zeilen.map((z) => z.gruppe)))
+  const aktiveGruppen = Array.from(new Set(aktive.map((z) => z.gruppe)))
 
   async function anlegen() {
     if (aktive.length === 0) return
     setSpeichert(true)
     setFehler(null)
-    // Zuerst die Auftraege anlegen, dann (wenn gewuenscht) die Schichten dazu
-    const ids = aktive.map(() => crypto.randomUUID())
-    const { error: auftragFehler } = await supabase.from('auftraege').insert(
-      aktive.map((z, i) => {
-        const f = z.fahrt
-        const naechsterTag = zeitInMinuten(f.nach_zeit) < zeitInMinuten(f.von_zeit)
-        let ankunftDatum = f.datum
-        if (naechsterTag) {
-          const d = new Date(f.datum + 'T00:00:00')
-          d.setDate(d.getDate() + 1)
-          ankunftDatum = datumZuISO(d)
-        }
-        return {
-          id: ids[i],
-          referenz: f.referenz,
-          zug_nr: f.referenznummer,
-          evu: 'RBL',
-          abfahrt_ort: f.von,
-          abfahrt_datum: f.datum,
-          abfahrt_soll: f.von_zeit,
-          ankunft_ort: f.nach,
-          ankunft_datum: ankunftDatum,
-          ankunft_soll: f.nach_zeit,
-          lok: f.lok,
-          mitarbeiter_info: z.info.trim() || null,
-        }
-      })
-    )
+    // Ein Auftrag pro Referenz (auch mit Personalwechsel), dann die Schichten pro Teilstrecke
+    const idJeGruppe = new Map<number, string>()
+    for (const g of aktiveGruppen) idJeGruppe.set(g, crypto.randomUUID())
+    const auftragsZeilen = aktiveGruppen.map((g) => {
+      const legs = zeilen.filter((z) => z.gruppe === g).map((z) => z.fahrt)
+      const erste = legs[0]
+      const letzte = legs[legs.length - 1]
+      let ankunftDatum = letzte.datum
+      if (zeitInMinuten(letzte.nach_zeit) < zeitInMinuten(letzte.von_zeit)) {
+        const d = new Date(letzte.datum + 'T00:00:00')
+        d.setDate(d.getDate() + 1)
+        ankunftDatum = datumZuISO(d)
+      }
+      const loks = Array.from(new Set(legs.map((l) => l.lok).filter(Boolean))) as string[]
+      const mehrere = legs.length > 1
+      const einzelneZeile = zeilen.find((z) => z.gruppe === g)
+      return {
+        id: idJeGruppe.get(g) as string,
+        referenz: erste.referenz,
+        zug_nr: erste.referenznummer,
+        evu: 'RBL',
+        abfahrt_ort: erste.von,
+        abfahrt_datum: erste.datum,
+        abfahrt_soll: erste.von_zeit,
+        ankunft_ort: letzte.nach,
+        ankunft_datum: ankunftDatum,
+        ankunft_soll: letzte.nach_zeit,
+        lok: loks.join(' / ') || null,
+        mitarbeiter_info: mehrere ? null : (einzelneZeile?.info.trim() || null),
+        fahrten: mehrere
+          ? legs.map((l) => ({
+              art: 'Zugfahrt',
+              zug: [l.referenz, l.referenznummer ? `(${l.referenznummer})` : ''].filter(Boolean).join(' '),
+              von: l.von,
+              von_zeit: l.von_zeit,
+              nach: l.nach,
+              nach_zeit: l.nach_zeit,
+              lok: l.lok ?? '',
+              datum: l.datum,
+            }))
+          : [],
+      }
+    })
+    const { error: auftragFehler } = await supabase.from('auftraege').insert(auftragsZeilen)
     if (auftragFehler) {
       setSpeichert(false)
       setFehler('Aufträge anlegen fehlgeschlagen: ' + auftragFehler.message)
@@ -342,7 +410,7 @@ export default function BestellungImport({
     }
     if (mitSchichten) {
       const { error } = await supabase.from('offene_spotschichten').insert(
-        aktive.map((z, i) => ({
+        aktive.map((z) => ({
           datum: z.datum,
           bereich: 'Lokführer',
           name: z.name.trim() || 'Fahrt',
@@ -352,7 +420,7 @@ export default function BestellungImport({
           dienstort: z.dienstort.trim() || null,
           farbe: z.farbe || SPOT_FARBE,
           info: z.info.trim() || null,
-          auftrag_id: ids[i],
+          auftrag_id: idJeGruppe.get(z.gruppe),
         }))
       )
       if (error) {
@@ -420,8 +488,8 @@ export default function BestellungImport({
         {schritt === 'wahl' && (
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 14px' }}>
-              Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Fahrt wird ein
-              Auftrag in der Auftragsliste und, wenn du möchtest, eine offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
+              Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Referenz wird ein
+              Auftrag in der Auftragsliste (mit Personalwechsel am Zwischenhalt, dann je Teilstrecke eine Schicht) und, wenn du möchtest, eine offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
             <label
@@ -454,7 +522,7 @@ export default function BestellungImport({
         {schritt === 'vorschau' && (
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 10px' }}>
-              {zeilen.length} Fahrten erkannt, {aktive.length} werden angelegt. Du kannst Name, Datum, Zeiten, Dienstort und Info ändern oder Zeilen
+              {gruppenIds.length} Aufträge mit {zeilen.length} Schichten erkannt, {aktiveGruppen.length} Aufträge mit {aktive.length} Schichten werden angelegt. Fährt ein Zug mit gleicher Referenz über einen Zwischenhalt, ist das ein Auftrag mit Personalwechsel und jede Teilstrecke bekommt eine eigene Schicht. Du kannst Name, Datum, Zeiten, Dienstort und Info ändern oder Zeilen
               abwählen. Die Pause wird nach dem Arbeitszeitgesetz berechnet und passt sich bei geänderten Zeiten an. Wenn du sie von Hand änderst, bleibt dein
               Wert stehen.
             </div>
@@ -498,7 +566,20 @@ export default function BestellungImport({
                 </thead>
                 <tbody>
                   {zeilen.map((z) => (
-                    <tr key={z.id} style={{ borderTop: '1px solid #eef2f8', opacity: z.aktiv ? 1 : 0.5, verticalAlign: 'top' }}>
+                    <Fragment key={z.id}>
+                    {z.teil === 0 && z.teile > 1 && (
+                      <tr>
+                        <td colSpan={9} style={{ padding: '8px 6px 2px', background: '#f5f3ff', color: '#5b21b6', fontWeight: 700, fontSize: 12 }}>
+                          {z.fahrt.referenz} · Personalwechsel in{' '}
+                          {zeilen
+                            .filter((x) => x.gruppe === z.gruppe && x.teil > 0)
+                            .map((x) => x.fahrt.von)
+                            .join(', ')}{' '}
+                          · {z.teile} Schichten
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ borderTop: '1px solid #eef2f8', opacity: z.aktiv ? 1 : 0.5, verticalAlign: 'top' }}>
                       <td style={{ padding: '5px 6px' }}>
                         <input type="checkbox" checked={z.aktiv} onChange={(e) => zeileAendern(z.id, { aktiv: e.target.checked })} />
                       </td>
@@ -552,6 +633,7 @@ export default function BestellungImport({
                         />
                       </td>
                     </tr>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -603,7 +685,7 @@ export default function BestellungImport({
                   opacity: speichert || aktive.length === 0 ? 0.5 : 1,
                 }}
               >
-                {speichert ? 'Legt an ...' : `${aktive.length} Aufträge anlegen`}
+                {speichert ? 'Legt an ...' : `${aktiveGruppen.length} Aufträge mit ${aktive.length} Schichten anlegen`}
               </button>
             </div>
             {aktive.length > 0 && (
