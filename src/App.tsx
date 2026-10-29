@@ -6,6 +6,7 @@ import PasswortDialog from './PasswortDialog'
 import Uebersichten from './Uebersichten'
 import Auftraege from './Auftraege'
 import Abrechnung from './Abrechnung'
+import Bahnstrom from './Bahnstrom'
 import { useRolle } from './useRolle'
 import { useLiveAktualisierung } from './liveAktualisierung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
@@ -27,6 +28,7 @@ const ALLE_TABS = [
   { id: 'uebersicht', label: 'Übersicht', kurz: 'Übersicht', nurAdmin: false },
   { id: 'auftraege', label: 'Aufträge', kurz: 'Aufträge', nurAdmin: false },
   { id: 'abrechnung', label: 'Abrechnung', kurz: 'Abrechnung', nurAdmin: false },
+  { id: 'bahnstrom', label: 'Bahnstrom', kurz: 'Bahnstrom', nurAdmin: false },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', kurz: 'Dienstplan', nurAdmin: true },
@@ -146,7 +148,7 @@ function App() {
   const darfDisponieren = istAdmin || rolle === 'disponent'
   const darfAbrechnen = istAdmin || rolle === 'abrechnung'
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' ? darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' ? darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
@@ -158,6 +160,7 @@ function App() {
     },
     { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung'] },
+    { id: 'bahnstrom', label: 'Bahnstrom', tabs: ['bahnstrom'] },
     { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter'] },
     { id: 'streckenkunde', label: 'Streckenkunde', tabs: ['streckenkunde'] },
   ]
@@ -470,6 +473,20 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Aufträge</h3>
             <Auftraege darfDisponieren={darfDisponieren} darfAbrechnen={darfAbrechnen} />
+          </div>
+        )}
+
+        {aktiverTab === 'bahnstrom' && (darfDisponieren || darfAbrechnen) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Bahnstrom</h3>
+            <Bahnstrom />
           </div>
         )}
 
