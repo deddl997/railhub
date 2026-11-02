@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
+import { fahrtenPruefen } from './auftragSchicht'
+import { TRASSENFINDER_URL, ortPasst, type Trassenpreis } from './Trassenpreise'
 
 interface Auftrag {
   id: string
@@ -12,6 +14,7 @@ interface Auftrag {
   abfahrt_datum: string
   ankunft_ort: string | null
   preis: number | null
+  fahrten: unknown
 }
 
 interface Kosten {
@@ -70,6 +73,34 @@ function stuecke<T>(liste: T[], groesse: number): T[][] {
   return ergebnis
 }
 
+interface Bein {
+  art: string
+  von: string
+  nach: string
+}
+
+// Strecken eines Auftrags, fuer die eine Trasse faellig ist (Zugfahrt, Lokzufuehrung, Lokrueckfuehrung)
+function trassenBeine(a: Auftrag): Bein[] {
+  const f = fahrtenPruefen(a.fahrten).filter(
+    (x) => ['Zugfahrt', 'Lokzuführung', 'Lokrückführung'].includes(x.art) && x.von.trim() !== '' && x.nach.trim() !== ''
+  )
+  if (f.length > 0) return f.map((x) => ({ art: x.art, von: x.von.trim(), nach: x.nach.trim() }))
+  return a.abfahrt_ort && a.ankunft_ort ? [{ art: 'Zugfahrt', von: a.abfahrt_ort, nach: a.ankunft_ort }] : []
+}
+
+function preisKandidaten(bein: Bein, liste: Trassenpreis[]): { t: Trassenpreis; umgekehrt: boolean }[] {
+  const lz = bein.art !== 'Zugfahrt'
+  const treffer: { t: Trassenpreis; umgekehrt: boolean }[] = []
+  for (const t of liste) {
+    if ((t.art === 'LZ') !== lz) continue
+    if (ortPasst(t.von, bein.von) && ortPasst(t.nach, bein.nach)) treffer.push({ t, umgekehrt: false })
+    else if (ortPasst(t.von, bein.nach) && ortPasst(t.nach, bein.von)) treffer.push({ t, umgekehrt: true })
+  }
+  return treffer
+    .sort((x, y) => Number(x.umgekehrt) - Number(y.umgekehrt) || y.t.stand_datum.localeCompare(x.t.stand_datum))
+    .slice(0, 3)
+}
+
 type Gruppierung = 'auftrag' | 'kunde' | 'strecke' | 'monat'
 
 export default function Wirtschaftlichkeit() {
@@ -83,6 +114,7 @@ export default function Wirtschaftlichkeit() {
   const [schichten, setSchichten] = useState<Schicht[]>([])
   const [personBereich, setPersonBereich] = useState<Record<string, string>>({})
   const [saetze, setSaetze] = useState<Satz[]>([])
+  const [preisliste, setPreisliste] = useState<Trassenpreis[]>([])
   const [satzEntwurf, setSatzEntwurf] = useState<Record<string, string>>({})
   const [laedt, setLaedt] = useState(true)
   const [fehler, setFehler] = useState<string | null>(null)
@@ -112,9 +144,12 @@ export default function Wirtschaftlichkeit() {
       setSaetze(satzListe)
       setSatzEntwurf(Object.fromEntries(satzListe.map((x) => [x.schluessel, String(x.wert).replace('.', ',')])))
 
+      const tp = await supabase.from('trassenpreise').select('*')
+      setPreisliste(((tp.data ?? []) as Trassenpreis[]).map((x) => ({ ...x, preis: Number(x.preis) })))
+
       const a = await supabase
         .from('auftraege')
-        .select('id, kunde, referenz, zug_nr, status, abfahrt_ort, abfahrt_datum, ankunft_ort, preis')
+        .select('id, kunde, referenz, zug_nr, status, abfahrt_ort, abfahrt_datum, ankunft_ort, preis, fahrten')
         .gte('abfahrt_datum', von)
         .lte('abfahrt_datum', bis)
         .in('status', ['gefahren', 'storniert'])
@@ -243,6 +278,21 @@ export default function Wirtschaftlichkeit() {
     }
     setFehler(null)
     setNeu({ art: neu.art, bezeichnung: '', betrag: '' })
+    setZaehler((z) => z + 1)
+  }
+
+  async function trasseUebernehmen(a: Auftrag, bein: Bein, t: Trassenpreis) {
+    const { error } = await supabase.from('auftrag_kosten').insert({
+      auftrag_id: a.id,
+      art: 'trasse',
+      bezeichnung: `${bein.von} → ${bein.nach}${bein.art !== 'Zugfahrt' ? ` (${bein.art})` : ''} · Trassenfinder ${datumDeutsch(t.stand_datum)}`,
+      betrag: t.preis,
+    })
+    if (error) {
+      setFehler(error.message)
+      return
+    }
+    setFehler(null)
     setZaehler((z) => z + 1)
   }
 
@@ -507,6 +557,48 @@ export default function Wirtschaftlichkeit() {
                             <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>
                               Personal intern: {z.stunden.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Std. aus den Schichten = {euro(z.personalIntern)}
                               {z.stunden === 0 && ' (noch keine Schichten zugeteilt)'}
+                            </div>
+                            <div style={{ margin: '4px 0 10px', padding: '8px 10px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                                <b style={{ fontSize: 12.5, color: '#14325c' }}>Trassenpreise aus dem Verzeichnis</b>
+                                <a href={TRASSENFINDER_URL} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#14325c' }}>
+                                  Trassenfinder öffnen ↗
+                                </a>
+                              </div>
+                              {trassenBeine(z.a).length === 0 && <div style={{ fontSize: 12, color: '#94a3b8' }}>Keine Strecke im Auftrag hinterlegt.</div>}
+                              {trassenBeine(z.a).map((bein, i) => {
+                                const treffer = preisKandidaten(bein, preisliste)
+                                const schonDrin = kosten.some(
+                                  (k) => k.auftrag_id === z.a.id && k.art === 'trasse' && (k.bezeichnung ?? '').startsWith(`${bein.von} → ${bein.nach}`)
+                                )
+                                return (
+                                  <div key={i} style={{ fontSize: 12.5, padding: '3px 0', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <span style={{ minWidth: 220 }}>
+                                      {bein.von} → {bein.nach}
+                                      {bein.art !== 'Zugfahrt' && <span style={{ color: '#b45309' }}> ({bein.art})</span>}
+                                    </span>
+                                    {schonDrin && <span style={{ color: '#15803d', fontWeight: 600 }}>✓ übernommen</span>}
+                                    {!schonDrin && treffer.length === 0 && (
+                                      <span style={{ color: '#b45309' }}>kein Preis im Verzeichnis – bitte im Trassenfinder nachsehen und unter „Trassenpreise“ eintragen</span>
+                                    )}
+                                    {!schonDrin &&
+                                      treffer.map(({ t, umgekehrt }) => (
+                                        <button
+                                          key={t.id}
+                                          onClick={() => trasseUebernehmen(z.a, bein, t)}
+                                          title={[t.triebfahrzeug, t.wagenzugmasse_t != null ? `${t.wagenzugmasse_t} t` : null, t.wagenzuglaenge_m != null ? `${t.wagenzuglaenge_m} m` : null, t.hoechstgeschwindigkeit != null ? `${t.hoechstgeschwindigkeit} km/h` : null]
+                                            .filter(Boolean)
+                                            .join(' · ')}
+                                          style={{ padding: '3px 9px', borderRadius: 6, border: '1px solid #14325c', background: '#fff', color: '#14325c', fontSize: 12, cursor: 'pointer' }}
+                                        >
+                                          {euro(t.preis)} übernehmen · Stand {datumDeutsch(t.stand_datum)}
+                                          {t.wagenzugmasse_t != null ? ` · ${t.wagenzugmasse_t} t` : ''}
+                                          {umgekehrt ? ' · Gegenrichtung' : ''}
+                                        </button>
+                                      ))}
+                                  </div>
+                                )
+                              })}
                             </div>
                             {kosten
                               .filter((k) => k.auftrag_id === z.a.id)

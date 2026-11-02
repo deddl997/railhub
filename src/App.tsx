@@ -11,6 +11,7 @@ import Kennzahlen from './Kennzahlen'
 import Rechnungen from './Rechnungen'
 import Protokoll from './Protokoll'
 import Wirtschaftlichkeit from './Wirtschaftlichkeit'
+import Trassenpreise from './Trassenpreise'
 import BenutzerVerwaltung from './Benutzer'
 import { useRolle } from './useRolle'
 import { useLiveAktualisierung } from './liveAktualisierung'
@@ -37,6 +38,7 @@ const ALLE_TABS = [
   { id: 'rechnungen', label: 'Rechnungsentwurf', kurz: 'Rechnungen', nurAdmin: false },
   { id: 'kennzahlen', label: 'Kennzahlen', kurz: 'Kennzahlen', nurAdmin: false },
   { id: 'wirtschaft', label: 'Wirtschaftlichkeit', kurz: 'Gewinn', nurAdmin: false },
+  { id: 'trassenpreise', label: 'Trassenpreise', kurz: 'Trassen', nurAdmin: false },
   { id: 'protokoll', label: 'Änderungsprotokoll', kurz: 'Protokoll', nurAdmin: false },
   { id: 'benutzer', label: 'Benutzer & Rollen', kurz: 'Benutzer', nurAdmin: true },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
@@ -161,7 +163,7 @@ function App() {
   // (und in der Datenbank die Funktion darf_kosten() anpassen, siehe kosten.sql).
   const darfKosten = istAdmin
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' ? darfKosten : tab.id === 'protokoll' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
@@ -172,7 +174,7 @@ function App() {
       tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen'],
     },
     { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'protokoll'] },
-    { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft'] },
+    { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
     { id: 'bahnstrom', label: 'Bahnstrom', tabs: ['bahnstrom'] },
     { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer'] },
     { id: 'streckenkunde', label: 'Streckenkunde', tabs: ['streckenkunde'] },
@@ -556,6 +558,20 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Wirtschaftlichkeit</h3>
             <Wirtschaftlichkeit />
+          </div>
+        )}
+
+        {aktiverTab === 'trassenpreise' && darfKosten && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Trassenpreise</h3>
+            <Trassenpreise />
           </div>
         )}
 
