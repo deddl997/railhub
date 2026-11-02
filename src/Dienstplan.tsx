@@ -41,7 +41,6 @@ interface OffeneSpot {
   dienstort: string | null
   farbe: string | null
   info?: string | null
-  auftrag_id?: string | null
 }
 
 interface SollZeile {
@@ -61,6 +60,11 @@ interface Warnung {
   art: 'ueberschneidung' | 'ruhezeit' | 'urlaub' | 'lok'
   kurz: string
   lang: string
+}
+
+interface Eignung {
+  stufe: 0 | 1 | 2 // 0 = passt, 1 = mit Warnung, 2 = passt nicht
+  gruende: string[]
 }
 
 interface OffenesElement {
@@ -83,7 +87,6 @@ interface DienstplanEintrag {
   spot_dienstort: string | null
   spot_farbe: string | null
   spot_info?: string | null
-  auftrag_id?: string | null
   abw_beginn_zeit?: string | null
   abw_ende_zeit?: string | null
   abw_pause_minuten?: number | null
@@ -314,6 +317,7 @@ export default function Dienstplan() {
   })
   const [offenSpotBearbeitenId, setOffenSpotBearbeitenId] = useState<string | null>(null)
   const [gezogenerEintrag, setGezogenerEintrag] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
+  const [vorschlagFuer, setVorschlagFuer] = useState<OffenesElement | null>(null)
   const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
   const [spotFormularOffen, setSpotFormularOffen] = useState(false)
@@ -652,7 +656,6 @@ export default function Dienstplan() {
         spot_dienstort: quellEintrag.spot_dienstort,
         spot_farbe: quellEintrag.spot_farbe,
         spot_info: quellEintrag.spot_info ?? null,
-        auftrag_id: quellEintrag.auftrag_id ?? null,
         status: quellEintrag.status,
         abw_beginn_zeit: quellEintrag.abw_beginn_zeit ?? null,
         abw_ende_zeit: quellEintrag.abw_ende_zeit ?? null,
@@ -783,7 +786,6 @@ export default function Dienstplan() {
         dienstort: eintrag.spot_dienstort,
         farbe: eintrag.spot_farbe,
         info: eintrag.spot_info ?? null,
-        auftrag_id: eintrag.auftrag_id ?? null,
       })
     }
     await supabase
@@ -815,7 +817,6 @@ export default function Dienstplan() {
         spot_dienstort: spot.dienstort,
         spot_farbe: spot.farbe,
         spot_info: spot.info ?? null,
-        auftrag_id: spot.auftrag_id ?? null,
         status: null,
       },
       { onConflict: 'mitarbeiter_id,datum' }
@@ -839,6 +840,89 @@ export default function Dienstplan() {
     } else {
       await spotZuweisen(quelle.id, mitarbeiterId, datumIso)
     }
+  }
+
+  // Passt diese Person zu der offenen Schicht? (Urlaub, Dienst am Tag, Ruhezeit, Lok, Wochenstunden)
+  function eignungFuer(person: Mitarbeiter, quelle: OffenesElement): Eignung {
+    const datumIso = quelle.tagDatum
+    let neu: SchichtInfo | null = null
+    let vorlage: Schichtvorlage | undefined
+    if (quelle.art === 'vorlage') {
+      vorlage = vorlagen.find((v) => v.id === quelle.id)
+      if (vorlage) neu = infoAusVorlage(vorlage)
+    } else {
+      const spot = offeneSpots.find((x) => x.id === quelle.id)
+      if (spot) neu = infoAusSpot(spot)
+    }
+    if (!neu) return { stufe: 0, gruende: [] }
+
+    const nein: string[] = []
+    const warn: string[] = []
+
+    if (bereichVonKategorie(person.kategorie) !== quelle.bereich) {
+      nein.push(`gehört zum Bereich ${bereichVonKategorie(person.kategorie)}`)
+    }
+    if (istUrlaub(person.id, datumIso)) nein.push('Urlaub')
+
+    const heute = eintragFuer(person.id, datumIso)
+    const heuteInfo = schichtInfoVon(heute)
+    if (heuteInfo) nein.push(`hat schon Dienst (${heuteInfo.titel})`)
+    else if (heute?.status) warn.push(`ist als „${heute.status}“ eingetragen`)
+
+    if (wunschFuer(person.id, datumIso)) warn.push('Wunschfrei')
+
+    const vortag = schichtInfoVon(eintragFuer(person.id, datumZuISO(addTage(new Date(datumIso + 'T00:00:00'), -1))))
+    if (vortag) {
+      const ruhe = 1440 + neu.beginn - vortag.ende
+      if (ruhe < 0) nein.push('Überschneidung mit dem Vortag')
+      else if (ruhe < 660) warn.push(`Ruhezeit zum Vortag nur ${minutenAlsText(ruhe)} Std.`)
+    }
+    const folgetag = schichtInfoVon(eintragFuer(person.id, datumZuISO(addTage(new Date(datumIso + 'T00:00:00'), 1))))
+    if (folgetag) {
+      const ruhe = 1440 + folgetag.beginn - neu.ende
+      if (ruhe < 0) nein.push('Überschneidung mit dem Folgetag')
+      else if (ruhe < 660) warn.push(`Ruhezeit zum Folgetag nur ${minutenAlsText(ruhe)} Std.`)
+    }
+
+    const fehlt = fehlendeLoks(person, vorlage)
+    if (fehlt.length > 0) nein.push(`Lok ${fehlt.join(', ')} fehlt`)
+
+    if (tage.some((t) => datumZuISO(t) === datumIso)) {
+      const summe = wochenMinuten(person.id) + (neu.ende - neu.beginn)
+      if (summe > 48 * 60) warn.push(`Woche dann ${minutenAlsText(summe)} Std. (über 48)`)
+    }
+
+    return { stufe: nein.length > 0 ? 2 : warn.length > 0 ? 1 : 0, gruende: [...nein, ...warn] }
+  }
+
+  // Kleiner Knopf an offenen Schichten: oeffnet die Vorschlagsliste
+  function vorschlagKnopf(quelle: OffenesElement, stil?: React.CSSProperties) {
+    return (
+      <button
+        type="button"
+        draggable={false}
+        onClick={(e) => {
+          e.stopPropagation()
+          setVorschlagFuer(quelle)
+        }}
+        title="Wer passt für diese Schicht?"
+        style={{
+          background: 'rgba(255,255,255,0.9)',
+          color: '#1e293b',
+          border: 'none',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontSize: 10,
+          fontWeight: 700,
+          padding: '1px 5px',
+          lineHeight: 1.3,
+          flexShrink: 0,
+          ...stil,
+        }}
+      >
+        Wer passt?
+      </button>
+    )
   }
 
   function offenSpotDialogOeffnen() {
@@ -1088,7 +1172,6 @@ export default function Dienstplan() {
       spot_dienstort: e.spot_dienstort,
       spot_farbe: e.spot_farbe,
       spot_info: e.spot_info ?? null,
-      auftrag_id: e.auftrag_id ?? null,
       abw_beginn_zeit: e.abw_beginn_zeit ?? null,
       abw_ende_zeit: e.abw_ende_zeit ?? null,
       abw_pause_minuten: e.abw_pause_minuten ?? null,
@@ -1204,7 +1287,6 @@ export default function Dienstplan() {
           dienstort: bestehend.spot_dienstort,
           farbe: bestehend.spot_farbe,
           info: bestehend.spot_info ?? null,
-          auftrag_id: bestehend.auftrag_id ?? null,
         })
       }
     }
@@ -1824,6 +1906,143 @@ export default function Dienstplan() {
           </div>
         </div>
       )}
+
+      {vorschlagFuer && (() => {
+        const quelle = vorschlagFuer
+        let titel = ''
+        let zeitText = ''
+        if (quelle.art === 'vorlage') {
+          const v = vorlagen.find((x) => x.id === quelle.id)
+          if (v) {
+            titel = v.name
+            zeitText = `${zeitKurz(v.beginn_zeit)}–${zeitKurz(v.ende_zeit)}`
+          }
+        } else {
+          const sp = offeneSpots.find((x) => x.id === quelle.id)
+          if (sp) {
+            titel = sp.name
+            zeitText = `${zeitKurz(sp.beginn_zeit)}–${zeitKurz(sp.ende_zeit)}`
+          }
+        }
+        const datumText = new Date(quelle.tagDatum + 'T00:00:00').toLocaleDateString('de-DE', {
+          weekday: 'long',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        })
+        const liste = mitarbeiterListe
+          .filter((m) => bereichVonKategorie(m.kategorie) === quelle.bereich)
+          .map((m) => ({ m, e: eignungFuer(m, quelle), wm: wochenMinuten(m.id) }))
+          .sort((a, b) => a.e.stufe - b.e.stufe || a.wm - b.wm || a.m.name.localeCompare(b.m.name, 'de'))
+        const farbe = (stufe: number) => (stufe === 0 ? '#15803d' : stufe === 1 ? '#b45309' : '#dc2626')
+        return (
+          <div
+            onClick={() => setVorschlagFuer(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: 20,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#ffffff',
+                borderRadius: 12,
+                padding: 20,
+                width: 560,
+                maxWidth: '100%',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)' }}>Wer passt für diese Schicht?</div>
+                <button
+                  onClick={() => setVorschlagFuer(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+                  title="Schließen"
+                >
+                  ✕
+                </button>
+              </div>
+              {titel === '' ? (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  Diese Schicht ist nicht mehr offen (sie wurde inzwischen besetzt oder gelöscht).
+                </p>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, color: '#334155', marginBottom: 12 }}>
+                    <strong>{titel}</strong> · {zeitText} · {datumText} · {quelle.bereich}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                    Sortiert: zuerst wer passt, dann wer in dieser Woche am wenigsten arbeitet.
+                  </div>
+                  {liste.length === 0 && (
+                    <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Keine Personen in diesem Bereich.</p>
+                  )}
+                  {liste.map(({ m, e, wm }) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '8px 0',
+                        borderTop: '1px solid #eef2f8',
+                        opacity: e.stufe === 2 ? 0.7 : 1,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b' }}>
+                          {m.name}{' '}
+                          <span style={{ fontWeight: 400, fontSize: 11, color: '#64748b' }}>
+                            {m.kategorie ?? 'Ohne Qualifikation'}
+                            {(m.lok_typen ?? []).length > 0 ? ` · ${(m.lok_typen ?? []).join(' · ')}` : ''}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 11, color: farbe(e.stufe), fontWeight: 600 }}>
+                          {e.stufe === 0 ? '✓ passt' : `${e.stufe === 1 ? '⚠' : '✕'} ${e.gruende.join(' · ')}`}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#64748b' }}>Diese Woche bisher: {minutenAlsText(wm)} Std.</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (e.stufe === 2) {
+                            const ok = window.confirm(`${m.name}: ${e.gruende.join(', ')}. Trotzdem einteilen?`)
+                            if (!ok) return
+                          }
+                          setVorschlagFuer(null)
+                          await offenesZuweisen(quelle, m.id, quelle.tagDatum)
+                        }}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: 6,
+                          border: e.stufe === 2 ? '1px solid #cbd5e1' : 'none',
+                          background: e.stufe === 2 ? '#ffffff' : 'var(--navy)',
+                          color: e.stufe === 2 ? '#475569' : '#ffffff',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {e.stufe === 2 ? 'Trotzdem' : 'Einteilen'}
+                      </button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       {offenSpotDialogOffen && (
         <div
@@ -2547,6 +2766,10 @@ export default function Dienstplan() {
                                   <span style={{ fontWeight: 400, opacity: 0.85 }}>
                                     {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
                                   </span>
+                                  {vorschlagKnopf(
+                                    { art: 'vorlage', id: v.id, tagDatum: datumIso, bereich },
+                                    { marginLeft: 'auto', border: `1px solid ${v.farbe}` }
+                                  )}
                                 </div>
                               </div>
                             )
@@ -2592,6 +2815,10 @@ export default function Dienstplan() {
                                   <span style={{ fontWeight: 400, opacity: 0.9 }}>
                                     {minutenAlsUhrzeit(info.beginn)}–{minutenAlsUhrzeit(info.ende)}
                                   </span>
+                                  {vorschlagKnopf(
+                                    { art: 'spot', id: x.id, tagDatum: datumIso, bereich },
+                                    { marginLeft: 'auto' }
+                                  )}
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation()
@@ -2599,7 +2826,7 @@ export default function Dienstplan() {
                                     }}
                                     title="Offene Spotschicht löschen"
                                     style={{
-                                      marginLeft: 'auto',
+                                      marginLeft: 6,
                                       background: 'none',
                                       border: 'none',
                                       color: '#ffffff',
@@ -2636,6 +2863,7 @@ export default function Dienstplan() {
                 const lokUnpassend =
                   gezogeneVorlage?.art === 'vorlage' &&
                   fehlendeLoks(mitarbeiter, vorlagen.find((v) => v.id === gezogeneVorlage.id)).length > 0
+                const eignungDrag = gezogeneVorlage ? eignungFuer(mitarbeiter, gezogeneVorlage) : null
 
                 return (
                   <div
@@ -2645,7 +2873,7 @@ export default function Dienstplan() {
                       display: 'flex',
                       borderBottom: '1px solid #eef2f8',
                       alignItems: 'stretch',
-                      opacity: lokUnpassend ? 0.4 : 1,
+                      opacity: lokUnpassend || eignungDrag?.stufe === 2 ? 0.4 : 1,
                     }}
                   >
                     <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px' }}>
@@ -2695,6 +2923,18 @@ export default function Dienstplan() {
                             ⚠ {w.kurz}
                           </div>
                         ))}
+                        {eignungDrag && (
+                          <div
+                            title={eignungDrag.gruende.join('\n')}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: eignungDrag.stufe === 0 ? '#15803d' : eignungDrag.stufe === 1 ? '#b45309' : '#dc2626',
+                            }}
+                          >
+                            {eignungDrag.stufe === 0 ? '✓ passt' : `${eignungDrag.stufe === 1 ? '⚠' : '✕'} ${eignungDrag.gruende[0]}`}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -3598,6 +3838,10 @@ export default function Dienstplan() {
                               <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
                                 {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
                               </div>
+                              {vorschlagKnopf(
+                                { art: 'vorlage', id: vorlage.id, tagDatum: datumIso, bereich },
+                                { marginTop: 3, fontSize: 9, display: 'block' }
+                              )}
                             </div>
                           ))}
                           {offeneS.map((x) => (
@@ -3630,6 +3874,10 @@ export default function Dienstplan() {
                               <div style={{ fontSize: 9, opacity: 0.9, fontWeight: 400 }}>
                                 {zeitKurz(x.beginn_zeit)}–{zeitKurz(x.ende_zeit)}
                               </div>
+                              {vorschlagKnopf(
+                                { art: 'spot', id: x.id, tagDatum: datumIso, bereich },
+                                { marginTop: 3, fontSize: 9, display: 'block' }
+                              )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation()
