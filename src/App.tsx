@@ -7,6 +7,10 @@ import Uebersichten from './Uebersichten'
 import Auftraege from './Auftraege'
 import Abrechnung from './Abrechnung'
 import Bahnstrom from './Bahnstrom'
+import Kennzahlen from './Kennzahlen'
+import Rechnungen from './Rechnungen'
+import Protokoll from './Protokoll'
+import BenutzerVerwaltung from './Benutzer'
 import { useRolle } from './useRolle'
 import { useLiveAktualisierung } from './liveAktualisierung'
 import UrlaubAntragUpload from './UrlaubAntragUpload'
@@ -29,6 +33,10 @@ const ALLE_TABS = [
   { id: 'auftraege', label: 'Aufträge', kurz: 'Aufträge', nurAdmin: false },
   { id: 'abrechnung', label: 'Abrechnung', kurz: 'Abrechnung', nurAdmin: false },
   { id: 'bahnstrom', label: 'Bahnstrom', kurz: 'Bahnstrom', nurAdmin: false },
+  { id: 'rechnungen', label: 'Rechnungsentwurf', kurz: 'Rechnungen', nurAdmin: false },
+  { id: 'kennzahlen', label: 'Kennzahlen', kurz: 'Kennzahlen', nurAdmin: false },
+  { id: 'protokoll', label: 'Änderungsprotokoll', kurz: 'Protokoll', nurAdmin: false },
+  { id: 'benutzer', label: 'Benutzer & Rollen', kurz: 'Benutzer', nurAdmin: true },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', kurz: 'Dienstplan', nurAdmin: true },
@@ -148,7 +156,7 @@ function App() {
   const darfDisponieren = istAdmin || rolle === 'disponent'
   const darfAbrechnen = istAdmin || rolle === 'abrechnung'
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' ? darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'protokoll' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
@@ -158,13 +166,13 @@ function App() {
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
       tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen'],
     },
-    { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege'] },
-    { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung'] },
+    { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'protokoll'] },
+    { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen'] },
     { id: 'bahnstrom', label: 'Bahnstrom', tabs: ['bahnstrom'] },
-    { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter'] },
+    { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer'] },
     { id: 'streckenkunde', label: 'Streckenkunde', tabs: ['streckenkunde'] },
   ]
-  const UNTERPUNKT_NAME: Partial<Record<TabId, string>> = { meinplan: 'Mein Plan', dienstplan: 'Dienstplan', antraege: istAdmin ? 'Anträge' : 'Meine Anträge' }
+  const UNTERPUNKT_NAME: Partial<Record<TabId, string>> = { auftraege: 'Aufträge', abrechnung: 'Abrechnung', mitarbeiter: 'Mitarbeiter', meinplan: 'Mein Plan', dienstplan: 'Dienstplan', antraege: istAdmin ? 'Anträge' : 'Meine Anträge' }
   const sichtbareGruppen = GRUPPEN.map((g) => ({ ...g, tabs: g.tabs.filter((t) => sichtbareTabs.some((x) => x.id === t)) })).filter((g) => g.tabs.length > 0)
   const aktiveGruppe = sichtbareGruppen.find((g) => g.tabs.includes(aktiverTab)) ?? sichtbareGruppen[0]
 
@@ -501,6 +509,62 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Abrechnung</h3>
             <Abrechnung istAdmin={istAdmin} />
+          </div>
+        )}
+
+        {aktiverTab === 'rechnungen' && (darfAbrechnen) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Rechnungsentwurf</h3>
+            <Rechnungen />
+          </div>
+        )}
+
+        {aktiverTab === 'kennzahlen' && (darfAbrechnen) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Kennzahlen</h3>
+            <Kennzahlen />
+          </div>
+        )}
+
+        {aktiverTab === 'protokoll' && (darfDisponieren || darfAbrechnen) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Änderungsprotokoll aller Aufträge</h3>
+            <Protokoll />
+          </div>
+        )}
+
+        {aktiverTab === 'benutzer' && (istAdmin) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Benutzer & Rollen</h3>
+            <BenutzerVerwaltung />
           </div>
         )}
 
