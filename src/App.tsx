@@ -12,6 +12,7 @@ import Rechnungen from './Rechnungen'
 import Protokoll from './Protokoll'
 import Wirtschaftlichkeit from './Wirtschaftlichkeit'
 import Trassenpreise from './Trassenpreise'
+import UrlaubImport from './UrlaubImport'
 import BenutzerVerwaltung from './Benutzer'
 import { useRolle } from './useRolle'
 import { useLiveAktualisierung } from './liveAktualisierung'
@@ -39,6 +40,7 @@ const ALLE_TABS = [
   { id: 'kennzahlen', label: 'Kennzahlen', kurz: 'Kennzahlen', nurAdmin: false },
   { id: 'wirtschaft', label: 'Wirtschaftlichkeit', kurz: 'Gewinn', nurAdmin: false },
   { id: 'trassenpreise', label: 'Trassenpreise', kurz: 'Trassen', nurAdmin: false },
+  { id: 'urlaubimport', label: 'Urlaub importieren', kurz: 'Import', nurAdmin: true },
   { id: 'protokoll', label: 'Änderungsprotokoll', kurz: 'Protokoll', nurAdmin: false },
   { id: 'benutzer', label: 'Benutzer & Rollen', kurz: 'Benutzer', nurAdmin: true },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
@@ -171,7 +173,7 @@ function App() {
     {
       id: 'plan',
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
-      tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen'],
+      tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubimport'],
     },
     { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'protokoll'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
@@ -572,6 +574,20 @@ function App() {
           >
             <h3 style={{ marginTop: 0 }}>Trassenpreise</h3>
             <Trassenpreise />
+          </div>
+        )}
+
+        {aktiverTab === 'urlaubimport' && istAdmin && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Urlaub aus Excel importieren</h3>
+            <UrlaubImport />
           </div>
         )}
 
