@@ -497,7 +497,7 @@ function AppInnen() {
             }}
           >
             <h3 style={{ marginTop: 0 }}>Personalplanung</h3>
-            <Kalender neuLadenAuslöser={neuLadenAuslöser} />
+            <Kalender neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />
           </div>
         )}
 
