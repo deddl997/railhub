@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 import { datumZuISO } from './datumUtils'
@@ -249,6 +249,29 @@ export default function BestellungImport({
   const [uebersprungen, setUebersprungen] = useState<Uebersprungen[]>([])
   const [speichert, setSpeichert] = useState(false)
   const [mitSchichten, setMitSchichten] = useState(true)
+  const [kunde, setKunde] = useState(() => {
+    try {
+      return localStorage.getItem('rbl_bestellung_kunde') ?? ''
+    } catch {
+      return ''
+    }
+  })
+  const [kundenListe, setKundenListe] = useState<string[]>([])
+
+  // bisherige Kunden als Vorschlaege
+  useEffect(() => {
+    supabase
+      .from('auftraege')
+      .select('kunde')
+      .not('kunde', 'is', null)
+      .order('abfahrt_datum', { ascending: false })
+      .limit(1000)
+      .then(({ data }) => {
+        const namen = new Set<string>()
+        for (const z of (data ?? []) as { kunde: string | null }[]) if (z.kunde?.trim()) namen.add(z.kunde.trim())
+        setKundenListe(Array.from(namen).sort((a, b) => a.localeCompare(b, 'de')))
+      })
+  }, [])
 
   async function dateiWaehlen(datei: File | undefined) {
     if (!datei) return
@@ -379,6 +402,7 @@ export default function BestellungImport({
         id: idJeGruppe.get(g) as string,
         referenz: erste.referenz,
         zug_nr: erste.referenznummer,
+        kunde: kunde.trim() || null,
         evu: 'RBL',
         abfahrt_ort: erste.von,
         abfahrt_datum: erste.datum,
@@ -402,6 +426,11 @@ export default function BestellungImport({
           : [],
       }
     })
+    try {
+      localStorage.setItem('rbl_bestellung_kunde', kunde.trim())
+    } catch {
+      /* egal */
+    }
     const { error: auftragFehler } = await supabase.from('auftraege').insert(auftragsZeilen)
     if (auftragFehler) {
       setSpeichert(false)
@@ -492,6 +521,25 @@ export default function BestellungImport({
               Auftrag in der Auftragsliste (mit Personalwechsel am Zwischenhalt, dann je Teilstrecke eine Schicht) und, wenn du möchtest, eine offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '6px 0 12px' }}>
+              <label htmlFor="bestellung-kunde" style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
+                Kunde:
+              </label>
+              <input
+                id="bestellung-kunde"
+                list="bestellung-kunden"
+                value={kunde}
+                onChange={(e) => setKunde(e.target.value)}
+                placeholder="z. B. Name des Kunden"
+                style={{ padding: '6px 10px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, minWidth: 240 }}
+              />
+              <datalist id="bestellung-kunden">
+                {kundenListe.map((k) => (
+                  <option key={k} value={k} />
+                ))}
+              </datalist>
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>wird bei allen angelegten Aufträgen eingetragen</span>
+            </div>
             <label
               style={{
                 display: 'block',
@@ -525,6 +573,25 @@ export default function BestellungImport({
               {gruppenIds.length} Aufträge mit {zeilen.length} Schichten erkannt, {aktiveGruppen.length} Aufträge mit {aktive.length} Schichten werden angelegt. Fährt ein Zug mit gleicher Referenz über einen Zwischenhalt, ist das ein Auftrag mit Personalwechsel und jede Teilstrecke bekommt eine eigene Schicht. Du kannst Name, Datum, Zeiten, Dienstort und Info ändern oder Zeilen
               abwählen. Die Pause wird nach dem Arbeitszeitgesetz berechnet und passt sich bei geänderten Zeiten an. Wenn du sie von Hand änderst, bleibt dein
               Wert stehen.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '6px 0 12px' }}>
+              <label htmlFor="bestellung-kunde" style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
+                Kunde:
+              </label>
+              <input
+                id="bestellung-kunde"
+                list="bestellung-kunden"
+                value={kunde}
+                onChange={(e) => setKunde(e.target.value)}
+                placeholder="z. B. Name des Kunden"
+                style={{ padding: '6px 10px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, minWidth: 240 }}
+              />
+              <datalist id="bestellung-kunden">
+                {kundenListe.map((k) => (
+                  <option key={k} value={k} />
+                ))}
+              </datalist>
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>wird bei allen angelegten Aufträgen eingetragen</span>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#475569', marginBottom: 8 }}>
               <input type="checkbox" checked={mitSchichten} onChange={(e) => setMitSchichten(e.target.checked)} />
