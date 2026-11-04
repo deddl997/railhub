@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { erstelleUrlaubsantragPdf } from './pdfErstellung'
+import { bestaetigen } from './ui'
 
 interface Antrag {
   id: string
@@ -78,6 +79,96 @@ async function holeOderErstelleJahresdaten(name: string, jahr: number) {
     .single()
 
   return neueDaten
+}
+
+function datumDe(iso: string): string {
+  const [j, m, t] = iso.split('-')
+  return `${t}.${m}.${j.slice(2)}`
+}
+
+function tageZwischen(von: string, bis: string): string[] {
+  const tage: string[] = []
+  const d = new Date(von + 'T00:00:00')
+  const ende = new Date(bis + 'T00:00:00')
+  let schutz = 0
+  while (d <= ende && schutz++ < 400) {
+    tage.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    d.setDate(d.getDate() + 1)
+  }
+  return tage
+}
+
+/**
+ * Prueft vor dem Genehmigen, ob der Urlaub Probleme macht:
+ * - ist die Person in dem Zeitraum schon im Dienstplan eingeteilt (auch auf Auftraegen)?
+ * - wie viele der gleichen Qualifikation waeren dann gleichzeitig weg?
+ */
+async function konfliktPruefen(zeilen: Antrag[], name: string | null): Promise<string[]> {
+  const hinweise: string[] = []
+  const zeitraeume = zeilen.filter((z) => z.erster_tag && z.letzter_tag) as (Antrag & { erster_tag: string; letzter_tag: string })[]
+  if (zeitraeume.length === 0 || !name) return hinweise
+  const von = zeitraeume.map((z) => z.erster_tag).sort()[0]
+  const bis = zeitraeume.map((z) => z.letzter_tag).sort().slice(-1)[0]
+
+  const { data: alle } = await supabase.from('mitarbeiter').select('id, name, kategorie')
+  const personen = (alle ?? []) as { id: string; name: string; kategorie: string | null }[]
+  const signatur = namensSignatur(name)
+  const person = personen.find((m) => m.id === zeilen[0].mitarbeiter_id) ?? personen.find((m) => namensSignatur(m.name) === signatur)
+
+  // 1) Schon eingeteilt?
+  if (person) {
+    const { data: dienste } = await supabase
+      .from('dienstplan_eintraege')
+      .select('datum, auftrag_id, ist_spotschicht')
+      .eq('mitarbeiter_id', person.id)
+      .gte('datum', von)
+      .lte('datum', bis)
+    const betroffen = ((dienste ?? []) as { datum: string; auftrag_id: string | null }[]).filter((d) =>
+      zeitraeume.some((z) => d.datum >= z.erster_tag && d.datum <= z.letzter_tag)
+    )
+    if (betroffen.length > 0) {
+      const mitAuftrag = betroffen.filter((d) => d.auftrag_id).length
+      const tage = Array.from(new Set(betroffen.map((d) => d.datum))).sort()
+      hinweise.push(
+        `${name} ist in diesem Zeitraum schon an ${tage.length} Tag${tage.length === 1 ? '' : 'en'} im Dienstplan eingeteilt` +
+          (mitAuftrag > 0 ? `, davon ${mitAuftrag} Mal auf einem Auftrag` : '') +
+          `: ${tage.slice(0, 5).map(datumDe).join(', ')}${tage.length > 5 ? ' …' : ''}.`
+      )
+    }
+  }
+
+  // 2) Wie viele gleichzeitig weg?
+  const kategorie = person?.kategorie ?? null
+  if (kategorie) {
+    const gruppe = personen.filter((m) => m.kategorie === kategorie)
+    const { data: andere } = await supabase
+      .from('urlaubsantraege')
+      .select('mitarbeiter_id, name, erster_tag, letzter_tag')
+      .eq('status', 'genehmigt')
+      .lte('erster_tag', bis)
+      .gte('letzter_tag', von)
+    const urlaube = (andere ?? []) as { mitarbeiter_id: string | null; name: string | null; erster_tag: string; letzter_tag: string }[]
+    const idsGruppe = new Map(gruppe.map((m) => [m.id, namensSignatur(m.name)]))
+    const eigeneTage = new Set(zeitraeume.flatMap((z) => tageZwischen(z.erster_tag, z.letzter_tag)))
+    const kritisch: { tag: string; weg: number }[] = []
+    for (const tag of eigeneTage) {
+      const weg = new Set<string>([person!.id])
+      for (const u of urlaube) {
+        if (tag < u.erster_tag || tag > u.letzter_tag) continue
+        const id = u.mitarbeiter_id && idsGruppe.has(u.mitarbeiter_id) ? u.mitarbeiter_id : gruppe.find((m) => u.name && namensSignatur(m.name) === namensSignatur(u.name))?.id
+        if (id) weg.add(id)
+      }
+      if (gruppe.length >= 3 && weg.size / gruppe.length >= 0.4) kritisch.push({ tag, weg: weg.size })
+    }
+    if (kritisch.length > 0) {
+      kritisch.sort((a, b) => b.weg - a.weg || a.tag.localeCompare(b.tag))
+      const schlimmster = kritisch[0]
+      hinweise.push(
+        `Bei „${kategorie}“ wären an ${kritisch.length} Tag${kritisch.length === 1 ? '' : 'en'} 40 % oder mehr gleichzeitig weg, am knappsten am ${datumDe(schlimmster.tag)}: ${schlimmster.weg} von ${gruppe.length} im Urlaub.`
+      )
+    }
+  }
+  return hinweise
 }
 
 function jahrDerGruppe(gruppe: Gruppe): number {
@@ -160,6 +251,17 @@ export default function MeineAntraege({
     const tageGesamt = gesamtTage(gruppe)
     const jahr = jahrDerGruppe(gruppe)
 
+    if (wirdGenehmigt && !warGenehmigt) {
+      const hinweise = await konfliktPruefen(gruppe.zeilen, gruppe.name)
+      if (hinweise.length > 0) {
+        const weiter = await bestaetigen(hinweise.map((h) => '• ' + h).join('\n\n') + '\n\nTrotzdem genehmigen?', {
+          titel: 'Achtung: mögliche Konflikte',
+          jaText: 'Trotzdem genehmigen',
+        })
+        if (!weiter) return
+      }
+    }
+
     if (gruppe.name && !warGenehmigt && wirdGenehmigt) {
       const jahresdaten = await holeOderErstelleJahresdaten(gruppe.name, jahr)
 
@@ -210,8 +312,9 @@ export default function MeineAntraege({
   }
 
   async function gruppeLoeschen(gruppe: Gruppe) {
-    const bestaetigt = window.confirm(
-      `Antrag von "${gruppe.name ?? 'Ohne Namen'}" (${gruppe.zeilen.length} Zeitraum/Zeiträume) wirklich unwiderruflich löschen?`
+    const bestaetigt = await bestaetigen(
+      `Antrag von "${gruppe.name ?? 'Ohne Namen'}" (${gruppe.zeilen.length} Zeitraum/Zeiträume) wirklich unwiderruflich löschen?`,
+      { titel: 'Antrag löschen', jaText: 'Ja, löschen', gefahr: true }
     )
     if (!bestaetigt) return
 

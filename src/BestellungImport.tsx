@@ -331,15 +331,34 @@ export default function BestellungImport({
             `${a.abfahrt_datum}|${a.referenz}|${String(a.abfahrt_soll ?? '').slice(0, 5)}`
         )
       )
+      // gleiche Referenz am gleichen Tag, aber andere Uhrzeit (z. B. geaenderte Bestellung)
+      const auftragsZeiten = new Map<string, string[]>()
+      for (const a of (auftraegeVorhanden.data ?? []) as { referenz: string | null; abfahrt_datum: string; abfahrt_soll: string | null }[]) {
+        const k = `${a.abfahrt_datum}|${a.referenz}`
+        auftragsZeiten.set(k, [...(auftragsZeiten.get(k) ?? []), String(a.abfahrt_soll ?? '').slice(0, 5)])
+      }
+      const dateiSchluessel = new Map<string, number>()
       const vorhanden = new Set<string>()
       for (const o of offen.data ?? []) vorhanden.add(`${o.datum}|${o.name}|${String(o.beginn_zeit).slice(0, 5)}`)
       for (const b of belegt.data ?? []) vorhanden.add(`${b.datum}|${b.spot_name}|${String(b.spot_beginn_zeit).slice(0, 5)}`)
       for (const z of neueZeilen) {
         const ersteFahrt = neueZeilen.find((x) => x.gruppe === z.gruppe && x.teil === 0)?.fahrt ?? z.fahrt
-        if (auftragsSchluessel.has(`${ersteFahrt.datum}|${ersteFahrt.referenz}|${ersteFahrt.von_zeit}`)) {
+        const dateiKey = `${ersteFahrt.datum}|${ersteFahrt.referenz}|${ersteFahrt.von_zeit}`
+        const ersteGruppeMitKey = dateiSchluessel.get(dateiKey)
+        if (ersteGruppeMitKey === undefined) dateiSchluessel.set(dateiKey, z.gruppe)
+        const zeiten = auftragsZeiten.get(`${ersteFahrt.datum}|${ersteFahrt.referenz}`)
+        if (auftragsSchluessel.has(dateiKey)) {
           z.doppelt = true
           z.aktiv = false
           z.hinweise.push('Auftrag gibt es schon')
+        } else if (zeiten && zeiten.length > 0) {
+          z.doppelt = true
+          z.aktiv = false
+          z.hinweise.push(`Auftrag mit dieser Referenz gibt es am selben Tag schon (Abfahrt ${zeiten.join(', ')} statt ${ersteFahrt.von_zeit})`)
+        } else if (ersteGruppeMitKey !== undefined && ersteGruppeMitKey !== z.gruppe) {
+          z.doppelt = true
+          z.aktiv = false
+          z.hinweise.push('Steht in dieser Datei doppelt')
         } else if (vorhanden.has(`${z.datum}|${z.name}|${z.beginn}`)) {
           z.doppelt = true
           z.aktiv = false
@@ -574,6 +593,11 @@ export default function BestellungImport({
               abwählen. Die Pause wird nach dem Arbeitszeitgesetz berechnet und passt sich bei geänderten Zeiten an. Wenn du sie von Hand änderst, bleibt dein
               Wert stehen.
             </div>
+            {zeilen.some((z) => z.doppelt) && (
+              <div style={{ background: '#fef3c7', color: '#92400e', padding: '8px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 }}>
+                {new Set(zeilen.filter((z) => z.doppelt).map((z) => z.gruppe)).size} Auftrag/Aufträge gibt es offenbar schon (oder stehen doppelt in der Datei) und sind deshalb abgewählt. Du kannst sie bei Bedarf wieder anhaken.
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '6px 0 12px' }}>
               <label htmlFor="bestellung-kunde" style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
                 Kunde:

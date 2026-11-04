@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { feiertageBayern } from './feiertage'
 import { datumZuISO } from './datumUtils'
@@ -340,6 +340,171 @@ function UrlaubDialog({
   )
 }
 
+function NeuerUrlaubDialog({
+  person,
+  vonStart,
+  bisStart,
+  onSchliessen,
+  onGeaendert,
+}: {
+  person: Mitarbeiter
+  vonStart: string
+  bisStart: string
+  onSchliessen: () => void
+  onGeaendert: () => void
+}) {
+  const toast = useToast()
+  const [von, setVon] = useState(vonStart)
+  const [bis, setBis] = useState(bisStart)
+  const [direkt, setDirekt] = useState(true)
+  const [arbeitet, setArbeitet] = useState(false)
+  const [rest, setRest] = useState<{ resturlaub: number; vorjahr: number } | null>(null)
+  const gueltig = !!von && !!bis && bis >= von
+  const tage = gueltig ? berechneBrauchbareTage(von, bis) ?? 0 : 0
+  const jahr = von ? Number(von.slice(0, 4)) : new Date().getFullYear()
+
+  useEffect(() => {
+    const taste = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') onSchliessen()
+    }
+    window.addEventListener('keydown', taste)
+    return () => window.removeEventListener('keydown', taste)
+  }, [onSchliessen])
+
+  useEffect(() => {
+    let aktuell = true
+    supabase
+      .from('mitarbeiter_jahresdaten')
+      .select('resturlaub, resturlaub_vorjahr')
+      .eq('mitarbeiter_id', person.id)
+      .eq('jahr', jahr)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (aktuell) setRest(data ? { resturlaub: Number(data.resturlaub ?? 0), vorjahr: Number(data.resturlaub_vorjahr ?? 0) } : null)
+      })
+    return () => {
+      aktuell = false
+    }
+  }, [person.id, jahr])
+
+  const vorjahrVerfuegbar = Math.max(0, rest?.vorjahr ?? 0)
+  const abzugVorjahr = Math.min(tage, vorjahrVerfuegbar)
+  const abzugAktuell = tage - abzugVorjahr
+  const restNachher = rest ? rest.resturlaub - abzugAktuell + (rest.vorjahr - abzugVorjahr) : null
+
+  async function speichern() {
+    if (!gueltig) return toast.fehler('Bitte Von und Bis prüfen (Bis darf nicht vor Von liegen).')
+    if (von.slice(0, 4) !== bis.slice(0, 4)) return toast.fehler('Urlaub über den Jahreswechsel bitte in zwei Zeiträume aufteilen.')
+    setArbeitet(true)
+    try {
+      const ueberschneidung = await supabase
+        .from('urlaubsantraege')
+        .select('id')
+        .or(`mitarbeiter_id.eq.${person.id},name.eq.${person.name}`)
+        .in('status', ['offen', 'genehmigt'])
+        .lte('erster_tag', bis)
+        .gte('letzter_tag', von)
+        .limit(1)
+      if (ueberschneidung.error) throw new Error(ueberschneidung.error.message)
+      if ((ueberschneidung.data ?? []).length > 0) throw new Error('In diesem Zeitraum hat die Person schon Urlaub eingetragen.')
+
+      let jd = null as Awaited<ReturnType<typeof holeOderErstelleJahresdaten>>
+      if (direkt) jd = await holeOderErstelleJahresdaten(person.name, jahr)
+      const vj = Math.max(0, jd?.resturlaub_vorjahr ?? 0)
+      const abzV = direkt ? Math.min(tage, vj) : 0
+      const abzA = direkt ? tage - abzV : 0
+
+      const eingefuegt = await supabase.from('urlaubsantraege').insert({
+        mitarbeiter_id: person.id,
+        name: person.name,
+        kategorie: person.kategorie,
+        jahr,
+        urlaubsanspruch: null,
+        erster_tag: von,
+        letzter_tag: bis,
+        anzahl_tage: null,
+        brauchbare_tage: tage,
+        status: direkt ? 'genehmigt' : 'offen',
+        gruppe_id: crypto.randomUUID(),
+        abzug_vorjahr: abzV,
+        abzug_aktuell: abzA,
+        bearbeitet_von: 'Kalender',
+      })
+      if (eingefuegt.error) throw new Error(eingefuegt.error.message)
+
+      if (direkt && jd) {
+        const r = await supabase
+          .from('mitarbeiter_jahresdaten')
+          .update({ resturlaub_vorjahr: (jd.resturlaub_vorjahr ?? 0) - abzV, resturlaub: (jd.resturlaub ?? 0) - abzA })
+          .eq('id', jd.id)
+        if (r.error) throw new Error(r.error.message)
+      }
+      toast.erfolg(`Urlaub für ${person.name} eingetragen (${tage} Tage).`)
+      onGeaendert()
+    } catch (err) {
+      toast.fehler(err instanceof Error ? err.message : 'Das hat nicht geklappt.')
+      setArbeitet(false)
+    }
+  }
+
+  const eingabeStil: React.CSSProperties = { padding: '6px 10px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14 }
+
+  return (
+    <div
+      onClick={onSchliessen}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(ev) => ev.stopPropagation()}
+        style={{ background: '#fff', borderRadius: 14, padding: 22, width: 'min(460px, 100%)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+      >
+        <div style={{ fontSize: 17, fontWeight: 700, color: '#14325c', marginBottom: 4 }}>Urlaub eintragen</div>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>{person.name}</div>
+
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#64748b' }}>
+            Von
+            <input type="date" value={von} onChange={(ev) => setVon(ev.target.value)} style={eingabeStil} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#64748b' }}>
+            Bis
+            <input type="date" value={bis} onChange={(ev) => setBis(ev.target.value)} style={eingabeStil} />
+          </label>
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#334155', marginBottom: 10 }}>
+          <input type="checkbox" checked={direkt} onChange={(ev) => setDirekt(ev.target.checked)} />
+          Direkt genehmigen (Resturlaub wird sofort abgezogen)
+        </label>
+
+        <div style={{ fontSize: 13, color: '#475569', marginBottom: 16, lineHeight: 1.5 }}>
+          Urlaubstage: <b>{tage}</b>
+          {gueltig && direkt && rest && (
+            <div>
+              {abzugVorjahr > 0 && <span>{abzugVorjahr} aus Rest Vorjahr, </span>}
+              {abzugAktuell} aus Resturlaub {jahr}. Danach noch{' '}
+              <b style={{ color: (restNachher ?? 0) < 0 ? '#b91c1c' : undefined }}>{restNachher}</b> Tage
+              {(restNachher ?? 0) < 0 ? ' (Resturlaub reicht nicht!)' : ''}.
+            </div>
+          )}
+          {gueltig && !direkt && <div>Der Urlaub wird als „In Prüfung“ eingetragen, es wird noch nichts abgezogen.</div>}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Knopf art="sekundaer" onClick={onSchliessen} disabled={arbeitet}>
+            Abbrechen
+          </Knopf>
+          <Knopf onClick={speichern} disabled={arbeitet || !gueltig}>
+            Urlaub eintragen
+          </Knopf>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenAuslöser: number; onGeaendert?: () => void }) {
   const [monat, setMonat] = useState(() => {
     const heute = new Date()
@@ -349,6 +514,27 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>([])
   const [lokalNeu, setLokalNeu] = useState(0)
   const [bearbeiten, setBearbeiten] = useState<{ eintrag: KalenderEintrag; tag: string } | null>(null)
+  const [ziehen, setZiehen] = useState<{ zeileId: string; start: string; ende: string } | null>(null)
+  const [neuerUrlaub, setNeuerUrlaub] = useState<{ person: Mitarbeiter; von: string; bis: string } | null>(null)
+  const ziehenRef = useRef(ziehen)
+  ziehenRef.current = ziehen
+  const mitarbeiterRef = useRef<Mitarbeiter[]>([])
+  mitarbeiterRef.current = mitarbeiterListe
+
+  // Maustaste loslassen beendet das Aufziehen eines neuen Urlaubs
+  useEffect(() => {
+    function loslassen() {
+      const z = ziehenRef.current
+      if (!z) return
+      setZiehen(null)
+      const person = mitarbeiterRef.current.find((m) => m.id === z.zeileId)
+      if (!person) return
+      const [von, bis] = z.start <= z.ende ? [z.start, z.ende] : [z.ende, z.start]
+      setNeuerUrlaub({ person, von, bis })
+    }
+    window.addEventListener('mouseup', loslassen)
+    return () => window.removeEventListener('mouseup', loslassen)
+  }, [])
 
   useEffect(() => {
     async function laden() {
@@ -546,16 +732,26 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
                 {tage.map((tag) => {
                   const eintrag = eintragFuerZelle(zeile.name, tag)
                   const feiertag = feiertagName(tag)
+                  const tagIso = datumZuISO(tag)
+                  const istPerson = !zeile.id.startsWith('unbekannt-')
+                  const imAuswahlBereich =
+                    !!ziehen &&
+                    ziehen.zeileId === zeile.id &&
+                    tagIso >= (ziehen.start <= ziehen.ende ? ziehen.start : ziehen.ende) &&
+                    tagIso <= (ziehen.start <= ziehen.ende ? ziehen.ende : ziehen.start)
                   return (
                     <td
                       key={tag.toISOString()}
-                      title={eintrag ? `${zeile.name} – klicken zum Bearbeiten` : feiertag ?? undefined}
-                      onClick={eintrag ? () => setBearbeiten({ eintrag, tag: datumZuISO(tag) }) : undefined}
+                      title={eintrag ? `${zeile.name} – klicken zum Bearbeiten` : istPerson ? `${feiertag ? feiertag + ' – ' : ''}Klicken oder ziehen, um Urlaub einzutragen` : feiertag ?? undefined}
+                      onClick={eintrag ? () => setBearbeiten({ eintrag, tag: tagIso }) : undefined}
+                      onMouseDown={!eintrag && istPerson ? (ev) => { ev.preventDefault(); setZiehen({ zeileId: zeile.id, start: tagIso, ende: tagIso }) } : undefined}
+                      onMouseEnter={() => setZiehen((z) => (z && z.zeileId === zeile.id ? { ...z, ende: tagIso } : z))}
                       style={{
                         borderBottom: '1px solid var(--border)',
-                        background: zellHintergrund(tag, index, eintrag),
+                        background: imAuswahlBereich ? '#93c5fd' : zellHintergrund(tag, index, eintrag),
                         height: 22,
-                        cursor: eintrag ? 'pointer' : 'default',
+                        cursor: eintrag ? 'pointer' : istPerson ? 'cell' : 'default',
+                        userSelect: 'none',
                       }}
                     />
                   )
@@ -594,7 +790,7 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
       </div>
 
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>
-        Tipp: Auf einen farbigen Urlaubstag klicken, um den Urlaub zu ändern, einen einzelnen Tag herauszunehmen oder den Zeitraum zu entfernen.
+        Tipp: Auf einen farbigen Urlaubstag klicken, um den Urlaub zu ändern, einen einzelnen Tag herauszunehmen oder den Zeitraum zu entfernen. Auf freie Tage klicken oder über mehrere Tage ziehen, um Urlaub einzutragen.
       </p>
 
       {bearbeiten && (
@@ -604,6 +800,20 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
           onSchliessen={() => setBearbeiten(null)}
           onGeaendert={() => {
             setBearbeiten(null)
+            setLokalNeu((n) => n + 1)
+            onGeaendert?.()
+          }}
+        />
+      )}
+
+      {neuerUrlaub && (
+        <NeuerUrlaubDialog
+          person={neuerUrlaub.person}
+          vonStart={neuerUrlaub.von}
+          bisStart={neuerUrlaub.bis}
+          onSchliessen={() => setNeuerUrlaub(null)}
+          onGeaendert={() => {
+            setNeuerUrlaub(null)
             setLokalNeu((n) => n + 1)
             onGeaendert?.()
           }}
