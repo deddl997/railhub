@@ -32,6 +32,8 @@ interface Zahlen {
   morgenAuftraege: number | null
   ohneBesetzung: number | null
   offeneSpots: number | null
+  offStandard: number | null
+  offSpot: number | null
   ohnePreis: number | null
   bereitAnzahl: number | null
   bereitSumme: number | null
@@ -123,6 +125,8 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       morgenAuftraege: null,
       ohneBesetzung: null,
       offeneSpots: null,
+      offStandard: null,
+      offSpot: null,
       ohnePreis: null,
       bereitAnzahl: null,
       bereitSumme: null,
@@ -182,8 +186,41 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
             besetzung: (mitOffen.has(a.id) ? 'offen' : mitPerson.has(a.id) ? 'besetzt' : 'unbesetzt') as 'besetzt' | 'offen' | 'unbesetzt',
           }))
           neu.ohneBesetzung = mitStatus.filter((a) => a.besetzung === 'unbesetzt').length
-          neu.offeneSpots = mitStatus.filter((a) => a.besetzung === 'offen').length
           neu.liste = mitStatus.filter((a) => a.abfahrt_datum <= morgenIso || a.besetzung !== 'besetzt').slice(0, 12)
+        })(),
+        (async () => {
+          // Alle offenen Schichten der naechsten 7 Tage: Standard-Schichten (Soll minus eingeteilt) + offene Spotschichten
+          const bis6 = iso(plusTage(heute, 6))
+          const [vor, soll, ein, urlaub, spots] = await Promise.all([
+            supabase.from('schichtvorlagen').select('id, benoetigte_wochentage').eq('aktiv', true),
+            supabase.from('schicht_soll').select('schichtvorlage_id, wochentag, anzahl'),
+            supabase.from('dienstplan_eintraege').select('mitarbeiter_id, datum, schichtvorlage_id').gte('datum', heuteIso).lte('datum', bis6).not('schichtvorlage_id', 'is', null),
+            supabase.from('urlaubsantraege').select('mitarbeiter_id, erster_tag, letzter_tag').eq('status', 'genehmigt').lte('erster_tag', bis6).gte('letzter_tag', heuteIso),
+            supabase.from('offene_spotschichten').select('id').gte('datum', heuteIso).lte('datum', bis6),
+          ])
+          if (spots.error) return
+          neu.offSpot = (spots.data ?? []).length
+          if (vor.error || ein.error) {
+            neu.offeneSpots = neu.offSpot
+            return
+          }
+          const urlaubListe = (urlaub.data ?? []) as { mitarbeiter_id: string; erster_tag: string; letzter_tag: string }[]
+          const imUrlaub = (m: string, d: string) => urlaubListe.some((u) => u.mitarbeiter_id === m && u.erster_tag <= d && u.letzter_tag >= d)
+          const sollListe = (soll.data ?? []) as { schichtvorlage_id: string; wochentag: number; anzahl: number }[]
+          const eintraege = (ein.data ?? []) as { mitarbeiter_id: string; datum: string; schichtvorlage_id: string }[]
+          let fehlend = 0
+          for (let i = 0; i < 7; i++) {
+            const tag = plusTage(heute, i)
+            const d = iso(tag)
+            for (const v of (vor.data ?? []) as { id: string; benoetigte_wochentage: number[] | null }[]) {
+              const zeile = sollListe.find((x) => x.schichtvorlage_id === v.id && x.wochentag === tag.getDay())
+              const sollAnzahl = zeile ? zeile.anzahl : (v.benoetigte_wochentage ?? [0, 1, 2, 3, 4, 5, 6]).includes(tag.getDay()) ? 1 : 0
+              const besetzt = eintraege.filter((e) => e.schichtvorlage_id === v.id && e.datum === d && !imUrlaub(e.mitarbeiter_id, d)).length
+              fehlend += Math.max(0, sollAnzahl - besetzt)
+            }
+          }
+          neu.offStandard = fehlend
+          neu.offeneSpots = fehlend + neu.offSpot
         })(),
         (async () => {
           neu.ohnePreis = await zahl(
@@ -240,7 +277,7 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
     kacheln.push(
       <Kachel key="h" titel="Aufträge heute" wert={z?.heuteAuftraege ?? '–'} unter={`morgen: ${z?.morgenAuftraege ?? '–'}`} farbe="neutral" onClick={() => gehe('auftraege')} laedt={laedt} />,
       <Kachel key="b" titel="Ohne Besetzung (7 Tage)" wert={z?.ohneBesetzung ?? '–'} unter={z?.ohneBesetzung ? 'noch kein Lokführer eingeteilt' : 'alle Aufträge haben Personal'} farbe={farbeAnzahl(z?.ohneBesetzung ?? null)} onClick={() => gehe('auftraege')} laedt={laedt} />,
-      <Kachel key="o" titel="Offene Spotschichten" wert={z?.offeneSpots ?? '–'} unter={z?.offeneSpots ? 'Aufträge mit freier Schicht (7 Tage)' : 'keine offenen Schichten'} farbe={farbeAnzahl(z?.offeneSpots ?? null)} onClick={() => gehe(istAdmin ? 'dienstplan' : 'auftraege')} laedt={laedt} />,
+      <Kachel key="o" titel="Offene Schichten (7 Tage)" wert={z?.offeneSpots ?? '–'} unter={z?.offeneSpots ? `${z.offStandard ?? 0} Standard · ${z.offSpot ?? 0} Spot` : 'alle Schichten besetzt'} farbe={farbeAnzahl(z?.offeneSpots ?? null)} onClick={() => gehe(istAdmin ? 'dienstplan' : 'auftraege')} laedt={laedt} />,
       <Kachel key="p" titel="Gefahren ohne Preis" wert={z?.ohnePreis ?? '–'} unter={z?.ohnePreis ? 'Preis fehlt (letzte 120 Tage)' : 'alles bepreist'} farbe={farbeAnzahl(z?.ohnePreis ?? null)} onClick={() => gehe('auftraege')} laedt={laedt} />
     )
   }
