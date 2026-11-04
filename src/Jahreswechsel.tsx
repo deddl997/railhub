@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { bestaetigen } from './ui'
 
 interface Person {
   id: string
@@ -121,7 +122,7 @@ export default function Jahreswechsel() {
       `Resturlaub ${von} → ${nach} für ${gewaehlt.length} Personen übernehmen?\n` +
       `Gesamt werden ${zahlText(summeUebertrag)} Tage übertragen.\n\n` +
       `Wo ${nach} schon Daten hat, wird nur „Rest Vorjahr“ gesetzt.`
-    if (!window.confirm(text)) return
+    if (!(await bestaetigen(text, { titel: 'Resturlaub übernehmen', jaText: 'Ja, übernehmen' }))) return
     setLaedt(true)
     setFehler(null)
     setMeldung(null)
@@ -185,7 +186,7 @@ export default function Jahreswechsel() {
       {meldung && <div style={{ background: '#dcfce7', color: '#166534', padding: '8px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 }}>{meldung}</div>}
 
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 820 }}>
+        <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 820 }}>
           <thead>
             <tr style={{ background: '#f1f5f9' }}>
               <th style={zelle}></th>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { bestaetigen } from './ui'
 
 export const TRASSENFINDER_URL = 'https://trassenfinder.de/#/21/sgv?tab_id=1'
 
@@ -194,7 +195,7 @@ export default function Trassenpreise() {
   }
 
   async function loeschen(t: Trassenpreis) {
-    if (!window.confirm(`Preis ${t.von} → ${t.nach} (${euro(t.preis)}) löschen?`)) return
+    if (!(await bestaetigen(`Preis ${t.von} → ${t.nach} (${euro(t.preis)}) löschen?`, { titel: 'Preis löschen', jaText: 'Ja, löschen', gefahr: true }))) return
     const { error } = await supabase.from('trassenpreise').delete().eq('id', t.id)
     if (error) setFehler(error.message)
     else setZaehler((z) => z + 1)
@@ -310,7 +311,7 @@ export default function Trassenpreise() {
 
       {laedt && <p style={{ color: '#64748b' }}>Lade...</p>}
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 760 }}>
+        <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 760 }}>
           <thead>
             <tr style={{ background: '#f1f5f9' }}>
               <th style={zelle}>Strecke</th>

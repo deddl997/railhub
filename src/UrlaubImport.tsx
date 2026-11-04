@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { bestaetigen } from './ui'
 import { excelLesen, resturlaubVerteilen, bestenTreffer, type ExcelErgebnis } from './urlaubImportLogik'
 
 interface Person {
@@ -105,7 +106,7 @@ export default function UrlaubImport() {
       (urlaubeAnlegen ? `, ${blockSumme} Urlaubszeiträume anlegen` : '') +
       (restSetzen ? ', Resturlaub und Anspruch überschreiben' : '') +
       '?\n\nBereits vorhandene Urlaube werden nicht doppelt angelegt.'
-    if (!window.confirm(text)) return
+    if (!(await bestaetigen(text, { titel: 'Import starten', jaText: 'Ja, importieren' }))) return
     setLaedt(true)
     setFehler(null)
     setMeldung(null)
@@ -189,7 +190,7 @@ export default function UrlaubImport() {
             </label>
           </div>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
+            <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
               <thead>
                 <tr style={{ background: '#f1f5f9' }}>
                   <th style={zelle}></th>

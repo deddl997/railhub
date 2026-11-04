@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { bestaetigen } from './ui'
 
 interface Benutzer {
   id: string
@@ -55,7 +56,7 @@ export default function BenutzerVerwaltung() {
   async function rolleAendern(b: Benutzer, neu: string) {
     if (neu === b.rolle) return
     const text = ROLLEN.find((r) => r.wert === neu)?.text ?? neu
-    if (!window.confirm(`${b.name} bekommt die Rolle „${text}“. Fortfahren?`)) return
+    if (!(await bestaetigen(`${b.name} bekommt die Rolle „${text}“. Fortfahren?`, { titel: 'Rolle ändern' }))) return
     setMeldung(null)
     const { error } = await supabase.rpc('admin_rolle_setzen', { p_id: b.id, p_rolle: neu })
     if (error) {
@@ -110,7 +111,7 @@ export default function BenutzerVerwaltung() {
         <p style={{ color: '#64748b' }}>Lade...</p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>
+          <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>
             <thead>
               <tr style={{ background: '#f1f5f9' }}>
                 <th style={zelle}>Name</th>
@@ -131,7 +132,7 @@ export default function BenutzerVerwaltung() {
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <span>{b.email ?? '(unbekannt)'}</span>
                         <button
-                          onClick={() => window.confirm(`Login von ${b.name} wirklich trennen?`) && loginSetzen(b, null)}
+                          onClick={async () => (await bestaetigen(`Login von ${b.name} wirklich trennen?`, { titel: 'Login trennen', jaText: 'Ja, trennen', gefahr: true })) && loginSetzen(b, null)}
                           style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 11 }}
                           title="Login von dieser Person trennen"
                         >

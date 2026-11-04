@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { bestaetigen } from './ui'
 import { datumZuISO } from './datumUtils'
 import { fahrtenPruefen } from './auftragSchicht'
 import { TRASSENFINDER_URL, ortPasst, type Trassenpreis } from './Trassenpreise'
@@ -297,7 +298,7 @@ export default function Wirtschaftlichkeit() {
   }
 
   async function kostenLoeschen(id: string) {
-    if (!window.confirm('Diese Kostenposition löschen?')) return
+    if (!(await bestaetigen('Diese Kostenposition löschen?', { titel: 'Kosten löschen', jaText: 'Ja, löschen', gefahr: true }))) return
     const { error } = await supabase.from('auftrag_kosten').delete().eq('id', id)
     if (error) setFehler(error.message)
     else setZaehler((z) => z + 1)
@@ -477,7 +478,7 @@ export default function Wirtschaftlichkeit() {
 
           {gruppe !== 'auftrag' ? (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560 }}>
+              <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560 }}>
                 <thead>
                   <tr style={{ background: '#f1f5f9' }}>
                     <th style={zelle}>{gruppe === 'kunde' ? 'Kunde' : gruppe === 'strecke' ? 'Strecke' : 'Monat'}</th>
@@ -511,7 +512,7 @@ export default function Wirtschaftlichkeit() {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 860 }}>
+              <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 860 }}>
                 <thead>
                   <tr style={{ background: '#f1f5f9' }}>
                     <th style={zelle}>Datum</th>

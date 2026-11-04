@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
+import { bestaetigen } from './ui'
 import { datumZuISO } from './datumUtils'
 
 interface Position {
@@ -138,7 +139,7 @@ export default function Rechnungen() {
     const text =
       `${mitPreis.length} Aufträge von „${kunde}“ mit der Rechnungsnummer ${rechnungsnr.trim()} versehen und als „abgerechnet“ markieren?\n` +
       `Danach sind sie in dieser Liste nicht mehr offen.`
-    if (!window.confirm(text)) return
+    if (!(await bestaetigen(text, { titel: 'Rechnungsnummer vergeben', jaText: 'Ja, abrechnen' }))) return
     setBucht(true)
     setFehler(null)
     setMeldung(null)
@@ -206,7 +207,7 @@ export default function Rechnungen() {
       {zeilen.length > 0 && (
         <>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 640 }}>
+            <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 640 }}>
               <thead>
                 <tr style={{ background: '#f1f5f9' }}>
                   <th style={zelle}></th>

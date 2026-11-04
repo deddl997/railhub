@@ -27,8 +27,11 @@ import Dienstplan from './Dienstplan'
 import MeinDienstplan from './MeinDienstplan'
 import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
+import Dashboard from './Dashboard'
+import { UiAnbieter } from './ui'
 
 const ALLE_TABS = [
+  { id: 'start', label: 'Start', kurz: 'Start', nurAdmin: false },
   { id: 'meinplan', label: 'Mein Dienstplan', kurz: 'Dienstplan', nurAdmin: false },
   { id: 'antrag', label: 'Antrag einreichen', kurz: 'Antrag', nurAdmin: false },
   { id: 'kalender', label: 'Personalplanung', kurz: 'Planung', nurAdmin: true },
@@ -53,7 +56,7 @@ const ALLE_TABS = [
 
 type TabId = (typeof ALLE_TABS)[number]['id']
 
-function App() {
+function AppInnen() {
   const [session, setSession] = useState<Session | null>(null)
   const [ladeSession, setLadeSession] = useState(true)
   const [neuLadenAuslöser, setNeuLadenAuslöser] = useState(0)
@@ -80,10 +83,20 @@ function App() {
   // Mitarbeiter starten direkt in ihrem Dienstplan
   useEffect(() => {
     if (!ladeRolle && !startTabGesetzt) {
-      if (mitarbeiter && !istAdmin) setAktiverTab('meinplan')
+      if (istAdmin || rolle === 'disponent' || rolle === 'abrechnung') setAktiverTab('start')
+      else if (mitarbeiter) setAktiverTab('meinplan')
       setStartTabGesetzt(true)
     }
-  }, [ladeRolle, mitarbeiter, istAdmin, startTabGesetzt])
+  }, [ladeRolle, mitarbeiter, istAdmin, rolle, startTabGesetzt])
+
+  // Rolle kommt manchmal etwas später: Planer (Disponent/Abrechnung) landen dann ebenfalls auf der Startseite
+  const [planerStartGesetzt, setPlanerStartGesetzt] = useState(false)
+  useEffect(() => {
+    if (startTabGesetzt && !planerStartGesetzt && (rolle === 'disponent' || rolle === 'abrechnung')) {
+      setPlanerStartGesetzt(true)
+      setAktiverTab((t) => (t === 'meinplan' ? 'start' : t))
+    }
+  }, [startTabGesetzt, planerStartGesetzt, rolle])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -167,11 +180,12 @@ function App() {
   // (und in der Datenbank die Funktion darf_kosten() anpassen, siehe kosten.sql).
   const darfKosten = istAdmin
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
   const GRUPPEN: { id: string; label: string; tabs: TabId[] }[] = [
+    { id: 'start', label: 'Start', tabs: ['start'] },
     {
       id: 'plan',
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
@@ -424,6 +438,25 @@ function App() {
           padding: handy ? '12px 10px 24px' : '32px 20px',
         }}
       >
+        {aktiverTab === 'start' && (istAdmin || darfDisponieren || darfAbrechnen) && (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              padding: handy ? 14 : 24,
+            }}
+          >
+            <Dashboard
+              name={mitarbeiter?.name ?? ''}
+              istAdmin={istAdmin}
+              darfDisponieren={darfDisponieren}
+              darfAbrechnen={darfAbrechnen}
+              gehe={(t) => setAktiverTab(t as TabId)}
+            />
+          </div>
+        )}
+
         {aktiverTab === 'meinplan' && !istAdmin && mitarbeiter && (
           <div
             style={{
@@ -721,4 +754,10 @@ const menueKnopfStil: React.CSSProperties = {
   cursor: 'pointer',
 }
 
-export default App
+export default function App() {
+  return (
+    <UiAnbieter>
+      <AppInnen />
+    </UiAnbieter>
+  )
+}

@@ -229,7 +229,7 @@ export default function Kennzahlen() {
 
       <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 14, margin: '4px 0 8px' }}>Pro Kunde</div>
       <div style={{ overflowX: 'auto', marginBottom: 22 }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
+        <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
           <thead>
             <tr style={{ background: '#f1f5f9' }}>
               <th style={zelle}>Kunde</th>
@@ -265,7 +265,7 @@ export default function Kennzahlen() {
       <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 14, margin: '4px 0 8px' }}>Auftragsschichten pro Person</div>
       {dienstHinweis && <div style={{ fontSize: 12, color: '#92400e', marginBottom: 6 }}>Die Schichtdaten konnten mit deiner Rolle nicht geladen werden.</div>}
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}>
+        <table className="rbl-tabelle" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}>
           <thead>
             <tr style={{ background: '#f1f5f9' }}>
               <th style={zelle}>Person</th>
