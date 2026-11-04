@@ -105,6 +105,7 @@ export default function MeineAntraege({
   const [neuerZeitraumVon, setNeuerZeitraumVon] = useState('')
   const [neuerZeitraumBis, setNeuerZeitraumBis] = useState('')
   const [zeitraumWirdGespeichert, setZeitraumWirdGespeichert] = useState(false)
+  const [jahrFilter, setJahrFilter] = useState<number | 'alle' | null>(null)
 
   async function laden() {
     setLadeVorgang(true)
@@ -134,6 +135,19 @@ export default function MeineAntraege({
     status: zeilen[0].status,
     zeilen: zeilen.sort((a, b) => (a.erster_tag ?? '').localeCompare(b.erster_tag ?? '')),
   }))
+
+  // Jahres-Reiter: Jahre aller Anträge plus das aktuelle Jahr
+  const aktuellesJahr = new Date().getFullYear()
+  const jahre = Array.from(new Set([aktuellesJahr, ...gruppen.map((g) => jahrDerGruppe(g))])).sort((a, b) => a - b)
+  const offeneProJahr = new Map<number, number>()
+  for (const g of gruppen) {
+    if (g.status === 'offen') offeneProJahr.set(jahrDerGruppe(g), (offeneProJahr.get(jahrDerGruppe(g)) ?? 0) + 1)
+  }
+  const jahreMitOffenen = jahre.filter((j) => (offeneProJahr.get(j) ?? 0) > 0)
+  // Voreinstellung: das aktuelle Jahr, wenn dort etwas offen ist, sonst das erste Jahr mit offenen Anträgen, sonst das aktuelle Jahr
+  const vorgabeJahr = jahreMitOffenen.includes(aktuellesJahr) ? aktuellesJahr : jahreMitOffenen[0] ?? aktuellesJahr
+  const aktivesJahr: number | 'alle' = jahrFilter !== null && (jahrFilter === 'alle' || jahre.includes(jahrFilter)) ? jahrFilter : vorgabeJahr
+  const anzahlImJahr = (j: number) => gruppen.filter((g) => jahrDerGruppe(g) === j).length
 
   function gesamtTage(gruppe: Gruppe) {
     return gruppe.zeilen.reduce((summe, z) => summe + (z.brauchbare_tage ?? z.anzahl_tage ?? 0), 0)
@@ -375,7 +389,53 @@ export default function MeineAntraege({
     return <p style={{ color: 'var(--text-muted)' }}>Lade Anträge...</p>
   }
 
+  const reiterStil = (aktiv: boolean): React.CSSProperties => ({
+    background: aktiv ? 'var(--navy)' : '#eef2f8',
+    color: aktiv ? '#ffffff' : 'var(--navy)',
+    border: 'none',
+    borderRadius: 999,
+    padding: '6px 14px',
+    fontSize: 13,
+    fontWeight: aktiv ? 600 : 500,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+  })
+
   return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+        {[...jahre].reverse().map((j) => {
+          const offen = offeneProJahr.get(j) ?? 0
+          return (
+            <button key={j} onClick={() => setJahrFilter(j)} style={reiterStil(aktivesJahr === j)} title={`${anzahlImJahr(j)} Anträge in ${j}`}>
+              {j}
+              {offen > 0 && (
+                <span
+                  style={{
+                    background: 'var(--warning)',
+                    color: '#ffffff',
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    minWidth: 18,
+                    padding: '0 5px',
+                    textAlign: 'center',
+                  }}
+                  title="Nicht bearbeitete Anträge"
+                >
+                  {offen}
+                </span>
+              )}
+            </button>
+          )
+        })}
+        <button onClick={() => setJahrFilter('alle')} style={reiterStil(aktivesJahr === 'alle')}>
+          Alle Jahre
+        </button>
+      </div>
+
     <div
       style={{
         display: 'grid',
@@ -384,7 +444,9 @@ export default function MeineAntraege({
       }}
     >
       {SPALTEN.map((spalte) => {
-        const gefiltert = gruppen.filter((g) => g.status === spalte.status)
+        const gefiltert = gruppen.filter(
+          (g) => g.status === spalte.status && (aktivesJahr === 'alle' || jahrDerGruppe(g) === aktivesJahr)
+        )
         return (
           <div key={spalte.status}>
             <div
@@ -657,6 +719,7 @@ export default function MeineAntraege({
           </div>
         )
       })}
+    </div>
     </div>
   )
 }
