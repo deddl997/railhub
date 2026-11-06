@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
-import { bestaetigen } from './ui'
+import { Knopf, bestaetigen, useToast } from './ui'
 
 interface Jahresdaten {
   id: string
@@ -32,6 +32,7 @@ interface Zeile {
 
 export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
   const { mitarbeiter: eigenerMitarbeiter } = useAktuellerMitarbeiter()
+  const toast = useToast()
   const [jahr, setJahr] = useState(() => new Date().getFullYear())
   const [verfuegbareJahre, setVerfuegbareJahre] = useState<number[]>([])
   const [zeilen, setZeilen] = useState<Zeile[]>([])
@@ -221,6 +222,36 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     await laden()
   }
 
+  async function termineKopieren(art: 'rfu' | 'simulator', ausgewaehlt: Zeile[]) {
+    const feld = art === 'rfu' ? 'rfuDatum' : 'simulatorDatum'
+    const titel = art === 'rfu' ? 'RFU' : 'Simulator'
+    const mitTermin = ausgewaehlt
+      .filter((z) => z[feld])
+      .sort((a, b) => (a[feld] as string).localeCompare(b[feld] as string) || a.name.localeCompare(b.name, 'de'))
+    if (mitTermin.length === 0) {
+      toast.info(`Keine ${titel}-Termine für ${jahr} in dieser Auswahl eingetragen.`)
+      return
+    }
+    const wochentage = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+    const zeilenText = mitTermin.map((z) => {
+      const [j, m, t] = (z[feld] as string).split('-').map(Number)
+      const wt = wochentage[new Date(j, m - 1, t).getDay()]
+      return `${z.name}: ${wt}, ${String(t).padStart(2, '0')}.${String(m).padStart(2, '0')}.${j}`
+    })
+    const text = `${titel}-Termine ${jahr}\n\n${zeilenText.join('\n')}`
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const feldEl = document.createElement('textarea')
+      feldEl.value = text
+      document.body.appendChild(feldEl)
+      feldEl.select()
+      document.execCommand('copy')
+      document.body.removeChild(feldEl)
+    }
+    toast.erfolg(`${mitTermin.length} ${titel}-Termine kopiert – jetzt in die Mail einfügen (Strg+V).`)
+  }
+
   function jahrHinzufuegen() {
     const naechstesJahr = Math.max(...verfuegbareJahre, jahr) + 1
     setVerfuegbareJahre((vorher) =>
@@ -339,6 +370,12 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             {f.text} · {f.anzahl}
           </button>
         ))}
+        <Knopf art="sekundaer" klein onClick={() => termineKopieren('rfu', sichtbareZeilen)} title="Alle eingetragenen RFU-Termine der aktuellen Auswahl kopieren">
+          📋 RFU-Termine kopieren
+        </Knopf>
+        <Knopf art="sekundaer" klein onClick={() => termineKopieren('simulator', sichtbareZeilen)} title="Alle eingetragenen Simulator-Termine der aktuellen Auswahl kopieren">
+          📋 Simulator-Termine kopieren
+        </Knopf>
         <input
           type="search"
           placeholder="Name suchen…"
