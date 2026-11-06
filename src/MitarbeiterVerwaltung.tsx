@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
+import { bestaetigen } from './ui'
 
 interface Jahresdaten {
   id: string
@@ -10,6 +11,8 @@ interface Jahresdaten {
   urlaubsanspruch: number | null
   resturlaub: number | null
   resturlaub_vorjahr: number | null
+  rfu_datum: string | null
+  simulator_datum: string | null
 }
 
 interface Zeile {
@@ -23,6 +26,8 @@ interface Zeile {
   resturlaub: number | null
   resturlaub_vorjahr: number | null
   tageGenommen: number
+  rfuDatum: string | null
+  simulatorDatum: string | null
 }
 
 export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
@@ -53,7 +58,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     const { data: jahresdatenDiesesJahr } = await supabase
       .from('mitarbeiter_jahresdaten')
-      .select('id, mitarbeiter_id, urlaubsanspruch, resturlaub, resturlaub_vorjahr')
+      .select('id, mitarbeiter_id, urlaubsanspruch, resturlaub, resturlaub_vorjahr, rfu_datum, simulator_datum')
       .eq('jahr', jahr)
 
     const jahresdatenMap = new Map<string, Jahresdaten>()
@@ -81,6 +86,8 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         resturlaub: jd ? jd.resturlaub : 30,
         resturlaub_vorjahr: jd ? jd.resturlaub_vorjahr : 0,
         tageGenommen: genommenMap.get(namensSignatur(m.name)) ?? 0,
+        rfuDatum: jd?.rfu_datum ?? null,
+        simulatorDatum: jd?.simulator_datum ?? null,
       }
     })
     setZeilen(neueZeilen)
@@ -119,6 +126,8 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           urlaubsanspruch: zeile.urlaubsanspruch,
           resturlaub: zeile.resturlaub,
           resturlaub_vorjahr: zeile.resturlaub_vorjahr,
+          rfu_datum: zeile.rfuDatum,
+          simulator_datum: zeile.simulatorDatum,
         })
         .eq('id', zeile.jahresdatenId)
     } else {
@@ -130,6 +139,8 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           urlaubsanspruch: zeile.urlaubsanspruch,
           resturlaub: zeile.resturlaub,
           resturlaub_vorjahr: zeile.resturlaub_vorjahr,
+          rfu_datum: zeile.rfuDatum,
+          simulator_datum: zeile.simulatorDatum,
         })
         .select('id')
         .single()
@@ -145,6 +156,12 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     setGespeichertId(zeile.mitarbeiterId)
     setTimeout(() => setGespeichertId(null), 1200)
+  }
+
+  async function datumAendern(zeile: Zeile, feld: 'rfuDatum' | 'simulatorDatum', wert: string) {
+    const neueZeile = { ...zeile, [feld]: wert === '' ? null : wert }
+    setZeilen((vorher) => vorher.map((z) => (z.mitarbeiterId === zeile.mitarbeiterId ? neueZeile : z)))
+    await speichern(neueZeile)
   }
 
   async function kategorieAendern(zeile: Zeile, neueKategorie: string) {
@@ -176,8 +193,9 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   async function rolleAendern(zeile: Zeile, neueRolle: string) {
     const istEigenerAccount = zeile.mitarbeiterId === eigenerMitarbeiter?.id
     if (istEigenerAccount && neueRolle !== 'admin') {
-      const bestaetigt = window.confirm(
-        'Du entziehst dir selbst die Admin-Rechte. Danach siehst du nur noch den eingeschränkten Mitarbeiter-Bereich und kannst diese Einstellung nicht mehr selbst rückgängig machen. Fortfahren?'
+      const bestaetigt = await bestaetigen(
+        'Du entziehst dir selbst die Admin-Rechte. Danach siehst du nur noch den eingeschränkten Mitarbeiter-Bereich und kannst diese Einstellung nicht mehr selbst rückgängig machen. Fortfahren?',
+        { titel: 'Admin-Rechte entziehen', jaText: 'Ja, entziehen', gefahr: true }
       )
       if (!bestaetigt) return
     }
@@ -289,6 +307,8 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
               <th style={kopfZelleStil}>Rolle</th>
               <th style={kopfZelleStil}>Qualifikation</th>
               <th style={kopfZelleStil}>Lok-Typen</th>
+              <th style={kopfZelleStil}>Datum RFU</th>
+              <th style={kopfZelleStil}>Datum Simulator</th>
               <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
               <th style={kopfZelleStil}>Urlaubsanspruch</th>
               <th style={kopfZelleStil}>Resturlaub</th>
@@ -397,6 +417,24 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
                 </td>
                 <td style={zellStil}>
                   <input
+                    type="date"
+                    value={zeile.rfuDatum ?? ''}
+                    onChange={(e) => datumAendern(zeile, 'rfuDatum', e.target.value)}
+                    title={zeile.rfuDatum ? 'Durchgeführt am' : jahr === new Date().getFullYear() ? 'Dieses Jahr noch nicht eingetragen' : 'Nicht eingetragen'}
+                    style={datumStil(zeile.rfuDatum, jahr)}
+                  />
+                </td>
+                <td style={zellStil}>
+                  <input
+                    type="date"
+                    value={zeile.simulatorDatum ?? ''}
+                    onChange={(e) => datumAendern(zeile, 'simulatorDatum', e.target.value)}
+                    title={zeile.simulatorDatum ? 'Durchgeführt am' : jahr === new Date().getFullYear() ? 'Dieses Jahr noch nicht eingetragen' : 'Nicht eingetragen'}
+                    style={datumStil(zeile.simulatorDatum, jahr)}
+                  />
+                </td>
+                <td style={zellStil}>
+                  <input
                     type="number"
                     value={zeile.resturlaub_vorjahr ?? ''}
                     onChange={(e) =>
@@ -453,6 +491,15 @@ const kopfZelleStil: React.CSSProperties = {
 const zellStil: React.CSSProperties = {
   padding: '4px 10px',
   borderBottom: '1px solid var(--border)',
+}
+
+function datumStil(datum: string | null, jahr: number): React.CSSProperties {
+  const dieserJahr = jahr === new Date().getFullYear()
+  return {
+    ...eingabeStil,
+    width: 140,
+    background: datum ? '#dcfce7' : dieserJahr ? '#fef3c7' : undefined,
+  }
 }
 
 const eingabeStil: React.CSSProperties = {
