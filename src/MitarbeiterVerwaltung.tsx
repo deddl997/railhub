@@ -42,7 +42,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   const [offenesLokMenue, setOffenesLokMenue] = useState<string | null>(null)
 
   async function laden() {
-    setLadeVorgang(true)
+    // Beim Neuladen (z. B. durch Live-Aktualisierung) bleibt die Liste stehen: kein Flackern, kein Sprung nach oben
 
     const [{ data: mitarbeiterListe }, { data: alleJahresdaten }, { data: genehmigteAntraege }] =
       await Promise.all([
@@ -102,6 +102,9 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   }
 
   useEffect(() => {
+    // Waehrend du gerade in ein Feld tippst oder ein Datum waehlst, wird nicht zwischendurch neu geladen
+    const aktiv = document.activeElement
+    if (!ladeVorgang && (aktiv instanceof HTMLInputElement || aktiv instanceof HTMLSelectElement) && aktiv.closest('table')) return
     laden()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [neuLadenAuslöser, jahr])

@@ -199,7 +199,6 @@ export default function MeineAntraege({
   const [jahrFilter, setJahrFilter] = useState<number | 'alle' | null>(null)
 
   async function laden() {
-    setLadeVorgang(true)
     const { data } = await supabase
       .from('urlaubsantraege')
       .select(
