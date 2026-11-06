@@ -40,6 +40,8 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   const [neuerName, setNeuerName] = useState('')
   const [wirdHinzugefuegt, setWirdHinzugefuegt] = useState(false)
   const [offenesLokMenue, setOffenesLokMenue] = useState<string | null>(null)
+  const [qualiFilter, setQualiFilter] = useState<string>('alle')
+  const [suche, setSuche] = useState('')
 
   async function laden() {
     // Beim Neuladen (z. B. durch Live-Aktualisierung) bleibt die Liste stehen: kein Flackern, kein Sprung nach oben
@@ -231,6 +233,22 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     return <p style={{ color: 'var(--text-muted)' }}>Lade Mitarbeiter...</p>
   }
 
+  const KURZ: Record<string, string> = { Lokführer: 'TF', Wagenmeister: 'WGM' }
+  const filterKnoepfe = [
+    { id: 'alle', text: 'Alle', anzahl: zeilen.length },
+    ...KATEGORIEN.map((k) => ({
+      id: k,
+      text: KURZ[k] ? `${KURZ[k]} (${k})` : k,
+      anzahl: zeilen.filter((z) => z.kategorie === k).length,
+    })),
+    { id: '__keine', text: 'Ohne Qualifikation', anzahl: zeilen.filter((z) => !z.kategorie).length },
+  ].filter((f) => f.id === 'alle' || f.anzahl > 0)
+  const sichtbareZeilen = zeilen.filter(
+    (z) =>
+      (qualiFilter === 'alle' || (qualiFilter === '__keine' ? !z.kategorie : z.kategorie === qualiFilter)) &&
+      (suche.trim() === '' || z.name.toLowerCase().includes(suche.trim().toLowerCase()))
+  )
+
   return (
     <div>
       <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -302,6 +320,34 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         </button>
       </div>
 
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        {filterKnoepfe.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setQualiFilter(f.id)}
+            style={{
+              background: qualiFilter === f.id ? 'var(--navy)' : 'none',
+              color: qualiFilter === f.id ? '#ffffff' : 'var(--text-muted)',
+              border: '1px solid var(--border)',
+              borderRadius: 999,
+              padding: '5px 12px',
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            {f.text} · {f.anzahl}
+          </button>
+        ))}
+        <input
+          type="search"
+          placeholder="Name suchen…"
+          value={suche}
+          onChange={(e) => setSuche(e.target.value)}
+          style={{ marginLeft: 'auto', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, minWidth: 160 }}
+        />
+      </div>
+
       <div style={{ overflowX: 'auto' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
           <thead>
@@ -321,7 +367,14 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             </tr>
           </thead>
           <tbody>
-            {zeilen.map((zeile) => (
+            {sichtbareZeilen.length === 0 && (
+              <tr>
+                <td colSpan={12} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+                  Keine Mitarbeiter in dieser Auswahl.
+                </td>
+              </tr>
+            )}
+            {sichtbareZeilen.map((zeile) => (
               <tr key={zeile.mitarbeiterId}>
                 <td style={zellStil}>{zeile.name}</td>
                 <td style={zellStil}>
