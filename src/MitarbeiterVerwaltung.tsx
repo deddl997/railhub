@@ -43,6 +43,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   const [neuerName, setNeuerName] = useState('')
   const [wirdHinzugefuegt, setWirdHinzugefuegt] = useState(false)
   const [offenesLokMenue, setOffenesLokMenue] = useState<string | null>(null)
+  const [namenOriginal, setNamenOriginal] = useState<Map<string, string>>(new Map())
   const [qualiFilter, setQualiFilter] = useState<string>('alle')
   const [suche, setSuche] = useState('')
 
@@ -97,6 +98,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
       }
     })
     setZeilen(neueZeilen)
+    setNamenOriginal(new Map(neueZeilen.map((z) => [z.mitarbeiterId, z.name])))
 
     const jahresSet = new Set<number>([jahr, new Date().getFullYear()])
     for (const eintrag of alleJahresdaten ?? []) {
@@ -325,6 +327,38 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     else toast.erfolg(`${kandidaten.length} E-Mail-Adressen eingetragen.`)
   }
 
+  function nameAendern(mitarbeiterId: string, wert: string) {
+    setZeilen((vorher) => vorher.map((z) => (z.mitarbeiterId === mitarbeiterId ? { ...z, name: wert } : z)))
+  }
+
+  async function nameSpeichern(zeile: Zeile) {
+    const neu = zeile.name.trim().replace(/\s+/g, ' ')
+    if (neu === '') {
+      toast.fehler('Der Name darf nicht leer sein.')
+      laden()
+      return
+    }
+    const alt = namenOriginal.get(zeile.mitarbeiterId)
+    if (alt === undefined || alt === neu) {
+      nameAendern(zeile.mitarbeiterId, neu)
+      return
+    }
+    const { error } = await supabase.from('mitarbeiter').update({ name: neu }).eq('id', zeile.mitarbeiterId)
+    if (error) {
+      toast.fehler('Name konnte nicht gespeichert werden: ' + error.message)
+      nameAendern(zeile.mitarbeiterId, alt)
+      return
+    }
+    // Bestehende Urlaubsanträge dieser Person mit umbenennen, damit die Zuordnung (genommene Urlaubstage) erhalten bleibt
+    await supabase.from('urlaubsantraege').update({ name: neu }).eq('mitarbeiter_id', zeile.mitarbeiterId)
+    await supabase.from('urlaubsantraege').update({ name: neu }).eq('name', alt)
+    setNamenOriginal((vorher) => new Map(vorher).set(zeile.mitarbeiterId, neu))
+    nameAendern(zeile.mitarbeiterId, neu)
+    setGespeichertId(zeile.mitarbeiterId)
+    setTimeout(() => setGespeichertId(null), 1200)
+    toast.erfolg(`Name geändert: ${alt} → ${neu}`)
+  }
+
   async function emailsKopieren(ausgewaehlt: Zeile[]) {
     const adressen = ausgewaehlt.map((z) => z.email.trim()).filter(Boolean)
     if (adressen.length === 0) {
@@ -539,7 +573,18 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             )}
             {sichtbareZeilen.map((zeile) => (
               <tr key={zeile.mitarbeiterId}>
-                <td style={zellStil}>{zeile.name}</td>
+                <td style={zellStil}>
+                  <input
+                    type="text"
+                    value={zeile.name}
+                    onChange={(e) => nameAendern(zeile.mitarbeiterId, e.target.value)}
+                    onBlur={() => nameSpeichern(zeile)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                    style={{ ...eingabeStil, width: 200, fontWeight: 600 }}
+                  />
+                </td>
                 <td style={zellStil}>
                   <select
                     value={zeile.rolle}
