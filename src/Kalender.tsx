@@ -515,6 +515,7 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
   const [lokalNeu, setLokalNeu] = useState(0)
   const [bearbeiten, setBearbeiten] = useState<{ eintrag: KalenderEintrag; tag: string } | null>(null)
   const [ziehen, setZiehen] = useState<{ zeileId: string; start: string; ende: string } | null>(null)
+  const [filter, setFilter] = useState<'alle' | 'Lokführer' | 'Wagenmeister'>('alle')
   const [neuerUrlaub, setNeuerUrlaub] = useState<{ person: Mitarbeiter; von: string; bis: string } | null>(null)
   const ziehenRef = useRef(ziehen)
   ziehenRef.current = ziehen
@@ -538,8 +539,9 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
 
   useEffect(() => {
     async function laden() {
-      const monatsStart = datumZuISO(new Date(monat.getFullYear(), monat.getMonth(), 1))
-      const monatsEnde = datumZuISO(new Date(monat.getFullYear(), monat.getMonth() + 1, 0))
+      // Das ganze Jahr laden: dafür braucht die Jahresübersicht alle Urlaube
+      const monatsStart = `${monat.getFullYear()}-01-01`
+      const monatsEnde = `${monat.getFullYear()}-12-31`
 
       const [{ data: antraegeData }, { data: mitarbeiterData }] = await Promise.all([
         supabase
@@ -555,7 +557,7 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
       setMitarbeiterListe(mitarbeiterData ?? [])
     }
     laden()
-  }, [monat, neuLadenAuslöser, lokalNeu])
+  }, [monat.getFullYear(), neuLadenAuslöser, lokalNeu])
 
   const anzahlTage = new Date(monat.getFullYear(), monat.getMonth() + 1, 0).getDate()
   const tage = Array.from({ length: anzahlTage }, (_, i) =>
@@ -578,9 +580,71 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
     )
   ).sort()
 
+  const jahr = monat.getFullYear()
+  const sichtbareMitarbeiter = mitarbeiterListe.filter((m) => filter === 'alle' || m.kategorie === filter)
+  const sichtbareSignaturen = new Set(sichtbareMitarbeiter.map((m) => normalisiereName(m.name)))
+  const eintraegeSicht = eintraege.filter(
+    (e) => e.name && (sichtbareSignaturen.has(normalisiereName(e.name)) || (filter === 'alle' && !bekannteNamen.has(normalisiereName(e.name))))
+  )
+
   const zeilen = [
-    ...mitarbeiterListe.map((m) => ({ id: m.id, name: m.name })),
-    ...unbekannteNamen.map((name) => ({ id: `unbekannt-${name}`, name })),
+    ...sichtbareMitarbeiter.map((m) => ({ id: m.id, name: m.name })),
+    ...(filter === 'alle' ? unbekannteNamen.map((name) => ({ id: `unbekannt-${name}`, name })) : []),
+  ]
+
+  // Jahresübersicht: pro Werktag, wer im Urlaub ist (Wochenenden und Feiertage zählen nicht)
+  const jahrFeiertage = new Set(feiertageBayern(jahr).map((f) => f.datum))
+  const tagInfo = new Map<string, { genehmigt: Set<string>; offen: Set<string> }>()
+  for (const e of eintraegeSicht) {
+    const sig = normalisiereName(e.name as string)
+    let iso = e.erster_tag < `${jahr}-01-01` ? `${jahr}-01-01` : e.erster_tag
+    const ende = e.letzter_tag > `${jahr}-12-31` ? `${jahr}-12-31` : e.letzter_tag
+    for (let n = 0; iso <= ende && n < 400; n++) {
+      const [j, m, t] = iso.split('-').map(Number)
+      const wt = new Date(j, m - 1, t).getDay()
+      if (wt !== 0 && wt !== 6 && !jahrFeiertage.has(iso)) {
+        const info = tagInfo.get(iso) ?? { genehmigt: new Set<string>(), offen: new Set<string>() }
+        ;(e.status === 'genehmigt' ? info.genehmigt : info.offen).add(sig)
+        tagInfo.set(iso, info)
+      }
+      iso = tagPlus(iso, 1)
+    }
+  }
+  const monatsStatistik = Array.from({ length: 12 }, () => ({ urlaubstage: 0, spitze: 0, spitzeTag: '' }))
+  let urlaubstageGenehmigt = 0
+  let urlaubstageOffen = 0
+  tagInfo.forEach((info, iso) => {
+    const m = Number(iso.slice(5, 7)) - 1
+    const gleichzeitig = info.genehmigt.size + info.offen.size
+    monatsStatistik[m].urlaubstage += gleichzeitig
+    if (gleichzeitig > monatsStatistik[m].spitze) {
+      monatsStatistik[m].spitze = gleichzeitig
+      monatsStatistik[m].spitzeTag = iso
+    }
+    urlaubstageGenehmigt += info.genehmigt.size
+    urlaubstageOffen += info.offen.size
+  })
+  const heuteIso = datumZuISO(new Date())
+  const heuteImJahr = heuteIso.startsWith(String(jahr))
+  const heuteGenehmigt = new Set<string>()
+  const heuteOffen = new Set<string>()
+  if (heuteImJahr) {
+    for (const e of eintraegeSicht) {
+      if (e.erster_tag <= heuteIso && e.letzter_tag >= heuteIso) (e.status === 'genehmigt' ? heuteGenehmigt : heuteOffen).add(normalisiereName(e.name as string))
+    }
+  }
+  const gruppenGroesse = sichtbareMitarbeiter.length
+  const monatsSpitze = monatsStatistik[monat.getMonth()]
+  const kartenStil: React.CSSProperties = {
+    background: 'var(--card)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    boxShadow: '0 1px 2px rgba(16,24,40,0.05)',
+  }
+  const filterKnoepfe: { id: 'alle' | 'Lokführer' | 'Wagenmeister'; text: string; anzahl: number }[] = [
+    { id: 'alle', text: 'Alle', anzahl: mitarbeiterListe.length },
+    { id: 'Lokführer', text: 'TF · Lokführer', anzahl: mitarbeiterListe.filter((m) => m.kategorie === 'Lokführer').length },
+    { id: 'Wagenmeister', text: 'WGM · Wagenmeister', anzahl: mitarbeiterListe.filter((m) => m.kategorie === 'Wagenmeister').length },
   ]
 
   function eintragFuerZelle(zeilenName: string, tag: Date) {
@@ -618,7 +682,7 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
   const auslastungsZeilen: { titel: string; gesamt: number; anzahlProTag: { anzahl: number; anteil: number }[] }[] = []
 
   for (const kategorie of KATEGORIEN) {
-    const gruppe = mitarbeiterListe.filter((m) => m.kategorie === kategorie)
+    const gruppe = sichtbareMitarbeiter.filter((m) => m.kategorie === kategorie)
     if (gruppe.length === 0) continue
     auslastungsZeilen.push({ titel: kategorie, gesamt: gruppe.length, anzahlProTag: berechneAuslastung(gruppe) })
 
@@ -635,8 +699,104 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
     }
   }
 
+  const kennzahlenKarten = [
+    {
+      titel: 'Heute im Urlaub',
+      wert: heuteImJahr ? `${heuteGenehmigt.size} / ${gruppenGroesse}` : '–',
+      hinweis: heuteImJahr ? (heuteOffen.size > 0 ? `+ ${heuteOffen.size} in Prüfung` : 'genehmigt') : 'nur im aktuellen Jahr',
+    },
+    {
+      titel: `Höchststand ${MONATSNAMEN[monat.getMonth()]}`,
+      wert: monatsSpitze.spitze > 0 ? `${monatsSpitze.spitze} gleichzeitig` : 'keine',
+      hinweis: monatsSpitze.spitzeTag ? `am ${datumDeutsch(monatsSpitze.spitzeTag)}` : 'Kein Urlaub im Monat',
+    },
+    { titel: `Urlaubstage ${jahr}`, wert: String(urlaubstageGenehmigt), hinweis: `genehmigt · ${urlaubstageOffen} in Prüfung` },
+    { titel: filter === 'alle' ? 'Mitarbeiter' : filter === 'Lokführer' ? 'Lokführer (TF)' : 'Wagenmeister (WGM)', wert: String(gruppenGroesse), hinweis: 'in dieser Ansicht' },
+  ]
+
   return (
     <div>
+      <style>{`
+        .pk-monat:hover { border-color: var(--navy) !important; }
+        .pk-zeile:hover td { filter: brightness(0.97); }
+      `}</style>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 14 }}>
+        {kennzahlenKarten.map((k) => (
+          <div key={k.titel} style={{ ...kartenStil, padding: '12px 16px' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>{k.titel}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--navy)', lineHeight: 1.25 }}>{k.wert}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{k.hinweis}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ ...kartenStil, padding: 16, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button onClick={() => setMonat(new Date(jahr - 1, monat.getMonth(), 1))} style={navigationsKnopfStil} title="Vorjahr">
+              ‹
+            </button>
+            <strong style={{ fontSize: 16, minWidth: 90, textAlign: 'center' }}>Jahr {jahr}</strong>
+            <button onClick={() => setMonat(new Date(jahr + 1, monat.getMonth(), 1))} style={navigationsKnopfStil} title="Nächstes Jahr">
+              ›
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
+            {filterKnoepfe.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFilter(f.id)}
+                style={{
+                  background: filter === f.id ? 'var(--navy)' : '#f3f5f8',
+                  color: filter === f.id ? '#ffffff' : 'var(--text)',
+                  border: 'none',
+                  borderRadius: 999,
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                {f.text} <span style={{ opacity: 0.65 }}>{f.anzahl}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
+          {monatsStatistik.map((ms, i) => {
+            const anteil = gruppenGroesse > 0 ? ms.spitze / gruppenGroesse : 0
+            const aktiv = i === monat.getMonth()
+            return (
+              <button
+                key={i}
+                className="pk-monat"
+                onClick={() => setMonat(new Date(jahr, i, 1))}
+                title={ms.spitze > 0 ? `Höchststand: ${ms.spitze} gleichzeitig am ${datumDeutsch(ms.spitzeTag)}` : 'Kein Urlaub'}
+                style={{
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  background: auslastungsFarbe(anteil) ?? '#ffffff',
+                  border: aktiv ? '2px solid var(--navy)' : '1px solid var(--border)',
+                  boxShadow: aktiv ? '0 0 0 3px rgba(20,50,92,0.12)' : 'none',
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)' }}>{MONATSNAMEN[i].slice(0, 3)}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2 }}>{ms.spitze}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>max. gleichzeitig</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ms.urlaubstage} Urlaubstage</div>
+              </button>
+            )
+          })}
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>
+          Zählt Werktage ohne Feiertage, genehmigt und in Prüfung. Die Farbe zeigt den Anteil der Mitarbeiter, die zur selben Zeit im Urlaub sind. Auf einen Monat klicken, um ihn unten im Kalender zu öffnen.
+        </p>
+      </div>
+
       <div
         style={{
           display: 'flex',
