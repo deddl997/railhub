@@ -131,6 +131,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   const [fehler, setFehler] = useState<string | null>(null)
   const [ausgelesenerAntrag, setAusgelesenerAntrag] = useState<AusgelesenerAntrag | null>(null)
   const [hochgeladeneDatei, setHochgeladeneDatei] = useState<File | null>(null)
+  const [bilder, setBilder] = useState<File[]>([])
 
   const [brauchbareTageProZeitraum, setBrauchbareTageProZeitraum] = useState<(number | null)[]>([])
   const [verfuegbarerResturlaub, setVerfuegbarerResturlaub] = useState<number | null>(null)
@@ -192,6 +193,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     setModus('manuell')
     setFehler(null)
     setHochgeladeneDatei(null)
+    setBilder([])
     setAusgelesenerAntrag({
       gemeinsam: {
         ...LEERE_GEMEINSAME_FELDER,
@@ -206,6 +208,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     setFehler(null)
     setAusgelesenerAntrag(null)
     setHochgeladeneDatei(null)
+    setBilder([])
   }
 
   function abbrechen() {
@@ -213,29 +216,33 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     setFehler(null)
     setAusgelesenerAntrag(null)
     setHochgeladeneDatei(null)
+    setBilder([])
   }
 
   function handleDateiAuswahl(event: React.ChangeEvent<HTMLInputElement>) {
-    const datei = event.target.files?.[0]
+    const dateien = Array.from(event.target.files ?? [])
     event.target.value = ''
-    if (datei) dateiVerarbeiten(datei)
+    if (dateien.length > 0) dateienVerarbeiten(dateien)
   }
 
-  // Screenshot per Strg+V einfügen oder Datei per Drag & Drop ablegen
-  const verarbeiteRef = useRef<(datei: File) => void>(() => {})
+  // Screenshot per Strg+V einfügen oder Dateien per Drag & Drop ablegen.
+  // Weitere Bilder werden zu den schon vorhandenen Seiten hinzugefügt.
+  const verarbeiteRef = useRef<(dateien: File[], hinzufuegen: boolean) => void>(() => {})
   useEffect(() => {
-    verarbeiteRef.current = dateiVerarbeiten
+    verarbeiteRef.current = (dateien, hinzufuegen) => dateienVerarbeiten(dateien, hinzufuegen)
   })
   useEffect(() => {
     if (modus !== 'upload') return
     function beimEinfuegen(e: ClipboardEvent) {
-      const dateien = Array.from(e.clipboardData?.files ?? [])
-      const bild = dateien.find((d) => d.type.startsWith('image/')) ?? dateien.find((d) => d.type === 'application/pdf')
-      if (!bild) return
+      const dateien = Array.from(e.clipboardData?.files ?? []).filter((d) => d.type.startsWith('image/') || d.type === 'application/pdf')
+      if (dateien.length === 0) return
       e.preventDefault()
-      const endung = bild.type === 'application/pdf' ? 'pdf' : (bild.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
-      const benannt = new File([bild], `Screenshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${endung}`, { type: bild.type })
-      verarbeiteRef.current(benannt)
+      const benannt = dateien.map((bild, i) => {
+        const endung = bild.type === 'application/pdf' ? 'pdf' : (bild.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+        const zeit = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+        return new File([bild], `Screenshot-${zeit}-${i + 1}.${endung}`, { type: bild.type })
+      })
+      verarbeiteRef.current(benannt, true)
     }
     document.addEventListener('paste', beimEinfuegen)
     return () => document.removeEventListener('paste', beimEinfuegen)
@@ -244,46 +251,102 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   function beimAblegen(e: React.DragEvent<HTMLLabelElement>) {
     e.preventDefault()
     if (ladeVorgang) return
-    const datei = e.dataTransfer.files?.[0]
-    if (datei) dateiVerarbeiten(datei)
+    const dateien = Array.from(e.dataTransfer.files ?? [])
+    if (dateien.length > 0) dateienVerarbeiten(dateien, true)
   }
 
-  async function dateiVerarbeiten(datei: File) {
-    setHochgeladeneDatei(datei)
+  function bildEntfernen(index: number) {
+    const rest = bilder.filter((_, i) => i !== index)
+    if (rest.length === 0) {
+      setBilder([])
+      setHochgeladeneDatei(null)
+      setBilder([])
+    setBilder([])
+      setAusgelesenerAntrag(null)
+      setFehler(null)
+    } else {
+      dateienVerarbeiten(rest, false)
+    }
+  }
+
+  function istExcelDatei(datei: File) {
+    return (
+      datei.name.toLowerCase().endsWith('.xlsx') ||
+      datei.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+  }
+
+  // Mehrere Bilder (z. B. Vorder- und Rückseite) untereinander zu einem Bild für die Ablage zusammensetzen
+  async function bilderZusammenfuegen(dateien: File[]): Promise<File> {
+    const geladen = await Promise.all(dateien.map((d) => createImageBitmap(d)))
+    const breite = Math.min(1600, Math.max(...geladen.map((g) => g.width)))
+    const hoehen = geladen.map((g) => Math.round((g.height * breite) / g.width))
+    const leinwand = document.createElement('canvas')
+    leinwand.width = breite
+    leinwand.height = hoehen.reduce((a, h) => a + h, 0)
+    const ctx = leinwand.getContext('2d')
+    if (!ctx) throw new Error('Bilder konnten nicht zusammengefügt werden')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, leinwand.width, leinwand.height)
+    let y = 0
+    geladen.forEach((g, i) => {
+      ctx.drawImage(g, 0, y, breite, hoehen[i])
+      y += hoehen[i]
+    })
+    const blob: Blob = await new Promise((ok, nein) => leinwand.toBlob((b) => (b ? ok(b) : nein(new Error('Bild konnte nicht erstellt werden'))), 'image/jpeg', 0.88))
+    return new File([blob], `Antrag-${Date.now()}.jpg`, { type: 'image/jpeg' })
+  }
+
+  async function einzelnAuslesen(datei: File): Promise<AusgelesenerAntrag> {
+    if (istExcelDatei(datei)) return excelAuswerten(datei)
+    const base64 = await dateiZuBase64(datei)
+    const response = await fetch('/api/urlaubsantrag-auswerten', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bildBase64: base64, mediaType: datei.type }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
+    return data as AusgelesenerAntrag
+  }
+
+  async function dateienVerarbeiten(neu: File[], hinzufuegen = false) {
+    // Excel-Dateien werden nicht mit Bildern gemischt: dann zählt die zuletzt gewählte Datei
+    let liste = hinzufuegen && !neu.some(istExcelDatei) ? [...bilder.filter((d) => !istExcelDatei(d)), ...neu] : neu
+    if (liste.some(istExcelDatei)) liste = [liste.filter(istExcelDatei).slice(-1)[0]]
+    if (liste.length === 0) return
+
+    setBilder(liste)
     setFehler(null)
     setLadeVorgang(true)
     setAusgelesenerAntrag(null)
 
-    const istExcel =
-      datei.name.toLowerCase().endsWith('.xlsx') ||
-      datei.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-
     try {
-      if (istExcel) {
-        const ergebnis = await excelAuswerten(datei)
-        if (!istAdmin && eigenerMitarbeiter) {
-          ergebnis.gemeinsam.name = eigenerMitarbeiter.name
+      const ergebnisse: AusgelesenerAntrag[] = []
+      for (const datei of liste) ergebnisse.push(await einzelnAuslesen(datei))
+
+      // Zusammenführen: erster vorhandener Wert je Feld, alle Zeiträume ohne Doppelte
+      const gemeinsam = { ...LEERE_GEMEINSAME_FELDER }
+      const zeitraeume: Zeitraum[] = []
+      for (const erg of ergebnisse) {
+        for (const schluessel of Object.keys(gemeinsam) as (keyof GemeinsameFelder)[]) {
+          if (gemeinsam[schluessel] === null || gemeinsam[schluessel] === undefined) {
+            ;(gemeinsam as Record<string, unknown>)[schluessel] = erg.gemeinsam?.[schluessel] ?? null
+          }
         }
-        setAusgelesenerAntrag(ergebnis)
-      } else {
-        const base64 = await dateiZuBase64(datei)
-
-        const response = await fetch('/api/urlaubsantrag-auswerten', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bildBase64: base64, mediaType: datei.type }),
-        })
-
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
-
-        if (!istAdmin && eigenerMitarbeiter) {
-          data.gemeinsam.name = eigenerMitarbeiter.name
+        for (const z of erg.zeitraeume ?? []) {
+          if (!zeitraeume.some((v) => v.erster_tag === z.erster_tag && v.letzter_tag === z.letzter_tag)) zeitraeume.push(z)
         }
-        setAusgelesenerAntrag(data)
       }
+      if (!istAdmin && eigenerMitarbeiter) gemeinsam.name = eigenerMitarbeiter.name
+
+      // Für die Ablage: ein Bild bleibt ein Bild, mehrere Bilder werden zu einem zusammengefügt
+      const alleBilder = liste.every((d) => d.type.startsWith('image/'))
+      setHochgeladeneDatei(liste.length > 1 && alleBilder ? await bilderZusammenfuegen(liste) : liste[0])
+      setAusgelesenerAntrag({ gemeinsam, zeitraeume })
     } catch (err) {
       setFehler(err instanceof Error ? err.message : 'Fehler beim Auslesen')
+      setHochgeladeneDatei(liste[0])
     } finally {
       setLadeVorgang(false)
     }
@@ -390,6 +453,8 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       setModus('auswahl')
       setAusgelesenerAntrag(null)
       setHochgeladeneDatei(null)
+      setBilder([])
+    setBilder([])
       onGespeichert()
     } catch (err) {
       setFehler(err instanceof Error ? err.message : 'Fehler beim Speichern')
@@ -442,16 +507,31 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               fontSize: 14,
             }}
           >
-            <span>{hochgeladeneDatei ? hochgeladeneDatei.name : 'Datei auswählen oder hierher ziehen'}</span>
-            {!hochgeladeneDatei && <span style={{ fontSize: 12 }}>📋 Screenshot in der Zwischenablage? Einfach <b>Strg + V</b> drücken</span>}
+            <span>{bilder.length > 0 ? 'Weitere Seite hinzufügen: Datei wählen, hierher ziehen oder Strg + V' : 'Datei(en) auswählen oder hierher ziehen'}</span>
+            <span style={{ fontSize: 12 }}>📋 Screenshot in der Zwischenablage? Einfach <b>Strg + V</b> drücken – mehrere Bilder (z. B. 2 Seiten) sind möglich</span>
             <input
               type="file"
               accept="image/*,.pdf,.xlsx"
+              multiple
               onChange={handleDateiAuswahl}
               disabled={ladeVorgang}
               style={{ display: 'none' }}
             />
           </label>
+
+          {bilder.length > 0 && (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {bilder.map((b, i) => (
+                <div key={b.name + i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, background: '#f3f5f8', borderRadius: 6, padding: '5px 10px' }}>
+                  <span style={{ fontWeight: 600 }}>Seite {i + 1}</span>
+                  <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{b.name}</span>
+                  <button onClick={() => bildEntfernen(i)} disabled={ladeVorgang} title="Entfernen" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 15 }}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {!ausgelesenerAntrag && (
             <button onClick={abbrechen} style={{ ...zurueckKnopfStil, marginTop: 12 }}>
