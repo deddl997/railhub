@@ -29,6 +29,25 @@ import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 import Dashboard from './Dashboard'
 import { UiAnbieter } from './ui'
+import { FIRMA } from './firma'
+import './design.css'
+import {
+  SymbolAbmelden,
+  SymbolAntrag,
+  SymbolAuftrag,
+  SymbolBlitz,
+  SymbolDiagramm,
+  SymbolEuro,
+  SymbolKalender,
+  SymbolKarte,
+  SymbolListe,
+  SymbolPersonen,
+  SymbolPfeilRunter,
+  SymbolSchild,
+  SymbolSchluessel,
+  SymbolStart,
+} from './symbole'
+import type { ReactNode } from 'react'
 
 const ALLE_TABS = [
   { id: 'start', label: 'Start', kurz: 'Start', nurAdmin: false },
@@ -155,9 +174,7 @@ function AppInnen() {
   }
 
   if (ladeSession) {
-    return (
-      <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>Lädt...</div>
-    )
+    return <Ladebildschirm />
   }
 
   if (session && passwortZuruecksetzen) {
@@ -169,9 +186,7 @@ function AppInnen() {
   }
 
   if (ladeRolle) {
-    return (
-      <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>Lädt...</div>
-    )
+    return <Ladebildschirm />
   }
 
   const darfDisponieren = istAdmin || rolle === 'disponent'
@@ -197,179 +212,269 @@ function AppInnen() {
     { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer'] },
     { id: 'streckenkunde', label: 'Streckenkunde', tabs: ['streckenkunde'] },
   ]
-  const UNTERPUNKT_NAME: Partial<Record<TabId, string>> = { auftraege: 'Aufträge', abrechnung: 'Abrechnung', mitarbeiter: 'Mitarbeiter', meinplan: 'Mein Plan', dienstplan: 'Dienstplan', antraege: istAdmin ? 'Anträge' : 'Meine Anträge' }
+  const UNTERPUNKT_NAME: Partial<Record<TabId, string>> = { auftraege: 'Aufträge', abrechnung: 'Abrechnung', mitarbeiter: 'Mitarbeiter', benutzer: 'Profile & Rollen', meinplan: 'Mein Plan', dienstplan: 'Dienstplan', antraege: istAdmin ? 'Anträge' : 'Meine Anträge' }
   const sichtbareGruppen = GRUPPEN.map((g) => ({ ...g, tabs: g.tabs.filter((t) => sichtbareTabs.some((x) => x.id === t)) })).filter((g) => g.tabs.length > 0)
   const aktiveGruppe = sichtbareGruppen.find((g) => g.tabs.includes(aktiverTab)) ?? sichtbareGruppen[0]
 
+  // Mitarbeiter (ohne Planer-Rechte) sehen am Handy ihre Punkte direkt in der unteren Leiste
+  const nurMitarbeiter = !istAdmin && !darfDisponieren && !darfAbrechnen
+  const MITARBEITER_TABS: TabId[] = ['meinplan', 'antrag', 'antraege', 'uebersicht', 'streckenkunde']
+  const untenLeiste: { id: TabId; label: string }[] = nurMitarbeiter
+    ? MITARBEITER_TABS.filter((id) => sichtbareTabs.some((x) => x.id === id)).map((id) => ({ id, label: ALLE_TABS.find((t) => t.id === id)?.kurz ?? id }))
+    : sichtbareGruppen.map((g) => ({ id: g.tabs[0], label: g.label === 'Mein Dienstplan' ? 'Dienstplan' : g.label }))
+  const rollenName = istAdmin ? 'Admin' : rolle === 'disponent' ? 'Disposition' : rolle === 'abrechnung' ? 'Abrechnung' : 'Mitarbeiter'
+  const initialen = (mitarbeiter?.name ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => t[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+
+  function seite(titel: string, inhalt: ReactNode, optionen: { breite?: number; untertitel?: string; ohneKarte?: boolean; ohneTitel?: boolean } = {}) {
+    return (
+      <div className="rbl-seite" style={{ maxWidth: optionen.breite, margin: optionen.breite ? '0 auto' : undefined }}>
+        {!optionen.ohneTitel && (
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: handy ? '2px 4px 10px' : '0 2px 14px', flexWrap: 'wrap' }}>
+            <h1 style={{ margin: 0, fontSize: handy ? 20 : 24, fontWeight: 700, color: 'var(--anthrazit)' }}>{titel}</h1>
+            {optionen.untertitel && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{optionen.untertitel}</span>}
+          </div>
+        )}
+        {optionen.ohneKarte ? (
+          inhalt
+        ) : (
+          <div
+            style={{
+              background: 'var(--card)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              boxShadow: 'var(--schatten)',
+              padding: handy ? 14 : 24,
+            }}
+          >
+            {inhalt}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function geheZu(tab: TabId) {
+    setMenueOffen(false)
+    setAktiverTab(tab)
+  }
+
+  const benutzerMenue = (
+    <div style={{ position: 'relative', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+      {istAdmin && !handy && (
+        <button
+          onClick={() => geheZu('benutzer')}
+          className="rbl-kopf-knopf"
+          title="Profile und Rollen (Admin, Disposition, Abrechnung, Mitarbeiter) verwalten"
+          style={{
+            background: aktiverTab === 'benutzer' ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.1)',
+            border: '1px solid rgba(255,255,255,0.28)',
+            color: '#ffffff',
+            borderRadius: 10,
+            padding: '7px 12px',
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <SymbolSchild groesse={17} /> Profile &amp; Rollen
+        </button>
+      )}
+      <button
+        onClick={() => setMenueOffen(!menueOffen)}
+        aria-label="Benutzermenü"
+        className="rbl-kopf-knopf"
+        style={{
+          background: menueOffen ? 'rgba(255,255,255,0.14)' : 'transparent',
+          border: 'none',
+          color: '#ffffff',
+          borderRadius: 10,
+          padding: handy ? 4 : '5px 8px 5px 5px',
+          cursor: 'pointer',
+          gap: 10,
+        }}
+      >
+        <span
+          style={{
+            width: handy ? 32 : 34,
+            height: handy ? 32 : 34,
+            borderRadius: '50%',
+            background: '#ffffff',
+            color: 'var(--navy)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 700,
+            fontSize: 13,
+          }}
+        >
+          {initialen || '?'}
+        </span>
+        {!handy && (
+          <span style={{ textAlign: 'left', lineHeight: 1.2 }}>
+            <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{mitarbeiter?.name ?? ''}</span>
+            <span style={{ display: 'block', fontSize: 11, color: '#bcd6e6' }}>{rollenName}</span>
+          </span>
+        )}
+        {!handy && <SymbolPfeilRunter groesse={16} />}
+      </button>
+      {menueOffen && (
+        <>
+          <div onClick={() => setMenueOffen(false)} style={{ position: 'fixed', inset: 0, zIndex: 600 }} />
+          <div
+            className="rbl-seite"
+            style={{
+              position: 'absolute',
+              top: 'calc(100% + 8px)',
+              right: 0,
+              zIndex: 700,
+              background: '#ffffff',
+              borderRadius: 12,
+              boxShadow: '0 12px 40px rgba(15,23,42,0.22)',
+              padding: 6,
+              minWidth: 240,
+              display: 'flex',
+              flexDirection: 'column',
+              color: 'var(--text)',
+            }}
+          >
+            <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--border)', marginBottom: 4 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{mitarbeiter?.name ?? ''}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {rollenName} · {FIRMA.name}
+              </div>
+            </div>
+            {istAdmin && (
+              <>
+                <button onClick={() => geheZu('benutzer')} className="rbl-menue-eintrag" style={menueKnopfStil}>
+                  <SymbolSchild groesse={18} /> Profile &amp; Rollen verwalten
+                </button>
+                <button onClick={() => geheZu('mitarbeiter')} className="rbl-menue-eintrag" style={menueKnopfStil}>
+                  <SymbolPersonen groesse={18} /> Mitarbeiter bearbeiten
+                </button>
+                <div style={{ height: 1, background: 'var(--border)', margin: '4px 6px' }} />
+              </>
+            )}
+            <button
+              onClick={() => {
+                setMenueOffen(false)
+                setPasswortDialogOffen(true)
+              }}
+              className="rbl-menue-eintrag"
+              style={menueKnopfStil}
+            >
+              <SymbolSchluessel groesse={18} /> Passwort ändern
+            </button>
+            <button onClick={abmelden} className="rbl-menue-eintrag" style={{ ...menueKnopfStil, color: '#b91c1c' }}>
+              <SymbolAbmelden groesse={18} /> Abmelden
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+
   return (
-    <div style={{ background: '#f1f4f9', minHeight: '100vh' }}>
+    <div style={{ background: 'var(--bg)', minHeight: '100vh', paddingBottom: handy ? 'calc(68px + env(safe-area-inset-bottom))' : 0 }}>
       <header
         style={{
-          background: '#14325c',
+          background: 'linear-gradient(100deg, #0d2747 0%, #14325c 45%, #1d4a82 100%)',
           color: '#ffffff',
           display: 'flex',
           alignItems: 'center',
-          gap: handy ? 10 : 24,
-          padding: handy ? '6px 12px' : '8px 24px',
-          minHeight: handy ? 48 : 56,
-          flexWrap: 'wrap',
-          position: handy ? 'sticky' : 'static',
+          gap: handy ? 10 : 28,
+          padding: handy ? '8px 12px' : '0 24px',
+          minHeight: handy ? 52 : 64,
+          position: 'sticky',
           top: 0,
           zIndex: 500,
+          boxShadow: '0 2px 10px rgba(13,39,71,0.25)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           <div
             style={{
-              height: handy ? 34 : 44,
-              minWidth: handy ? 34 : 44,
-              borderRadius: 8,
+              height: handy ? 36 : 44,
+              minWidth: handy ? 36 : 44,
+              borderRadius: 10,
               background: '#ffffff',
-              color: '#14325c',
+              color: 'var(--navy)',
               fontWeight: 700,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              flexShrink: 0,
               padding: '2px 6px',
               boxSizing: 'border-box',
-              letterSpacing: -0.5,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
             }}
           >
             {logoFehler ? (
-              'RBL'
+              FIRMA.kurz
             ) : (
-              <img
-                src="/rbl-logo.png"
-                alt="Rail Bavaria Logistik"
-                onError={() => setLogoFehler(true)}
-                style={{ height: handy ? 28 : 38, width: 'auto', display: 'block' }}
-              />
+              <img src="/rbl-logo.png" alt={FIRMA.name} onError={() => setLogoFehler(true)} style={{ height: handy ? 28 : 36, width: 'auto', display: 'block' }} />
             )}
           </div>
-          <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.2 }}>
-            RBL Planung
-            {!handy && <div style={{ fontWeight: 400, fontSize: 11, color: '#c9d6ea' }}>Rail Bavaria Logistik GmbH</div>}
+          <div style={{ lineHeight: 1.15, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: handy ? 15 : 16, letterSpacing: -0.2 }}>{FIRMA.appName}</div>
+            {!handy && <div style={{ fontWeight: 400, fontSize: 11, color: '#bcd0e6', whiteSpace: 'nowrap' }}>{FIRMA.name}</div>}
           </div>
         </div>
-
-        <nav
-          style={{
-            display: 'flex',
-            gap: 4,
-            flexGrow: 1,
-            overflowX: 'auto',
-            ...(handy ? { order: 3, flexBasis: '100%', margin: '0 -4px' } : {}),
-          }}
-        >
-          {sichtbareGruppen.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setAktiverTab(g.tabs[0])}
-              style={{
-                background: aktiveGruppe?.id === g.id ? 'rgba(255,255,255,0.14)' : 'transparent',
-                border: 'none',
-                borderRadius: 8,
-                color: aktiveGruppe?.id === g.id ? '#ffffff' : '#c9d6ea',
-                fontWeight: aktiveGruppe?.id === g.id ? 600 : 500,
-                fontSize: 14,
-                padding: handy ? '8px 12px' : '8px 14px',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {g.label}
-            </button>
-          ))}
-        </nav>
-
-        {handy && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <span style={{ fontSize: 12, color: '#c9d6ea', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
-              {mitarbeiter?.name ?? ''}
-            </span>
-            <button
-              onClick={() => setMenueOffen(!menueOffen)}
-              aria-label="Menü"
-              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.4)', color: '#ffffff', borderRadius: 8, width: 38, height: 34, fontSize: 18, lineHeight: 1, cursor: 'pointer' }}
-            >
-              ⋯
-            </button>
-            {menueOffen && (
-              <>
-                <div onClick={() => setMenueOffen(false)} style={{ position: 'fixed', inset: 0, zIndex: 600 }} />
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 4px)',
-                    right: 8,
-                    zIndex: 700,
-                    background: '#ffffff',
-                    borderRadius: 10,
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
-                    padding: 6,
-                    minWidth: 190,
-                    display: 'flex',
-                    flexDirection: 'column',
-                  }}
-                >
-                  <button
-                    onClick={() => {
-                      setMenueOffen(false)
-                      setPasswortDialogOffen(true)
-                    }}
-                    style={menueKnopfStil}
-                  >
-                    Passwort ändern
-                  </button>
-                  <button onClick={abmelden} style={menueKnopfStil}>
-                    Abmelden
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
         {!handy && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13, color: '#c9d6ea' }}>
-          <span>
-            {istAdmin ? 'Planer · ' : ''}
-            {mitarbeiter?.name ?? ''}
-          </span>
-          <button
-            onClick={() => setPasswortDialogOffen(true)}
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.4)',
-              color: '#ffffff',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            Passwort ändern
-          </button>
-          <button
-            onClick={abmelden}
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.4)',
-              color: '#ffffff',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            Abmelden
-          </button>
-        </div>
+          <nav style={{ display: 'flex', gap: 2, alignSelf: 'stretch', alignItems: 'stretch', overflowX: 'auto' }}>
+            {sichtbareGruppen.map((g) => {
+              const aktiv = aktiveGruppe?.id === g.id
+              return (
+                <div key={g.id} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <button
+                    onClick={() => setAktiverTab(g.tabs[0])}
+                    className={`rbl-nav-knopf${aktiv ? ' aktiv' : ''}`}
+                    style={{
+                      background: aktiv ? 'rgba(255,255,255,0.12)' : 'transparent',
+                      border: 'none',
+                      borderRadius: 8,
+                      color: aktiv ? '#ffffff' : '#cfdcee',
+                      fontWeight: aktiv ? 600 : 500,
+                      fontSize: 14,
+                      padding: '9px 13px',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {gruppenSymbol(g.id, 18)}
+                    {g.label}
+                  </button>
+                  {aktiv && <span style={{ position: 'absolute', left: 13, right: 13, bottom: 0, height: 3, borderRadius: '3px 3px 0 0', background: '#ffffff' }} />}
+                </div>
+              )
+            })}
+          </nav>
         )}
+
+        {benutzerMenue}
       </header>
 
-      {aktiveGruppe && aktiveGruppe.tabs.length > 1 && (
-        <div style={{ background: '#ffffff', borderBottom: '1px solid #d9e0ec', padding: handy ? '6px 10px' : '8px 24px', display: 'flex', gap: 6, overflowX: 'auto' }}>
+      {aktiveGruppe && aktiveGruppe.tabs.length > 1 && !(handy && nurMitarbeiter) && (
+        <div
+          style={{
+            background: '#ffffff',
+            borderBottom: '1px solid var(--border)',
+            padding: handy ? '8px 10px' : '10px 24px',
+            display: 'flex',
+            gap: 6,
+            overflowX: 'auto',
+            position: 'sticky',
+            top: handy ? 52 : 64,
+            zIndex: 400,
+          }}
+        >
           {aktiveGruppe.tabs.map((id) => {
             const tab = ALLE_TABS.find((t) => t.id === id)
             const aktiv = aktiverTab === id
@@ -378,8 +483,8 @@ function AppInnen() {
                 key={id}
                 onClick={() => setAktiverTab(id)}
                 style={{
-                  background: aktiv ? '#14325c' : '#eef2f8',
-                  color: aktiv ? '#ffffff' : '#14325c',
+                  background: aktiv ? 'var(--navy)' : 'var(--navy-zart)',
+                  color: aktiv ? '#ffffff' : 'var(--navy)',
                   border: 'none',
                   borderRadius: 999,
                   padding: '6px 14px',
@@ -402,9 +507,9 @@ function AppInnen() {
             position: 'fixed',
             left: 12,
             right: 12,
-            bottom: 12,
+            bottom: handy ? 'calc(80px + env(safe-area-inset-bottom))' : 12,
             zIndex: 3000,
-            background: '#14325c',
+            background: 'var(--anthrazit)',
             color: '#ffffff',
             borderRadius: 12,
             padding: '12px 14px',
@@ -420,7 +525,7 @@ function AppInnen() {
           <span style={{ fontSize: 14 }}>Eine neue Version der App ist verfügbar.</span>
           <button
             onClick={() => window.location.reload()}
-            style={{ background: '#ffffff', color: '#14325c', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+            style={{ background: '#ffffff', color: 'var(--navy)', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
           >
             Jetzt aktualisieren
           </button>
@@ -432,324 +537,176 @@ function AppInnen() {
       )}
 
       <main
+        key={aktiverTab}
         style={{
-          maxWidth: aktiverTab === 'dienstplan' || aktiverTab === 'auftraege' || aktiverTab === 'abrechnung' ? 1600 : 1100,
+          maxWidth: aktiverTab === 'dienstplan' || aktiverTab === 'auftraege' || aktiverTab === 'abrechnung' ? 1600 : 1140,
           margin: '0 auto',
-          padding: handy ? '12px 10px 24px' : '32px 20px',
+          padding: handy ? '14px 10px 24px' : '28px 24px 48px',
         }}
       >
-        {aktiverTab === 'start' && (istAdmin || darfDisponieren || darfAbrechnen) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <Dashboard
-              name={mitarbeiter?.name ?? ''}
-              istAdmin={istAdmin}
-              darfDisponieren={darfDisponieren}
-              darfAbrechnen={darfAbrechnen}
-              gehe={(t) => setAktiverTab(t as TabId)}
-            />
-          </div>
-        )}
+        {aktiverTab === 'start' &&
+          (istAdmin || darfDisponieren || darfAbrechnen) &&
+          seite(
+            'Start',
+            <Dashboard name={mitarbeiter?.name ?? ''} istAdmin={istAdmin} darfDisponieren={darfDisponieren} darfAbrechnen={darfAbrechnen} gehe={(t) => setAktiverTab(t as TabId)} />,
+            { ohneTitel: true }
+          )}
 
-        {aktiverTab === 'meinplan' && !istAdmin && mitarbeiter && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-              maxWidth: 720,
-              margin: '0 auto',
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Mein Dienstplan</h3>
-            <MeinDienstplan mitarbeiterId={mitarbeiter.id} />
-          </div>
-        )}
+        {aktiverTab === 'meinplan' && !istAdmin && mitarbeiter && seite('Mein Dienstplan', <MeinDienstplan mitarbeiterId={mitarbeiter.id} />, { breite: 760 })}
 
-        {aktiverTab === 'antrag' && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-              maxWidth: 640,
-            }}
-          >
-            <UrlaubAntragUpload onGespeichert={neuLaden} />
-          </div>
-        )}
+        {aktiverTab === 'antrag' && seite('Urlaubsantrag', <UrlaubAntragUpload onGespeichert={neuLaden} />, { breite: 680, ohneTitel: true })}
 
-        {aktiverTab === 'kalender' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Personalplanung</h3>
-            <Kalender neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />
-          </div>
-        )}
+        {aktiverTab === 'kalender' && istAdmin && seite('Personalplanung', <Kalender neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />)}
 
-        {aktiverTab === 'antraege' && (
-          <div>
-            <h3 style={{ marginTop: 0, marginBottom: 12 }}>
-              {istAdmin ? 'Eingereichte Anträge' : 'Meine Anträge'}
-            </h3>
-            {istAdmin ? (
-              <MeineAntraege neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} />
-            ) : (
-              <MeineEigenenAntraege key={neuLadenAuslöser} />
-            )}
-          </div>
-        )}
+        {aktiverTab === 'antraege' &&
+          seite(
+            istAdmin ? 'Eingereichte Anträge' : 'Meine Anträge',
+            istAdmin ? <MeineAntraege neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} /> : <MeineEigenenAntraege key={neuLadenAuslöser} />,
+            { ohneKarte: true, breite: istAdmin ? undefined : 760 }
+          )}
 
-        {aktiverTab === 'auftraege' && (darfDisponieren || darfAbrechnen) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Aufträge</h3>
-            <Auftraege darfDisponieren={darfDisponieren} darfAbrechnen={darfAbrechnen} />
-          </div>
-        )}
+        {aktiverTab === 'auftraege' && (darfDisponieren || darfAbrechnen) && seite('Aufträge', <Auftraege darfDisponieren={darfDisponieren} darfAbrechnen={darfAbrechnen} />)}
 
-        {aktiverTab === 'bahnstrom' && (darfDisponieren || darfAbrechnen) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Bahnstrom</h3>
-            <Bahnstrom />
-          </div>
-        )}
+        {aktiverTab === 'bahnstrom' && (darfDisponieren || darfAbrechnen) && seite('Bahnstrom', <Bahnstrom />)}
 
-        {aktiverTab === 'abrechnung' && darfAbrechnen && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Abrechnung</h3>
-            <Abrechnung istAdmin={istAdmin} />
-          </div>
-        )}
+        {aktiverTab === 'abrechnung' && darfAbrechnen && seite('Abrechnung', <Abrechnung istAdmin={istAdmin} />)}
 
-        {aktiverTab === 'rechnungen' && (darfAbrechnen) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Rechnungsentwurf</h3>
-            <Rechnungen />
-          </div>
-        )}
+        {aktiverTab === 'rechnungen' && darfAbrechnen && seite('Rechnungsentwurf', <Rechnungen />)}
 
-        {aktiverTab === 'kennzahlen' && (darfAbrechnen) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Kennzahlen</h3>
-            <Kennzahlen />
-          </div>
-        )}
+        {aktiverTab === 'kennzahlen' && darfAbrechnen && seite('Kennzahlen', <Kennzahlen />)}
 
-        {aktiverTab === 'wirtschaft' && darfKosten && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Wirtschaftlichkeit</h3>
-            <Wirtschaftlichkeit />
-          </div>
-        )}
+        {aktiverTab === 'wirtschaft' && darfKosten && seite('Wirtschaftlichkeit', <Wirtschaftlichkeit />)}
 
-        {aktiverTab === 'trassenpreise' && darfKosten && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Trassenpreise</h3>
-            <Trassenpreise />
-          </div>
-        )}
+        {aktiverTab === 'trassenpreise' && darfKosten && seite('Trassenpreise', <Trassenpreise />)}
 
-        {aktiverTab === 'urlaubimport' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Urlaub aus Excel importieren</h3>
-            <UrlaubImport />
-          </div>
-        )}
+        {aktiverTab === 'urlaubimport' && istAdmin && seite('Urlaub aus Excel importieren', <UrlaubImport />)}
 
-        {aktiverTab === 'jahreswechsel' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Jahreswechsel: Resturlaub übernehmen</h3>
-            <Jahreswechsel />
-          </div>
-        )}
+        {aktiverTab === 'jahreswechsel' && istAdmin && seite('Jahreswechsel: Resturlaub übernehmen', <Jahreswechsel />)}
 
-        {aktiverTab === 'protokoll' && (darfDisponieren || darfAbrechnen) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Änderungsprotokoll aller Aufträge</h3>
-            <Protokoll />
-          </div>
-        )}
+        {aktiverTab === 'protokoll' && (darfDisponieren || darfAbrechnen) && seite('Änderungsprotokoll', <Protokoll />, { untertitel: 'alle Aufträge' })}
 
-        {aktiverTab === 'benutzer' && (istAdmin) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Benutzer & Rollen</h3>
-            <BenutzerVerwaltung />
-          </div>
-        )}
+        {aktiverTab === 'benutzer' && istAdmin && seite('Profile & Rollen', <BenutzerVerwaltung />, { untertitel: 'wer ist Admin, Disposition, Abrechnung oder Mitarbeiter' })}
 
-        {aktiverTab === 'uebersicht' && (istAdmin || mitarbeiter) && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>{istAdmin ? 'Auswertung: Monat und Urlaub' : 'Meine Übersicht'}</h3>
-            <Uebersichten eigeneId={istAdmin ? null : mitarbeiter?.id ?? null} />
-          </div>
-        )}
+        {aktiverTab === 'uebersicht' &&
+          (istAdmin || mitarbeiter) &&
+          seite(istAdmin ? 'Auswertung' : 'Meine Übersicht', <Uebersichten eigeneId={istAdmin ? null : mitarbeiter?.id ?? null} />, {
+            untertitel: istAdmin ? 'Monat und Urlaub' : undefined,
+          })}
 
-        {aktiverTab === 'mitarbeiter' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Mitarbeiterübersicht</h3>
-            <MitarbeiterVerwaltung neuLadenAuslöser={neuLadenAuslöser} />
-          </div>
-        )}
+        {aktiverTab === 'mitarbeiter' && istAdmin && seite('Mitarbeiterübersicht', <MitarbeiterVerwaltung neuLadenAuslöser={neuLadenAuslöser} />)}
 
-        {aktiverTab === 'streckenkunde' && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Streckenkunde{istAdmin ? '-Überwachung' : ''}</h3>
-            <Streckenkunde />
-          </div>
-        )}
+        {aktiverTab === 'streckenkunde' && seite(`Streckenkunde${istAdmin ? '-Überwachung' : ''}`, <Streckenkunde />)}
 
-        {aktiverTab === 'dienstplan' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Dienstplan</h3>
-            <Dienstplan />
-          </div>
-        )}
+        {aktiverTab === 'dienstplan' && istAdmin && seite('Dienstplan', <Dienstplan />)}
 
-        {aktiverTab === 'schichtvorlagen' && istAdmin && (
-          <div
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: handy ? 14 : 24,
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Schichtvorlagen</h3>
-            <SchichtvorlagenVerwaltung />
-          </div>
-        )}
+        {aktiverTab === 'schichtvorlagen' && istAdmin && seite('Schichtvorlagen', <SchichtvorlagenVerwaltung />)}
       </main>
 
+      {handy && untenLeiste.length > 1 && (
+        <nav
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 800,
+            background: '#ffffff',
+            borderTop: '1px solid var(--border)',
+            boxShadow: '0 -4px 16px rgba(15,23,42,0.06)',
+            display: 'flex',
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          }}
+        >
+          {untenLeiste.map((eintrag) => {
+            const gruppe = sichtbareGruppen.find((g) => g.tabs.includes(eintrag.id))
+            const aktiv = nurMitarbeiter ? aktiverTab === eintrag.id : aktiveGruppe?.id === gruppe?.id
+            return (
+              <button
+                key={eintrag.id}
+                onClick={() => setAktiverTab(eintrag.id)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '8px 2px 7px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 3,
+                  color: aktiv ? 'var(--navy)' : '#8a99ab',
+                  fontSize: 11,
+                  fontWeight: aktiv ? 700 : 500,
+                  cursor: 'pointer',
+                  position: 'relative',
+                }}
+              >
+                {aktiv && <span style={{ position: 'absolute', top: 0, left: '25%', right: '25%', height: 3, borderRadius: '0 0 3px 3px', background: 'var(--navy)' }} />}
+                {nurMitarbeiter ? tabSymbol(eintrag.id, 22) : gruppenSymbol(gruppe?.id ?? '', 22)}
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{eintrag.label}</span>
+              </button>
+            )
+          })}
+        </nav>
+      )}
+    </div>
+  )
+}
+
+function gruppenSymbol(id: string, groesse: number) {
+  if (id === 'start') return <SymbolStart groesse={groesse} />
+  if (id === 'plan') return <SymbolKalender groesse={groesse} />
+  if (id === 'auftraege') return <SymbolAuftrag groesse={groesse} />
+  if (id === 'abrechnung') return <SymbolEuro groesse={groesse} />
+  if (id === 'bahnstrom') return <SymbolBlitz groesse={groesse} />
+  if (id === 'mitarbeiter') return <SymbolPersonen groesse={groesse} />
+  if (id === 'streckenkunde') return <SymbolKarte groesse={groesse} />
+  return <SymbolListe groesse={groesse} />
+}
+
+function tabSymbol(id: string, groesse: number) {
+  if (id === 'meinplan') return <SymbolKalender groesse={groesse} />
+  if (id === 'antrag') return <SymbolAntrag groesse={groesse} />
+  if (id === 'antraege') return <SymbolListe groesse={groesse} />
+  if (id === 'uebersicht') return <SymbolDiagramm groesse={groesse} />
+  if (id === 'streckenkunde') return <SymbolKarte groesse={groesse} />
+  return <SymbolListe groesse={groesse} />
+}
+
+// Ladebildschirm beim Start der App
+function Ladebildschirm() {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 18,
+        background: 'linear-gradient(160deg, #ffffff 0%, #eef4f8 100%)',
+      }}
+    >
+      <img src="/rbl-logo.png" alt={FIRMA.name} style={{ height: 70, width: 'auto', objectFit: 'contain' }} />
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--anthrazit)' }}>{FIRMA.name}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{FIRMA.appName}</div>
+      </div>
+      <div className="rbl-ladekreis" />
     </div>
   )
 }
 
 const menueKnopfStil: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
   background: 'none',
   border: 'none',
   textAlign: 'left',
-  padding: '12px 14px',
-  fontSize: 15,
-  color: '#14325c',
+  padding: '10px 12px',
+  fontSize: 14,
+  color: 'var(--text)',
   borderRadius: 8,
   cursor: 'pointer',
 }

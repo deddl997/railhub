@@ -1,0 +1,55 @@
+/* Ergänzende Design-Variablen und Stile für Kopfleiste, Menü und Seiten */
+:root {
+  --anthrazit: #1f2a37;
+  --navy-zart: #eaf0f8;
+  --radius: 14px;
+  --schatten: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 16px rgba(15, 23, 42, 0.04);
+}
+
+@keyframes rbl-einblenden {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.rbl-seite {
+  animation: rbl-einblenden 0.2s ease-out;
+}
+
+.rbl-nav-knopf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+.rbl-nav-knopf:hover:not(.aktiv) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+}
+.rbl-nav-knopf:focus-visible,
+.rbl-kopf-knopf:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+.rbl-kopf-knopf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s;
+}
+.rbl-kopf-knopf:hover {
+  background: rgba(255, 255, 255, 0.16) !important;
+}
+.rbl-menue-eintrag:hover {
+  background: var(--navy-zart) !important;
+}
+
+@keyframes rbl-drehen {
+  to { transform: rotate(360deg); }
+}
+.rbl-ladekreis {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 3px solid #d5e0ea;
+  border-top-color: var(--navy);
+  animation: rbl-drehen 0.8s linear infinite;
+}
