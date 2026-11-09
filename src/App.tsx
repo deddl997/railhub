@@ -539,7 +539,7 @@ function AppInnen() {
       <main
         key={aktiverTab}
         style={{
-          maxWidth: aktiverTab === 'dienstplan' || aktiverTab === 'auftraege' || aktiverTab === 'abrechnung' ? 1600 : 1140,
+          maxWidth: aktiverTab === 'dienstplan' || aktiverTab === 'auftraege' || aktiverTab === 'abrechnung' || aktiverTab === 'mitarbeiter' ? 1600 : 1140,
           margin: '0 auto',
           padding: handy ? '14px 10px 24px' : '28px 24px 48px',
         }}
@@ -593,7 +593,7 @@ function AppInnen() {
             untertitel: istAdmin ? 'Monat und Urlaub' : undefined,
           })}
 
-        {aktiverTab === 'mitarbeiter' && istAdmin && seite('Mitarbeiterübersicht', <MitarbeiterVerwaltung neuLadenAuslöser={neuLadenAuslöser} />)}
+        {aktiverTab === 'mitarbeiter' && istAdmin && seite('Mitarbeiterübersicht', <MitarbeiterVerwaltung neuLadenAuslöser={neuLadenAuslöser} />, { ohneKarte: true })}
 
         {aktiverTab === 'streckenkunde' && seite(`Streckenkunde${istAdmin ? '-Überwachung' : ''}`, <Streckenkunde />)}
 

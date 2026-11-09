@@ -426,127 +426,162 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
       (suche.trim() === '' || z.name.toLowerCase().includes(suche.trim().toLowerCase()))
   )
 
+  const anzahlTF = zeilen.filter((z) => z.kategorie === 'Lokführer').length
+  const anzahlWGM = zeilen.filter((z) => z.kategorie === 'Wagenmeister').length
+  const anzahlRfu = zeilen.filter((z) => z.rfuDatum).length
+  const anzahlSim = zeilen.filter((z) => z.simulatorDatum).length
+  const kennzahlen = [
+    { titel: 'Mitarbeiter', wert: String(zeilen.length), hinweis: 'insgesamt' },
+    { titel: 'Lokführer', wert: String(anzahlTF), hinweis: 'TF' },
+    { titel: 'Wagenmeister', wert: String(anzahlWGM), hinweis: 'WGM' },
+    { titel: `RFU ${jahr}`, wert: `${anzahlRfu} / ${zeilen.length}`, hinweis: 'Termine eingetragen' },
+    { titel: `Simulator ${jahr}`, wert: `${anzahlSim} / ${zeilen.length}`, hinweis: 'Termine eingetragen' },
+  ]
+  const kartenStil: React.CSSProperties = {
+    background: '#ffffff',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    boxShadow: '0 1px 2px rgba(16,24,40,0.05)',
+  }
+
   return (
-    // Volle Bildschirmbreite statt schmaler Mitte: weniger seitliches Scrollen
-    <div style={{ width: 'calc(100vw - 48px)', maxWidth: 'none', marginLeft: 'calc(50% - 50vw + 24px)' }}>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        {verfuegbareJahre.map((j) => (
+    <div className="mv-seite">
+      <style>{`
+        .mv-tabelle tbody tr:nth-child(even) { background: #fafbfc; }
+        .mv-tabelle tbody tr:hover { background: #eef3f9; }
+        .mv-tabelle input, .mv-tabelle select { border-color: transparent !important; transition: border-color .12s, box-shadow .12s; }
+        .mv-tabelle input:not([type=date]), .mv-tabelle select { background-color: transparent !important; }
+        .mv-tabelle input:hover, .mv-tabelle select:hover { border-color: var(--border) !important; }
+        .mv-tabelle input:focus, .mv-tabelle select:focus { border-color: var(--navy) !important; background-color: #ffffff !important; outline: none; box-shadow: 0 0 0 3px rgba(20,50,92,0.14); }
+        .mv-tabelle td { vertical-align: middle; }
+        .mv-knopf:hover { filter: brightness(0.96); }
+      `}</style>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 14 }}>
+        {kennzahlen.map((k) => (
+          <div key={k.titel} style={{ ...kartenStil, padding: '12px 16px' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>{k.titel}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--navy)', lineHeight: 1.25 }}>{k.wert}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{k.hinweis}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ ...kartenStil, padding: 16, marginBottom: 14, display: 'grid', gap: 14 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', paddingRight: 12, borderRight: '1px solid var(--border)' }}>
+            {verfuegbareJahre.map((j) => (
+              <button
+                key={j}
+                onClick={() => setJahr(j)}
+                style={{
+                  background: j === jahr ? 'var(--navy)' : '#ffffff',
+                  color: j === jahr ? '#ffffff' : 'var(--text-muted)',
+                  border: '1px solid ' + (j === jahr ? 'var(--navy)' : 'var(--border)'),
+                  borderRadius: 6,
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {j}
+              </button>
+            ))}
+            <button
+              onClick={jahrHinzufuegen}
+              title="Weiteres Jahr hinzufügen"
+              style={{ background: '#ffffff', border: '1px dashed var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 13, color: 'var(--navy)', cursor: 'pointer' }}
+            >
+              + Jahr
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {filterKnoepfe.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setQualiFilter(f.id)}
+                style={{
+                  background: qualiFilter === f.id ? 'var(--navy)' : '#f3f5f8',
+                  color: qualiFilter === f.id ? '#ffffff' : 'var(--text)',
+                  border: 'none',
+                  borderRadius: 999,
+                  padding: '6px 13px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                {f.text} <span style={{ opacity: 0.65 }}>{f.anzahl}</span>
+              </button>
+            ))}
+          </div>
+
+          <input
+            type="search"
+            placeholder="🔍  Name suchen…"
+            value={suche}
+            onChange={(e) => setSuche(e.target.value)}
+            style={{ marginLeft: 'auto', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, minWidth: 220 }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginRight: 4 }}>Export</span>
+          <button className="mv-knopf" style={aktionsKnopf(true)} onClick={() => excelExportieren(sichtbareZeilen)} title="Excel-Tabelle mit Name, Qualifikation, E-Mail, RFU- und Simulator-Datum der aktuellen Auswahl">
+            ⬇ Excel-Export
+          </button>
+          <button className="mv-knopf" style={aktionsKnopf(false)} onClick={() => termineKopieren('rfu', sichtbareZeilen)} title="Eingetragene RFU-Termine der aktuellen Auswahl kopieren">
+            RFU-Termine kopieren
+          </button>
+          <button className="mv-knopf" style={aktionsKnopf(false)} onClick={() => termineKopieren('simulator', sichtbareZeilen)} title="Eingetragene Simulator-Termine der aktuellen Auswahl kopieren">
+            Simulator-Termine kopieren
+          </button>
+          <span style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px' }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginRight: 4 }}>E-Mail</span>
+          <button className="mv-knopf" style={aktionsKnopf(false)} onClick={() => emailsKopieren(sichtbareZeilen)} title="E-Mail-Adressen der aktuellen Auswahl kopieren (mit Semikolon getrennt)">
+            Adressen kopieren
+          </button>
+          <button className="mv-knopf" style={aktionsKnopf(false)} onClick={() => emailsAutomatischEintragen(sichtbareZeilen)} title="Leere E-Mail-Felder nach dem Schema vorname.nachname@railbavaria.de füllen">
+            Automatisch eintragen
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+            Gilt für {jahr} und die angezeigten Mitarbeiter ({sichtbareZeilen.length})
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+          <input
+            type="text"
+            placeholder="Neuen Mitarbeiter anlegen: Name eingeben …"
+            value={neuerName}
+            onChange={(e) => setNeuerName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && mitarbeiterHinzufuegen()}
+            style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }}
+          />
           <button
-            key={j}
-            onClick={() => setJahr(j)}
+            onClick={mitarbeiterHinzufuegen}
+            disabled={wirdHinzugefuegt || !neuerName.trim()}
             style={{
-              background: j === jahr ? 'var(--navy)' : 'none',
-              color: j === jahr ? '#ffffff' : 'var(--text-muted)',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: '6px 14px',
-              fontSize: 13,
-              fontWeight: 500,
+              background: 'var(--navy)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: 8,
+              padding: '8px 18px',
+              fontSize: 14,
+              fontWeight: 600,
               cursor: 'pointer',
+              opacity: wirdHinzugefuegt || !neuerName.trim() ? 0.5 : 1,
             }}
           >
-            {j}
+            + Hinzufügen
           </button>
-        ))}
-        <button
-          onClick={jahrHinzufuegen}
-          title="Weiteres Jahr hinzufügen"
-          style={{
-            background: 'none',
-            border: '1px dashed var(--border)',
-            borderRadius: 6,
-            padding: '6px 10px',
-            fontSize: 13,
-            color: 'var(--navy)',
-            cursor: 'pointer',
-          }}
-        >
-          + Jahr
-        </button>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <input
-          type="text"
-          placeholder="Name des neuen Mitarbeiters"
-          value={neuerName}
-          onChange={(e) => setNeuerName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && mitarbeiterHinzufuegen()}
-          style={{
-            flex: 1,
-            padding: '8px 10px',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            fontSize: 14,
-          }}
-        />
-        <button
-          onClick={mitarbeiterHinzufuegen}
-          disabled={wirdHinzugefuegt || !neuerName.trim()}
-          style={{
-            background: 'var(--navy)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: 6,
-            padding: '8px 16px',
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: 'pointer',
-          }}
-        >
-          + Hinzufügen
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        {filterKnoepfe.map((f) => (
-          <button
-            key={f.id}
-            onClick={() => setQualiFilter(f.id)}
-            style={{
-              background: qualiFilter === f.id ? 'var(--navy)' : 'none',
-              color: qualiFilter === f.id ? '#ffffff' : 'var(--text-muted)',
-              border: '1px solid var(--border)',
-              borderRadius: 999,
-              padding: '5px 12px',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: 'pointer',
-            }}
-          >
-            {f.text} · {f.anzahl}
-          </button>
-        ))}
-        <input
-          type="search"
-          placeholder="Name suchen…"
-          value={suche}
-          onChange={(e) => setSuche(e.target.value)}
-          style={{ marginLeft: 'auto', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, minWidth: 160 }}
-        />
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <button style={aktionsKnopf(true)} onClick={() => excelExportieren(sichtbareZeilen)} title="Excel-Tabelle mit Name, Qualifikation, E-Mail, RFU- und Simulator-Datum der aktuellen Auswahl">
-          ⬇ Excel: RFU- und Simulator-Termine
-        </button>
-        <button style={aktionsKnopf(false)} onClick={() => termineKopieren('rfu', sichtbareZeilen)} title="Eingetragene RFU-Termine der aktuellen Auswahl kopieren">
-          📋 RFU-Termine kopieren
-        </button>
-        <button style={aktionsKnopf(false)} onClick={() => termineKopieren('simulator', sichtbareZeilen)} title="Eingetragene Simulator-Termine der aktuellen Auswahl kopieren">
-          📋 Simulator-Termine kopieren
-        </button>
-        <button style={aktionsKnopf(false)} onClick={() => emailsKopieren(sichtbareZeilen)} title="E-Mail-Adressen der aktuellen Auswahl kopieren (mit Semikolon getrennt)">
-          ✉ E-Mail-Adressen kopieren
-        </button>
-        <button style={aktionsKnopf(false)} onClick={() => emailsAutomatischEintragen(sichtbareZeilen)} title="Leere E-Mail-Felder nach dem Schema vorname.nachname@railbavaria.de füllen">
-          ✨ E-Mails automatisch eintragen
-        </button>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>gilt für Jahr {jahr} und die aktuell angezeigten Mitarbeiter</span>
-      </div>
-
-      <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 230px)', border: '1px solid var(--border)', borderRadius: 8 }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+      <div style={{ ...kartenStil, overflow: 'auto', maxHeight: 'max(420px, calc(100vh - 150px))' }}>
+        <table className="mv-tabelle" style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
           <thead>
             <tr>
               <th style={kopfZelleStil}>Name</th>
@@ -760,11 +795,14 @@ const kopfZelleStil: React.CSSProperties = {
   padding: '6px 8px',
   borderBottom: '1px solid var(--border)',
   color: 'var(--text-muted)',
-  fontWeight: 500,
+  fontWeight: 600,
+  fontSize: 12,
+  textTransform: 'uppercase',
+  letterSpacing: 0.3,
+  background: '#f8fafc',
   position: 'sticky',
   top: 0,
   zIndex: 2,
-  background: '#ffffff',
   whiteSpace: 'nowrap',
 }
 
