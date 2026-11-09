@@ -3,7 +3,8 @@ import { supabase } from './lib/supabase'
 import { namensSignatur } from './namensAbgleich'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
-import { Knopf, bestaetigen, useToast } from './ui'
+import { bestaetigen, useToast } from './ui'
+import * as XLSX from 'xlsx'
 
 interface Jahresdaten {
   id: string
@@ -26,6 +27,7 @@ interface Zeile {
   resturlaub: number | null
   resturlaub_vorjahr: number | null
   tageGenommen: number
+  email: string
   rfuDatum: string | null
   simulatorDatum: string | null
 }
@@ -49,7 +51,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     const [{ data: mitarbeiterListe }, { data: alleJahresdaten }, { data: genehmigteAntraege }] =
       await Promise.all([
-        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen, rolle').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen, rolle, email').order('name'),
         supabase.from('mitarbeiter_jahresdaten').select('jahr'),
         supabase
           .from('urlaubsantraege')
@@ -89,6 +91,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         resturlaub: jd ? jd.resturlaub : 30,
         resturlaub_vorjahr: jd ? jd.resturlaub_vorjahr : 0,
         tageGenommen: genommenMap.get(namensSignatur(m.name)) ?? 0,
+        email: m.email ?? '',
         rfuDatum: jd?.rfu_datum ?? null,
         simulatorDatum: jd?.simulator_datum ?? null,
       }
@@ -170,6 +173,20 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     await speichern(neueZeile)
   }
 
+  function emailAendern(mitarbeiterId: string, wert: string) {
+    setZeilen((vorher) => vorher.map((z) => (z.mitarbeiterId === mitarbeiterId ? { ...z, email: wert } : z)))
+  }
+
+  async function emailSpeichern(zeile: Zeile) {
+    const sauber = zeile.email.trim()
+    const { error } = await supabase.from('mitarbeiter').update({ email: sauber === '' ? null : sauber }).eq('id', zeile.mitarbeiterId)
+    if (error) toast.fehler('E-Mail konnte nicht gespeichert werden: ' + error.message)
+    else {
+      setGespeichertId(zeile.mitarbeiterId)
+      setTimeout(() => setGespeichertId(null), 1200)
+    }
+  }
+
   async function kategorieAendern(zeile: Zeile, neueKategorie: string) {
     const wert = neueKategorie === '' ? null : neueKategorie
     setZeilen((vorher) =>
@@ -222,6 +239,19 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     await laden()
   }
 
+  async function inZwischenablage(text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const feldEl = document.createElement('textarea')
+      feldEl.value = text
+      document.body.appendChild(feldEl)
+      feldEl.select()
+      document.execCommand('copy')
+      document.body.removeChild(feldEl)
+    }
+  }
+
   async function termineKopieren(art: 'rfu' | 'simulator', ausgewaehlt: Zeile[]) {
     const feld = art === 'rfu' ? 'rfuDatum' : 'simulatorDatum'
     const titel = art === 'rfu' ? 'RFU' : 'Simulator'
@@ -238,18 +268,47 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
       const wt = wochentage[new Date(j, m - 1, t).getDay()]
       return `${z.name}: ${wt}, ${String(t).padStart(2, '0')}.${String(m).padStart(2, '0')}.${j}`
     })
-    const text = `${titel}-Termine ${jahr}\n\n${zeilenText.join('\n')}`
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const feldEl = document.createElement('textarea')
-      feldEl.value = text
-      document.body.appendChild(feldEl)
-      feldEl.select()
-      document.execCommand('copy')
-      document.body.removeChild(feldEl)
-    }
+    await inZwischenablage(`${titel}-Termine ${jahr}\n\n${zeilenText.join('\n')}`)
     toast.erfolg(`${mitTermin.length} ${titel}-Termine kopiert – jetzt in die Mail einfügen (Strg+V).`)
+  }
+
+  async function emailsKopieren(ausgewaehlt: Zeile[]) {
+    const adressen = ausgewaehlt.map((z) => z.email.trim()).filter(Boolean)
+    if (adressen.length === 0) {
+      toast.info('In dieser Auswahl ist noch keine E-Mail-Adresse eingetragen.')
+      return
+    }
+    const fehlen = ausgewaehlt.length - adressen.length
+    await inZwischenablage(adressen.join('; '))
+    toast.erfolg(`${adressen.length} E-Mail-Adressen kopiert${fehlen > 0 ? ` (bei ${fehlen} fehlt noch eine)` : ''} – in das „An“-Feld der Mail einfügen.`)
+  }
+
+  function alsDatum(iso: string | null): Date | string {
+    if (!iso) return ''
+    const [j, m, t] = iso.split('-').map(Number)
+    return new Date(Date.UTC(j, m - 1, t))
+  }
+
+  function excelExportieren(ausgewaehlt: Zeile[]) {
+    if (ausgewaehlt.length === 0) {
+      toast.info('Keine Mitarbeiter in dieser Auswahl.')
+      return
+    }
+    const kopf = ['Name', 'Qualifikation', 'E-Mail', `Datum RFU ${jahr}`, `Datum Simulator ${jahr}`]
+    const daten = ausgewaehlt.map((z) => [z.name, z.kategorie ?? '', z.email, alsDatum(z.rfuDatum), alsDatum(z.simulatorDatum)])
+    const blatt = XLSX.utils.aoa_to_sheet([kopf, ...daten], { cellDates: true })
+    blatt['!cols'] = [{ wch: 28 }, { wch: 16 }, { wch: 34 }, { wch: 18 }, { wch: 22 }]
+    for (let r = 1; r <= daten.length; r++) {
+      for (const c of [3, 4]) {
+        const zelle = blatt[XLSX.utils.encode_cell({ r, c })]
+        if (zelle && zelle.t === 'd') zelle.z = 'DD.MM.YYYY'
+      }
+    }
+    blatt['!autofilter'] = { ref: `A1:E${daten.length + 1}` }
+    const mappe = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(mappe, blatt, `RFU und Simulator ${jahr}`.slice(0, 31))
+    XLSX.writeFile(mappe, `Termine_RFU_Simulator_${jahr}.xlsx`, { cellDates: true })
+    toast.erfolg(`Excel-Datei mit ${ausgewaehlt.length} Mitarbeitern erstellt.`)
   }
 
   function jahrHinzufuegen() {
@@ -370,12 +429,6 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
             {f.text} · {f.anzahl}
           </button>
         ))}
-        <Knopf art="sekundaer" klein onClick={() => termineKopieren('rfu', sichtbareZeilen)} title="Alle eingetragenen RFU-Termine der aktuellen Auswahl kopieren">
-          📋 RFU-Termine kopieren
-        </Knopf>
-        <Knopf art="sekundaer" klein onClick={() => termineKopieren('simulator', sichtbareZeilen)} title="Alle eingetragenen Simulator-Termine der aktuellen Auswahl kopieren">
-          📋 Simulator-Termine kopieren
-        </Knopf>
         <input
           type="search"
           placeholder="Name suchen…"
@@ -383,6 +436,22 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           onChange={(e) => setSuche(e.target.value)}
           style={{ marginLeft: 'auto', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, minWidth: 160 }}
         />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button style={aktionsKnopf(true)} onClick={() => excelExportieren(sichtbareZeilen)} title="Excel-Tabelle mit Name, Qualifikation, E-Mail, RFU- und Simulator-Datum der aktuellen Auswahl">
+          ⬇ Excel: RFU- und Simulator-Termine
+        </button>
+        <button style={aktionsKnopf(false)} onClick={() => termineKopieren('rfu', sichtbareZeilen)} title="Eingetragene RFU-Termine der aktuellen Auswahl kopieren">
+          📋 RFU-Termine kopieren
+        </button>
+        <button style={aktionsKnopf(false)} onClick={() => termineKopieren('simulator', sichtbareZeilen)} title="Eingetragene Simulator-Termine der aktuellen Auswahl kopieren">
+          📋 Simulator-Termine kopieren
+        </button>
+        <button style={aktionsKnopf(false)} onClick={() => emailsKopieren(sichtbareZeilen)} title="E-Mail-Adressen der aktuellen Auswahl kopieren (mit Semikolon getrennt)">
+          ✉ E-Mail-Adressen kopieren
+        </button>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>gilt für Jahr {jahr} und die aktuell angezeigten Mitarbeiter</span>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
@@ -393,6 +462,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
               <th style={kopfZelleStil}>Rolle</th>
               <th style={kopfZelleStil}>Qualifikation</th>
               <th style={kopfZelleStil}>Lok-Typen</th>
+              <th style={kopfZelleStil}>E-Mail</th>
               <th style={kopfZelleStil}>Datum RFU</th>
               <th style={kopfZelleStil}>Datum Simulator</th>
               <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
@@ -406,7 +476,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           <tbody>
             {sichtbareZeilen.length === 0 && (
               <tr>
-                <td colSpan={12} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+                <td colSpan={13} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
                   Keine Mitarbeiter in dieser Auswahl.
                 </td>
               </tr>
@@ -510,6 +580,16 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
                 </td>
                 <td style={zellStil}>
                   <input
+                    type="email"
+                    value={zeile.email}
+                    placeholder="name@firma.de"
+                    onChange={(e) => emailAendern(zeile.mitarbeiterId, e.target.value)}
+                    onBlur={() => emailSpeichern(zeile)}
+                    style={{ ...eingabeStil, width: 210 }}
+                  />
+                </td>
+                <td style={zellStil}>
+                  <input
                     type="date"
                     value={zeile.rfuDatum ?? ''}
                     onChange={(e) => datumAendern(zeile, 'rfuDatum', e.target.value)}
@@ -584,6 +664,19 @@ const kopfZelleStil: React.CSSProperties = {
 const zellStil: React.CSSProperties = {
   padding: '4px 10px',
   borderBottom: '1px solid var(--border)',
+}
+
+function aktionsKnopf(primaer: boolean): React.CSSProperties {
+  return {
+    background: primaer ? 'var(--navy)' : '#ffffff',
+    color: primaer ? '#ffffff' : 'var(--navy)',
+    border: '1px solid var(--navy)',
+    borderRadius: 6,
+    padding: '6px 12px',
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: 'pointer',
+  }
 }
 
 function datumStil(datum: string | null, jahr: number): React.CSSProperties {
