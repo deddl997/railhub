@@ -427,7 +427,8 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   )
 
   return (
-    <div>
+    // Volle Bildschirmbreite statt schmaler Mitte: weniger seitliches Scrollen
+    <div style={{ width: 'calc(100vw - 48px)', maxWidth: 'none', marginLeft: 'calc(50% - 50vw + 24px)' }}>
       <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         {verfuegbareJahre.map((j) => (
           <button
@@ -544,7 +545,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>gilt für Jahr {jahr} und die aktuell angezeigten Mitarbeiter</span>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 230px)', border: '1px solid var(--border)', borderRadius: 8 }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
           <thead>
             <tr>
@@ -756,14 +757,19 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
 const kopfZelleStil: React.CSSProperties = {
   textAlign: 'left',
-  padding: '6px 10px',
+  padding: '6px 8px',
   borderBottom: '1px solid var(--border)',
   color: 'var(--text-muted)',
   fontWeight: 500,
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  background: '#ffffff',
+  whiteSpace: 'nowrap',
 }
 
 const zellStil: React.CSSProperties = {
-  padding: '4px 10px',
+  padding: '3px 8px',
   borderBottom: '1px solid var(--border)',
 }
 
