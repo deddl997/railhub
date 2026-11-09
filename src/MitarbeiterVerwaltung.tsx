@@ -272,6 +272,59 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     toast.erfolg(`${mitTermin.length} ${titel}-Termine kopiert – jetzt in die Mail einfügen (Strg+V).`)
   }
 
+  function emailVorschlag(name: string): string {
+    const bereinigen = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/ä/g, 'ae')
+        .replace(/ö/g, 'oe')
+        .replace(/ü/g, 'ue')
+        .replace(/ß/g, 'ss')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9-]/g, '')
+    let vorname: string
+    let nachname: string
+    if (name.includes(',')) {
+      const [n, v] = name.split(',')
+      nachname = n
+      vorname = v
+    } else {
+      const teile = name.trim().split(/\s+/)
+      vorname = teile[0]
+      nachname = teile.slice(1).join('-')
+    }
+    const v = bereinigen(vorname.trim().split(/\s+/)[0] ?? '')
+    const n = bereinigen(nachname.trim().replace(/\s+/g, '-'))
+    return v && n ? `${v}.${n}@railbavaria.de` : ''
+  }
+
+  async function emailsAutomatischEintragen(ausgewaehlt: Zeile[]) {
+    const kandidaten = ausgewaehlt
+      .filter((z) => z.email.trim() === '')
+      .map((z) => ({ zeile: z, adresse: emailVorschlag(z.name) }))
+      .filter((k) => k.adresse !== '')
+    if (kandidaten.length === 0) {
+      toast.info('Keine leeren E-Mail-Felder in dieser Auswahl.')
+      return
+    }
+    const liste = kandidaten.map((k) => `${k.zeile.name}  →  ${k.adresse}`).join('  ·  ')
+    const ok = await bestaetigen(
+      `Für ${kandidaten.length} Mitarbeiter wird die Adresse nach dem Schema vorname.nachname@railbavaria.de eingetragen (nur leere Felder, bereits eingetragene bleiben unberührt). Bitte kurz prüfen, ob Vor- und Nachname richtig herum stehen: ${liste}`,
+      { titel: 'E-Mail-Adressen automatisch eintragen', jaText: 'Eintragen' }
+    )
+    if (!ok) return
+    const fehler: string[] = []
+    for (const k of kandidaten) {
+      const { error } = await supabase.from('mitarbeiter').update({ email: k.adresse }).eq('id', k.zeile.mitarbeiterId)
+      if (error) fehler.push(k.zeile.name)
+    }
+    const adressenNachId = new Map(kandidaten.map((k) => [k.zeile.mitarbeiterId, k.adresse]))
+    setZeilen((vorher) => vorher.map((z) => (adressenNachId.has(z.mitarbeiterId) && !fehler.includes(z.name) ? { ...z, email: adressenNachId.get(z.mitarbeiterId) as string } : z)))
+    if (fehler.length > 0) toast.fehler('Nicht gespeichert: ' + fehler.join(', '))
+    else toast.erfolg(`${kandidaten.length} E-Mail-Adressen eingetragen.`)
+  }
+
   async function emailsKopieren(ausgewaehlt: Zeile[]) {
     const adressen = ausgewaehlt.map((z) => z.email.trim()).filter(Boolean)
     if (adressen.length === 0) {
@@ -450,6 +503,9 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         </button>
         <button style={aktionsKnopf(false)} onClick={() => emailsKopieren(sichtbareZeilen)} title="E-Mail-Adressen der aktuellen Auswahl kopieren (mit Semikolon getrennt)">
           ✉ E-Mail-Adressen kopieren
+        </button>
+        <button style={aktionsKnopf(false)} onClick={() => emailsAutomatischEintragen(sichtbareZeilen)} title="Leere E-Mail-Felder nach dem Schema vorname.nachname@railbavaria.de füllen">
+          ✨ E-Mails automatisch eintragen
         </button>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>gilt für Jahr {jahr} und die aktuell angezeigten Mitarbeiter</span>
       </div>
