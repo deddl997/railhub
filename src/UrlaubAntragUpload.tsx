@@ -1,32 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabase'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { namensSignatur } from './namensAbgleich'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 
-const URLAUBSARTEN = [
-  'Erholungsurlaub',
-  'Sonderurlaub',
-  'Bildungsurlaub',
-  'Unbezahlter Urlaub',
-  'Sonstiges',
-] as const
-
-const URLAUBSARTEN_MIT_BEGRUENDUNG = ['Sonderurlaub', 'Sonstiges']
-
 interface GemeinsameFelder {
   jahr: number | null
   name: string | null
-  vorgesetzter: string | null
-  funktion_bereich: string | null
-  urlaubsart: string | null
-  urlaubsart_begruendung: string | null
+  kategorie: string | null
   urlaubsanspruch: number | null
   verplant: number | null
   rest: number | null
   resturlaub_vorjahr: number | null
+  ort_antragsteller: string | null
   datum_antragsteller: string | null
   bearbeitet_von: string | null
+  ort_bearbeiter: string | null
   datum_bearbeiter: string | null
 }
 
@@ -44,16 +34,15 @@ interface AusgelesenerAntrag {
 const LEERE_GEMEINSAME_FELDER: GemeinsameFelder = {
   jahr: null,
   name: null,
-  vorgesetzter: null,
-  funktion_bereich: null,
-  urlaubsart: null,
-  urlaubsart_begruendung: null,
+  kategorie: null,
   urlaubsanspruch: null,
   verplant: null,
   rest: null,
   resturlaub_vorjahr: null,
+  ort_antragsteller: null,
   datum_antragsteller: null,
   bearbeitet_von: null,
+  ort_bearbeiter: null,
   datum_bearbeiter: null,
 }
 
@@ -67,6 +56,55 @@ function dateiZuBase64(datei: File): Promise<string> {
     reader.onerror = reject
     reader.readAsDataURL(datei)
   })
+}
+
+function datumZuText(wert: unknown): string | null {
+  if (!wert) return null
+  if (wert instanceof Date) {
+    const jahr = wert.getFullYear()
+    const monat = String(wert.getMonth() + 1).padStart(2, '0')
+    const tag = String(wert.getDate()).padStart(2, '0')
+    return `${jahr}-${monat}-${tag}`
+  }
+  if (typeof wert === 'string') return wert
+  return null
+}
+
+async function excelAuswerten(datei: File): Promise<AusgelesenerAntrag> {
+  const puffer = await datei.arrayBuffer()
+  const arbeitsmappe = XLSX.read(puffer, { type: 'array', cellDates: true })
+  const blatt = arbeitsmappe.Sheets[arbeitsmappe.SheetNames[0]]
+
+  function zelle(referenz: string) {
+    return blatt[referenz]?.v ?? null
+  }
+
+  const gemeinsam: GemeinsameFelder = {
+    jahr: (zelle('B5') as number) ?? null,
+    kategorie: (zelle('B7') as string) ?? null,
+    name: (zelle('B9') as string) ?? null,
+    urlaubsanspruch: (zelle('C12') as number) ?? null,
+    verplant: (zelle('F12') as number) ?? null,
+    rest: (zelle('C13') as number) ?? null,
+    resturlaub_vorjahr: (zelle('F13') as number) ?? null,
+    ort_antragsteller: (zelle('B26') as string) ?? null,
+    datum_antragsteller: datumZuText(zelle('E26')),
+    bearbeitet_von: (zelle('B29') as string) ?? null,
+    ort_bearbeiter: (zelle('B30') as string) ?? null,
+    datum_bearbeiter: datumZuText(zelle('E30')),
+  }
+
+  const zeitraeume: Zeitraum[] = []
+  for (let zeile = 17; zeile <= 22; zeile++) {
+    const von = datumZuText(zelle(`B${zeile}`))
+    const bis = datumZuText(zelle(`C${zeile}`))
+    const tage = zelle(`D${zeile}`) as number | null
+    if (von && bis) {
+      zeitraeume.push({ erster_tag: von, letzter_tag: bis, anzahl_tage: tage })
+    }
+  }
+
+  return { gemeinsam, zeitraeume }
 }
 
 const eingabeStil: React.CSSProperties = {
@@ -177,31 +215,73 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     setHochgeladeneDatei(null)
   }
 
-  async function handleDateiAuswahl(event: React.ChangeEvent<HTMLInputElement>) {
+  function handleDateiAuswahl(event: React.ChangeEvent<HTMLInputElement>) {
     const datei = event.target.files?.[0]
-    if (!datei) return
+    event.target.value = ''
+    if (datei) dateiVerarbeiten(datei)
+  }
 
+  // Screenshot per Strg+V einfügen oder Datei per Drag & Drop ablegen
+  const verarbeiteRef = useRef<(datei: File) => void>(() => {})
+  useEffect(() => {
+    verarbeiteRef.current = dateiVerarbeiten
+  })
+  useEffect(() => {
+    if (modus !== 'upload') return
+    function beimEinfuegen(e: ClipboardEvent) {
+      const dateien = Array.from(e.clipboardData?.files ?? [])
+      const bild = dateien.find((d) => d.type.startsWith('image/')) ?? dateien.find((d) => d.type === 'application/pdf')
+      if (!bild) return
+      e.preventDefault()
+      const endung = bild.type === 'application/pdf' ? 'pdf' : (bild.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+      const benannt = new File([bild], `Screenshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${endung}`, { type: bild.type })
+      verarbeiteRef.current(benannt)
+    }
+    document.addEventListener('paste', beimEinfuegen)
+    return () => document.removeEventListener('paste', beimEinfuegen)
+  }, [modus])
+
+  function beimAblegen(e: React.DragEvent<HTMLLabelElement>) {
+    e.preventDefault()
+    if (ladeVorgang) return
+    const datei = e.dataTransfer.files?.[0]
+    if (datei) dateiVerarbeiten(datei)
+  }
+
+  async function dateiVerarbeiten(datei: File) {
     setHochgeladeneDatei(datei)
     setFehler(null)
     setLadeVorgang(true)
     setAusgelesenerAntrag(null)
 
+    const istExcel =
+      datei.name.toLowerCase().endsWith('.xlsx') ||
+      datei.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
     try {
-      const base64 = await dateiZuBase64(datei)
+      if (istExcel) {
+        const ergebnis = await excelAuswerten(datei)
+        if (!istAdmin && eigenerMitarbeiter) {
+          ergebnis.gemeinsam.name = eigenerMitarbeiter.name
+        }
+        setAusgelesenerAntrag(ergebnis)
+      } else {
+        const base64 = await dateiZuBase64(datei)
 
-      const response = await fetch('/api/urlaubsantrag-auswerten', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bildBase64: base64, mediaType: datei.type }),
-      })
+        const response = await fetch('/api/urlaubsantrag-auswerten', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bildBase64: base64, mediaType: datei.type }),
+        })
 
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Unbekannter Fehler')
 
-      if (!istAdmin && eigenerMitarbeiter) {
-        data.gemeinsam.name = eigenerMitarbeiter.name
+        if (!istAdmin && eigenerMitarbeiter) {
+          data.gemeinsam.name = eigenerMitarbeiter.name
+        }
+        setAusgelesenerAntrag(data)
       }
-      setAusgelesenerAntrag(data)
     } catch (err) {
       setFehler(err instanceof Error ? err.message : 'Fehler beim Auslesen')
     } finally {
@@ -248,10 +328,6 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
     (summe, tage) => summe + (tage ?? 0),
     0
   )
-
-  const brauchtBegruendung =
-    ausgelesenerAntrag?.gemeinsam.urlaubsart != null &&
-    URLAUBSARTEN_MIT_BEGRUENDUNG.includes(ausgelesenerAntrag.gemeinsam.urlaubsart)
 
   async function antragSpeichern() {
     if (!ausgelesenerAntrag) return
@@ -333,7 +409,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
           </p>
           <div style={{ display: 'flex', gap: 12 }}>
             <button onClick={uploadStarten} style={auswahlKnopfStil}>
-              📄 Foto oder Scan hochladen
+              📄 Foto, Scan oder Excel hochladen
             </button>
             <button onClick={manuellStarten} style={auswahlKnopfStil}>
               ✏️ Manuell eingeben
@@ -345,12 +421,17 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       {modus === 'upload' && (
         <div>
           <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: -8 }}>
-            Foto oder Scan des ausgefüllten Urlaubsantrags hochladen.
+            Foto, Scan oder ausgefülltes Excel-Formular hochladen.
           </p>
 
           <label
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={beimAblegen}
             style={{
               display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              textAlign: 'center',
               alignItems: 'center',
               justifyContent: 'center',
               border: '2px dashed var(--border)',
@@ -361,10 +442,11 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               fontSize: 14,
             }}
           >
-            {hochgeladeneDatei ? hochgeladeneDatei.name : 'Datei auswählen'}
+            <span>{hochgeladeneDatei ? hochgeladeneDatei.name : 'Datei auswählen oder hierher ziehen'}</span>
+            {!hochgeladeneDatei && <span style={{ fontSize: 12 }}>📋 Screenshot in der Zwischenablage? Einfach <b>Strg + V</b> drücken</span>}
             <input
               type="file"
-              accept="image/*,.pdf"
+              accept="image/*,.pdf,.xlsx"
               onChange={handleDateiAuswahl}
               disabled={ladeVorgang}
               style={{ display: 'none' }}
@@ -394,51 +476,6 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               readOnly={!istAdmin}
             />
           </label>
-
-          <div style={{ display: 'flex', gap: 12 }}>
-            <label style={{ ...beschriftungStil, flex: 1 }}>
-              Vorgesetzter
-              <input
-                style={eingabeStil}
-                value={ausgelesenerAntrag.gemeinsam.vorgesetzter ?? ''}
-                onChange={(e) => gemeinsamesFeldAendern('vorgesetzter', e.target.value)}
-                placeholder="Name des Vorgesetzten"
-              />
-            </label>
-            <label style={{ ...beschriftungStil, flex: 1 }}>
-              Funktion / Bereich
-              <input
-                style={eingabeStil}
-                value={ausgelesenerAntrag.gemeinsam.funktion_bereich ?? ''}
-                onChange={(e) => gemeinsamesFeldAendern('funktion_bereich', e.target.value)}
-              />
-            </label>
-          </div>
-
-          <div>
-            <div style={{ ...beschriftungStil, marginBottom: 6 }}>Urlaubsart</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {URLAUBSARTEN.map((art) => (
-                <label key={art} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
-                  <input
-                    type="radio"
-                    name="urlaubsart"
-                    checked={ausgelesenerAntrag.gemeinsam.urlaubsart === art}
-                    onChange={() => gemeinsamesFeldAendern('urlaubsart', art)}
-                  />
-                  {art}
-                </label>
-              ))}
-            </div>
-            {brauchtBegruendung && (
-              <input
-                style={{ ...eingabeStil, marginTop: 6 }}
-                value={ausgelesenerAntrag.gemeinsam.urlaubsart_begruendung ?? ''}
-                onChange={(e) => gemeinsamesFeldAendern('urlaubsart_begruendung', e.target.value)}
-                placeholder="Begründung"
-              />
-            )}
-          </div>
 
           <div>
             <div style={{ ...beschriftungStil, marginBottom: 6 }}>Urlaubszeiträume</div>
@@ -546,6 +583,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
           </div>
 
           {(ausgelesenerAntrag.gemeinsam.bearbeitet_von ||
+            ausgelesenerAntrag.gemeinsam.ort_bearbeiter ||
             ausgelesenerAntrag.gemeinsam.datum_bearbeiter) && (
             <div
               style={{
@@ -562,6 +600,9 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               </div>
               {ausgelesenerAntrag.gemeinsam.bearbeitet_von && (
                 <div>Bearbeitet von: {ausgelesenerAntrag.gemeinsam.bearbeitet_von}</div>
+              )}
+              {ausgelesenerAntrag.gemeinsam.ort_bearbeiter && (
+                <div>Ort: {ausgelesenerAntrag.gemeinsam.ort_bearbeiter}</div>
               )}
               {ausgelesenerAntrag.gemeinsam.datum_bearbeiter && (
                 <div>Datum: {ausgelesenerAntrag.gemeinsam.datum_bearbeiter}</div>
