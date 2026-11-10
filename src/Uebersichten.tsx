@@ -291,7 +291,7 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
     const genehmigtSumme = genehmigt.reduce((s, a) => s + tage(a), 0)
     const genommen = genehmigt.filter((a) => a.letzter_tag < heuteIso).reduce((s, a) => s + tage(a), 0)
     const offen = eigene.filter((a) => a.status === 'offen').reduce((s, a) => s + tage(a), 0)
-    const rest = jd ? zahl(jd.resturlaub) : 30 - genehmigtSumme
+    const rest = jd ? zahl(jd.resturlaub) + zahl(jd.resturlaub_vorjahr) : 30 - genehmigtSumme
     return {
       standard: !jd,
       anspruch: jd ? zahl(jd.urlaubsanspruch) : 30,
@@ -478,7 +478,7 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
         return (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
-              {kachel('Resturlaub', String(w.rest), restFarbe(w.rest))}
+              {kachel('Resturlaub gesamt', String(w.rest), restFarbe(w.rest))}
               {kachel('Rest nach offenen', String(w.restNachOffen), restFarbe(w.restNachOffen))}
               {kachel('Anspruch', String(w.anspruch))}
               {kachel('Rest Vorjahr', String(w.vorjahr))}
@@ -555,7 +555,7 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
       {!laedt && !nurEigene && ansicht === 'urlaub' && sichtbar.length > 0 && (
         <>
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
-            Resturlaub ist der Wert aus der Mitarbeiterübersicht (wird bei Genehmigung automatisch abgezogen). „Rest nach offenen“ zieht noch nicht bearbeitete
+            Resturlaub = Resturlaub aktuelles Jahr + Rest Vorjahr (wie „Gesamt verfügbar“ in der Mitarbeiterübersicht; wird bei Genehmigung automatisch abgezogen). „Rest nach offenen“ zieht noch nicht bearbeitete
             Anträge ab.
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10, background: '#ffffff' }}>
@@ -569,7 +569,7 @@ export default function Uebersichten({ eigeneId }: { eigeneId: string | null }) 
                   <th style={th}>Genommen</th>
                   <th style={th}>Noch geplant</th>
                   <th style={th}>Offen beantragt</th>
-                  <th style={th}>Resturlaub</th>
+                  <th style={th}>Resturlaub gesamt</th>
                   <th style={th}>Rest nach offenen</th>
                 </tr>
               </thead>
