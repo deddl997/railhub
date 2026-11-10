@@ -104,6 +104,16 @@ function dauerText(beginn: string, ende: string): string {
   return `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')} Std.`
 }
 
+function nettoMinuten(beginn: string, ende: string, pause: number): number {
+  let d = minuten(ende) - minuten(beginn)
+  if (d <= 0) d += 1440
+  return Math.max(d - pause, 0)
+}
+
+function stundenText(min: number): string {
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`
+}
+
 function textFarbeFuer(hex: string): string {
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return '#ffffff'
   const r = parseInt(hex.slice(1, 3), 16)
@@ -126,6 +136,8 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
   const [pushZustand, setPushZustand] = useState<PushStatus>('aus')
   const [pushMeldung, setPushMeldung] = useState<string | null>(null)
+  const [jahresdaten, setJahresdaten] = useState<{ resturlaub: number | null; resturlaub_vorjahr: number | null; rfu_datum: string | null; simulator_datum: string | null } | null>(null)
+  const [offeneAntraege, setOffeneAntraege] = useState(0)
   const [wunschDatum, setWunschDatum] = useState('')
   const [wunschNotiz, setWunschNotiz] = useState('')
   const [wunschFehler, setWunschFehler] = useState<string | null>(null)
@@ -191,12 +203,21 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   }, [mitarbeiterId, anzahlWochen, neuLadenZaehler])
 
   async function extraLaden() {
-    const [gel, wun] = await Promise.all([
+    const [gel, wun, jd, offen] = await Promise.all([
       supabase.from('dienstplan_gelesen').select('woche_start').eq('mitarbeiter_id', mitarbeiterId),
       supabase.from('wunschfrei').select('id, datum, notiz, status').gte('datum', heuteIso).order('datum'),
+      supabase
+        .from('mitarbeiter_jahresdaten')
+        .select('resturlaub, resturlaub_vorjahr, rfu_datum, simulator_datum')
+        .eq('mitarbeiter_id', mitarbeiterId)
+        .eq('jahr', heute.getFullYear())
+        .maybeSingle(),
+      supabase.from('urlaubsantraege').select('id, gruppe_id').eq('mitarbeiter_id', mitarbeiterId).eq('status', 'offen'),
     ])
     setGelesen((gel.data ?? []).map((g) => String(g.woche_start)))
     setWuensche((wun.data ?? []) as Wunsch[])
+    setJahresdaten(jd.data ?? null)
+    setOffeneAntraege(new Set((offen.data ?? []).map((x: { id: string; gruppe_id: string | null }) => x.gruppe_id ?? x.id)).size)
   }
 
   useEffect(() => {
@@ -408,6 +429,11 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     boxSizing: 'border-box',
   }
 
+  const datumAusgeschrieben = (iso: string) => {
+    const d = new Date(iso + 'T00:00:00')
+    return `${WOCHENTAGE[d.getDay()]}, ${datumKurz(d)}${d.getFullYear()}`
+  }
+
   const datumLang = (iso: string) => {
     const d = new Date(iso + 'T00:00:00')
     return `${WOCHENTAGE[d.getDay()].slice(0, 2)}, ${datumKurz(d)}${d.getFullYear()}`
@@ -477,24 +503,102 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
   const wunschTab = (
     <div>
-      <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 16, background: '#ffffff' }}>
-        <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 4 }}>Wunschfrei eintragen</div>
-        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
-          Das ist ein Wunsch, kein Urlaubsantrag. Der Planer genehmigt oder lehnt ihn ab. Du siehst hier den Stand.
+      <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 16, marginBottom: 18, background: '#ffffff', boxShadow: '0 1px 3px rgba(15,23,42,0.06)' }}>
+        <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--navy)', marginBottom: 4 }}>Wunschfrei beantragen</div>
+        <div style={{ fontSize: 13, color: '#64748b', marginBottom: 14, lineHeight: 1.5 }}>
+          Du möchtest an einem Tag frei haben? Wähle das Datum aus. Der Planer entscheidet danach. Das ist kein Urlaubsantrag, und es gibt keinen Urlaubsabzug.
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input type="date" min={heuteIso} value={wunschDatum} onChange={(e) => setWunschDatum(e.target.value)} style={eingabe} />
+
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 6 }}>
+          <span style={{ background: 'var(--navy)', color: '#fff', borderRadius: 999, padding: '1px 8px', marginRight: 6, fontSize: 12 }}>1</span>
+          Für welchen Tag?
+        </div>
+        <label style={{ position: 'relative', display: 'block', marginBottom: 8, cursor: 'pointer' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '14px 14px',
+              borderRadius: 12,
+              border: wunschDatum ? '2px solid var(--navy)' : '2px dashed #94a3b8',
+              background: wunschDatum ? '#eef4fb' : '#f8fafc',
+            }}
+          >
+            <span style={{ fontSize: 26, lineHeight: 1 }}>📅</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {wunschDatum ? (
+                <>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>Dein Wunsch-Tag</div>
+                  <div style={{ fontWeight: 800, fontSize: 18, color: 'var(--navy)' }}>{datumAusgeschrieben(wunschDatum)}</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: '#334155' }}>Datum auswählen</div>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>Hier antippen – der Kalender öffnet sich</div>
+                </>
+              )}
+            </div>
+            <span style={{ color: '#94a3b8', fontSize: 20 }}>›</span>
+          </div>
           <input
-            value={wunschNotiz}
-            onChange={(e) => setWunschNotiz(e.target.value)}
-            placeholder="Grund (optional), z.B. Arzttermin"
-            style={eingabe}
+            type="date"
+            min={heuteIso}
+            value={wunschDatum}
+            onChange={(e) => setWunschDatum(e.target.value)}
+            aria-label="Datum für Wunschfrei auswählen"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', fontSize: 16 }}
           />
-          {wunschFehler && <div style={{ color: '#b91c1c', fontSize: 13 }}>{wunschFehler}</div>}
-          <button onClick={wunschEintragen} style={knopfVoll}>
-            Wunsch eintragen
-          </button>
+        </label>
+
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+          {[
+            { text: 'Morgen', n: 1 },
+            { text: 'Übermorgen', n: 2 },
+            { text: 'Nächster Samstag', n: ((6 - heute.getDay() + 7) % 7) || 7 },
+            { text: 'Nächster Sonntag', n: ((7 - heute.getDay()) % 7) || 7 },
+          ].map((q) => {
+            const iso = datumZuISO(addTage(heute, q.n))
+            return (
+              <button
+                key={q.text}
+                onClick={() => setWunschDatum(iso)}
+                style={{
+                  border: 'none',
+                  borderRadius: 999,
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: wunschDatum === iso ? 'var(--navy)' : '#f1f5f9',
+                  color: wunschDatum === iso ? '#ffffff' : '#334155',
+                }}
+              >
+                {q.text}
+              </button>
+            )
+          })}
         </div>
+
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 6 }}>
+          <span style={{ background: 'var(--navy)', color: '#fff', borderRadius: 999, padding: '1px 8px', marginRight: 6, fontSize: 12 }}>2</span>
+          Grund <span style={{ fontWeight: 400, color: '#94a3b8' }}>(freiwillig)</span>
+        </div>
+        <input
+          value={wunschNotiz}
+          onChange={(e) => setWunschNotiz(e.target.value)}
+          placeholder="z. B. Arzttermin, Familienfeier"
+          style={{ ...eingabe, marginBottom: 14 }}
+        />
+
+        {wunschFehler && <div style={{ color: '#b91c1c', fontSize: 13, marginBottom: 10 }}>{wunschFehler}</div>}
+        <button
+          onClick={wunschEintragen}
+          disabled={!wunschDatum}
+          style={{ ...knopfVoll, width: '100%', padding: '12px 16px', fontSize: 15, opacity: wunschDatum ? 1 : 0.5, cursor: wunschDatum ? 'pointer' : 'not-allowed' }}
+        >
+          {wunschDatum ? `Wunschfrei für ${datumLang(wunschDatum)} eintragen` : 'Erst ein Datum auswählen'}
+        </button>
       </div>
 
       <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 8 }}>Meine Wünsche</div>
@@ -519,9 +623,13 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                 {w.notiz && <div style={{ fontSize: 12, color: '#64748b' }}>{w.notiz}</div>}
                 <div
                   style={{
+                    display: 'inline-block',
                     fontSize: 12,
                     fontWeight: 600,
-                    marginTop: 2,
+                    marginTop: 4,
+                    borderRadius: 999,
+                    padding: '2px 10px',
+                    background: w.status === 'genehmigt' ? '#dcfce7' : w.status === 'abgelehnt' ? '#fee2e2' : '#fef3c7',
                     color: w.status === 'genehmigt' ? '#15803d' : w.status === 'abgelehnt' ? '#b91c1c' : '#b45309',
                   }}
                 >
@@ -565,6 +673,39 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
       {ansicht === 'zeit' && <ZeitkorrekturMitarbeiter mitarbeiterId={mitarbeiterId} />}
       {ansicht === 'plan' && (
         <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 14 }}>
+        {[
+          {
+            titel: `Resturlaub ${heute.getFullYear()}`,
+            wert: jahresdaten?.resturlaub != null ? `${jahresdaten.resturlaub} Tage` : '–',
+            hinweis: jahresdaten?.resturlaub_vorjahr ? `+ ${jahresdaten.resturlaub_vorjahr} aus Vorjahr` : undefined,
+            farbe: 'var(--navy)',
+          },
+          {
+            titel: 'Offene Urlaubsanträge',
+            wert: String(offeneAntraege),
+            hinweis: offeneAntraege > 0 ? 'warten auf Freigabe' : 'keine offen',
+            farbe: offeneAntraege > 0 ? '#b45309' : 'var(--navy)',
+          },
+          {
+            titel: 'Termin RFU',
+            wert: jahresdaten?.rfu_datum ? jahresdaten.rfu_datum.split('-').reverse().join('.') : 'noch offen',
+            farbe: jahresdaten?.rfu_datum ? 'var(--navy)' : '#94a3b8',
+          },
+          {
+            titel: 'Termin Simulator',
+            wert: jahresdaten?.simulator_datum ? jahresdaten.simulator_datum.split('-').reverse().join('.') : 'noch offen',
+            farbe: jahresdaten?.simulator_datum ? 'var(--navy)' : '#94a3b8',
+          },
+        ].map((k) => (
+          <div key={k.titel} style={{ background: '#ffffff', border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px' }}>
+            <div style={{ fontSize: 11, color: '#64748b' }}>{k.titel}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: k.farbe }}>{k.wert}</div>
+            {k.hinweis && <div style={{ fontSize: 11, color: '#94a3b8' }}>{k.hinweis}</div>}
+          </div>
+        ))}
+      </div>
+
       {naechster ? (
         <div
           onClick={() => setOffenerTag(datumZuISO(naechster!.tag))}
@@ -632,8 +773,21 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         return (
           <div key={wocheIso} style={{ marginBottom: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div style={{ fontWeight: 700, color: 'var(--navy)' }}>
-                KW {kalenderwoche(woche)} · {datumKurz(woche)} – {datumKurz(addTage(woche, 6))}
+              <div>
+                <div style={{ fontWeight: 700, color: 'var(--navy)' }}>
+                  KW {kalenderwoche(woche)} · {datumKurz(woche)} – {datumKurz(addTage(woche, 6))}
+                </div>
+                {veroeffentlicht &&
+                  (() => {
+                    let summe = 0
+                    for (let i = 0; i < 7; i++) {
+                      const iso = datumZuISO(addTage(woche, i))
+                      if (istUrlaub(iso)) continue
+                      const d = dienstFuer(eintraege.find((e) => e.datum === iso))
+                      if (d) summe += nettoMinuten(d.beginn, d.ende, d.pause)
+                    }
+                    return summe > 0 ? <div style={{ fontSize: 12, color: '#64748b' }}>Arbeitszeit netto: {stundenText(summe)} Std.</div> : null
+                  })()}
               </div>
               {!veroeffentlicht && (
                 <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', borderRadius: 999, padding: '2px 10px' }}>
