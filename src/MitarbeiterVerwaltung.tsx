@@ -359,6 +359,25 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     toast.erfolg(`Name geändert: ${alt} → ${neu}`)
   }
 
+  async function mitarbeiterLoeschen(zeile: Zeile) {
+    if (zeile.mitarbeiterId === eigenerMitarbeiter?.id) {
+      toast.fehler('Du kannst dich nicht selbst löschen.')
+      return
+    }
+    const ok = await bestaetigen(
+      `„${zeile.name}“ wird endgültig gelöscht – inklusive aller Urlaubsanträge, Jahresdaten und Dienstplan-Einträge dieser Person. Das kann nicht rückgängig gemacht werden. Wirklich löschen?`,
+      { titel: 'Mitarbeiter löschen', jaText: 'Ja, endgültig löschen', gefahr: true }
+    )
+    if (!ok) return
+    const { error } = await supabase.rpc('mitarbeiter_loeschen', { p_id: zeile.mitarbeiterId })
+    if (error) {
+      toast.fehler('Löschen fehlgeschlagen: ' + error.message)
+      return
+    }
+    setZeilen((vorher) => vorher.filter((z) => z.mitarbeiterId !== zeile.mitarbeiterId))
+    toast.erfolg(`${zeile.name} wurde gelöscht.`)
+  }
+
   async function emailsKopieren(ausgewaehlt: Zeile[]) {
     const adressen = ausgewaehlt.map((z) => z.email.trim()).filter(Boolean)
     if (adressen.length === 0) {
@@ -597,12 +616,13 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
               <th style={kopfZelleStil}>Gesamt verfügbar</th>
               <th style={kopfZelleStil}>Urlaubstage genommen</th>
               <th style={kopfZelleStil}></th>
+              <th style={kopfZelleStil}></th>
             </tr>
           </thead>
           <tbody>
             {sichtbareZeilen.length === 0 && (
               <tr>
-                <td colSpan={13} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+                <td colSpan={14} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
                   Keine Mitarbeiter in dieser Auswahl.
                 </td>
               </tr>
@@ -780,6 +800,17 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
                 <td style={zellStil}>{zeile.tageGenommen}</td>
                 <td style={{ ...zellStil, color: 'var(--success)', fontSize: 12 }}>
                   {gespeichertId === zeile.mitarbeiterId ? 'Gespeichert' : ''}
+                </td>
+                <td style={zellStil}>
+                  <button
+                    type="button"
+                    onClick={() => mitarbeiterLoeschen(zeile)}
+                    disabled={zeile.mitarbeiterId === eigenerMitarbeiter?.id}
+                    title={zeile.mitarbeiterId === eigenerMitarbeiter?.id ? 'Du kannst dich nicht selbst löschen' : 'Mitarbeiter löschen'}
+                    style={{ border: 'none', background: 'transparent', cursor: zeile.mitarbeiterId === eigenerMitarbeiter?.id ? 'not-allowed' : 'pointer', opacity: zeile.mitarbeiterId === eigenerMitarbeiter?.id ? 0.3 : 0.7, fontSize: 16 }}
+                  >
+                    🗑
+                  </button>
                 </td>
               </tr>
             ))}
