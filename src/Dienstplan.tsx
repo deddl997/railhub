@@ -6,6 +6,7 @@ import { pushSenden } from './pushAbo'
 import BestellungImport from './BestellungImport'
 import ZeitkorrekturPlaner from './ZeitkorrekturPlaner'
 import { useLiveAktualisierung } from './liveAktualisierung'
+import * as XLSX from 'xlsx'
 
 interface Mitarbeiter {
   id: string
@@ -290,6 +291,7 @@ export default function Dienstplan() {
   const [bestellungOffen, setBestellungOffen] = useState(false)
   const [pushHinweis, setPushHinweis] = useState<string | null>(null)
   const [kategorieFilter, setKategorieFilter] = useState<string[]>([])
+  const [suche, setSuche] = useState('')
   const [lokFilter, setLokFilter] = useState<string[]>([])
   const [bereichAus, setBereichAus] = useState<Record<string, boolean>>({})
   const [bezugsdatum, setBezugsdatum] = useState(() => heuteOhneUhrzeit())
@@ -1358,17 +1360,48 @@ export default function Dienstplan() {
     if (bereichAus[bereichVonKategorie(m.kategorie)]) return false
     if (kategorieFilter.length > 0 && !kategorieFilter.includes(m.kategorie ?? '__ohne__')) return false
     if (lokFilter.length > 0 && !(m.lok_typen ?? []).some((t) => lokFilter.includes(t))) return false
+    if (suche.trim() !== '' && !m.name.toLowerCase().includes(suche.trim().toLowerCase())) return false
     return true
   }
   const anzeigeListe = mitarbeiterListe.filter(istSichtbar)
   const kategorienVorhanden = Array.from(new Set(mitarbeiterListe.map((m) => m.kategorie ?? '__ohne__')))
   const alleLoks = Array.from(new Set(mitarbeiterListe.flatMap((m) => m.lok_typen ?? [])))
   const loksVorhanden = [...LOK_TYPEN.filter((l) => alleLoks.includes(l)), ...alleLoks.filter((l) => !LOK_TYPEN.includes(l))]
-  const filterAktiv = kategorieFilter.length > 0 || lokFilter.length > 0 || Object.values(bereichAus).some(Boolean)
+  const filterAktiv = kategorieFilter.length > 0 || lokFilter.length > 0 || suche.trim() !== '' || Object.values(bereichAus).some(Boolean)
   const wochenMitDienst = mitarbeiterMitDienstInWoche()
   const gelesenAnzahl = wochenMitDienst.filter((m) => gelesenIds.includes(m.id)).length
   const anzeigeTage = ansicht === 'tag' ? [bezugsdatum] : ansicht === 'woche' ? tage : monatsTage
   const uebersicht = uebersichtFuerTage(anzeigeTage)
+
+  // Excel-Export der aktuell angezeigten Tage und Mitarbeiter (Filter und Suche gelten mit)
+  function excelExportieren() {
+    if (anzeigeListe.length === 0) {
+      window.alert('In dieser Auswahl gibt es keine Mitarbeiter.')
+      return
+    }
+    const kopf = ['Name', 'Qualifikation', ...anzeigeTage.map((t) => `${WOCHENTAGE_LANG[t.getDay()].slice(0, 2)} ${datumKurz(t)}`), 'Std.']
+    const zeilen = anzeigeListe.map((m) => {
+      let summe = 0
+      const zellen = anzeigeTage.map((t) => {
+        const iso = datumZuISO(t)
+        if (istUrlaub(m.id, iso)) return 'Urlaub'
+        const e = eintragFuer(m.id, iso)
+        if (e?.status === 'ruhe') return 'Ruhe'
+        if (e?.status === 'frei') return 'Frei'
+        const info = schichtInfoVon(e)
+        if (!info) return ''
+        summe += info.ende - info.beginn
+        return `${info.titel} ${minutenAlsUhrzeit(info.beginn)}–${minutenAlsUhrzeit(info.ende)}`
+      })
+      return [m.name, m.kategorie ?? '', ...zellen, minutenAlsText(summe)]
+    })
+    const blatt = XLSX.utils.aoa_to_sheet([kopf, ...zeilen])
+    blatt['!cols'] = [{ wch: 26 }, { wch: 14 }, ...anzeigeTage.map(() => ({ wch: ansicht === 'monat' ? 16 : 24 })), { wch: 8 }]
+    const mappe = XLSX.utils.book_new()
+    const name = ansicht === 'monat' ? `${MONATE[bezugsdatum.getMonth()]} ${bezugsdatum.getFullYear()}` : `KW ${kalenderwoche(bezugsdatum)}`
+    XLSX.utils.book_append_sheet(mappe, blatt, name.slice(0, 31))
+    XLSX.writeFile(mappe, `Dienstplan_${name.replace(/\s+/g, '_')}.xlsx`)
+  }
   const toolbarTitel =
     ansicht === 'tag'
       ? `${WOCHENTAGE_LANG[bezugsdatum.getDay()]}, ${datumKurz(bezugsdatum)}${bezugsdatum.getFullYear()}`
@@ -1380,8 +1413,23 @@ export default function Dienstplan() {
     `${uebersicht.dienste} Dienste · ${uebersicht.offen} offen`
 
   return (
-    <div style={{ opacity: ladeVorgang ? 0.7 : 1, transition: 'opacity 0.15s' }}>
+    <div className="dp-druck" style={{ opacity: ladeVorgang ? 0.7 : 1, transition: 'opacity 0.15s' }}>
+      <style>{`
+        @media print {
+          @page { size: landscape; margin: 8mm; }
+          body * { visibility: hidden !important; }
+          .dp-druck, .dp-druck * { visibility: visible !important; }
+          .dp-druck { position: absolute; left: 0; top: 0; width: 100%; }
+          .dp-nicht-drucken { display: none !important; }
+          .dp-druck-titel { display: block !important; }
+        }
+        .dp-druck-titel { display: none; }
+      `}</style>
+      <div className="dp-druck-titel" style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>
+        Dienstplan {toolbarTitel} · {toolbarUntertitel}
+      </div>
       <div
+        className="dp-nicht-drucken"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -1526,6 +1574,14 @@ export default function Dienstplan() {
           Wunschfrei{wuensche.length > 0 ? ` (${wuensche.length})` : ''}
         </button>
 
+        <button onClick={excelExportieren} style={sekundaerKnopfStil} title="Angezeigte Tage und Mitarbeiter als Excel-Datei">
+          ⬇ Excel
+        </button>
+
+        <button onClick={() => window.print()} style={sekundaerKnopfStil} title="Drucken oder als PDF speichern (Querformat)">
+          🖨 Drucken / PDF
+        </button>
+
         <button onClick={sollDialogOeffnen} style={sekundaerKnopfStil} title="Wie viele Personen pro Schicht und Wochentag gebraucht werden">
           Soll-Besetzung
         </button>
@@ -1543,8 +1599,15 @@ export default function Dienstplan() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12 }}>
+      <div className="dp-nicht-drucken" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12 }}>
         <span style={{ color: '#64748b', fontWeight: 600 }}>Filter:</span>
+        <input
+          type="search"
+          placeholder="🔍 Name suchen…"
+          value={suche}
+          onChange={(e) => setSuche(e.target.value)}
+          style={{ padding: '5px 10px', border: '1px solid #cbd5e1', borderRadius: 999, fontSize: 12, minWidth: 150 }}
+        />
         <button onClick={() => setKategorieFilter([])} style={chipStil(kategorieFilter.length === 0)}>
           Alle Qualifikationen
         </button>
