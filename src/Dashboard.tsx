@@ -38,6 +38,8 @@ interface Zahlen {
   bereitAnzahl: number | null
   bereitSumme: number | null
   imUrlaub: string[] | null
+  ohneZuordnung: number | null
+  ohneEmail: number | null
   liste: (AuftragKurz & { besetzung: 'besetzt' | 'offen' | 'unbesetzt' })[]
 }
 
@@ -131,6 +133,8 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       bereitAnzahl: null,
       bereitSumme: null,
       imUrlaub: null,
+      ohneZuordnung: null,
+      ohneEmail: null,
       liste: [],
     }
 
@@ -147,6 +151,13 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
         })(),
         (async () => {
           neu.wunschfrei = await zahl(supabase.from('wunschfrei').select('id', { count: 'exact', head: true }).eq('status', 'offen').gte('datum', heuteIso))
+        })(),
+        (async () => {
+          neu.ohneZuordnung = await zahl(supabase.from('urlaubsantraege').select('id', { count: 'exact', head: true }).is('mitarbeiter_id', null))
+        })(),
+        (async () => {
+          const r = await supabase.from('mitarbeiter').select('email')
+          if (!r.error) neu.ohneEmail = ((r.data ?? []) as { email: string | null }[]).filter((x) => !x.email || !x.email.trim()).length
         })(),
         (async () => {
           const r = await supabase.from('urlaubsantraege').select('mitarbeiter_id, name').eq('status', 'genehmigt').lte('erster_tag', heuteIso).gte('letzter_tag', heuteIso)
@@ -258,7 +269,7 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
     laden()
   }, [laden])
 
-  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'offene_spotschichten', 'urlaubsantraege', 'zeitkorrekturen', 'wunschfrei'], laden)
+  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'offene_spotschichten', 'urlaubsantraege', 'zeitkorrekturen', 'wunschfrei', 'mitarbeiter'], laden)
 
   const stunde = new Date().getHours()
   const gruss = stunde < 11 ? 'Guten Morgen' : stunde < 18 ? 'Guten Tag' : 'Guten Abend'
@@ -270,7 +281,9 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
     kacheln.push(
       <Kachel key="u" titel="Urlaubsanträge offen" wert={z?.urlaub ?? '–'} unter={z?.urlaub ? 'warten auf Entscheidung' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.urlaub ?? null)} onClick={() => gehe('antraege')} laedt={laedt} />,
       <Kachel key="z" titel="Zeitkorrekturen offen" wert={z?.zeitkorrekturen ?? '–'} unter={z?.zeitkorrekturen ? 'im Dienstplan prüfen' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.zeitkorrekturen ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
-      <Kachel key="w" titel="Wunschfrei offen" wert={z?.wunschfrei ?? '–'} unter={z?.wunschfrei ? 'im Dienstplan prüfen' : 'keine Wünsche offen'} farbe={farbeAnzahl(z?.wunschfrei ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />
+      <Kachel key="w" titel="Wunschfrei offen" wert={z?.wunschfrei ?? '–'} unter={z?.wunschfrei ? 'im Dienstplan prüfen' : 'keine Wünsche offen'} farbe={farbeAnzahl(z?.wunschfrei ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
+      <Kachel key="oz" titel="Anträge ohne Mitarbeiter" wert={z?.ohneZuordnung ?? '–'} unter={z?.ohneZuordnung ? 'Name passt zu keinem Mitarbeiter' : 'alle zugeordnet'} farbe={farbeAnzahl(z?.ohneZuordnung ?? null)} onClick={() => gehe('antraege')} laedt={laedt} />,
+      <Kachel key="oe" titel="Mitarbeiter ohne E-Mail" wert={z?.ohneEmail ?? '–'} unter={z?.ohneEmail ? 'E-Mail nachtragen' : 'alle hinterlegt'} farbe={farbeAnzahl(z?.ohneEmail ?? null)} onClick={() => gehe('mitarbeiter')} laedt={laedt} />
     )
   }
   if (planer) {

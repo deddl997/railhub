@@ -124,6 +124,39 @@ const beschriftungStil: React.CSSProperties = {
 
 type Modus = 'auswahl' | 'upload' | 'manuell'
 
+function wortTeile(n: string): string[] {
+  return n
+    .toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .split(/[\s\-,]+/)
+    .filter((w) => w.length > 1)
+}
+
+function aehnlichkeit(a: string, b: string): number {
+  const wa = wortTeile(a)
+  const wb = wortTeile(b)
+  if (wa.length === 0 || wb.length === 0) return 0
+  let punkte = 0
+  for (const x of wa) {
+    let best = 0
+    for (const y of wb) {
+      if (x === y) best = Math.max(best, 1)
+      else if (x.length >= 4 && y.length >= 4 && (x.startsWith(y) || y.startsWith(x))) best = Math.max(best, 0.8)
+      else if (x.length >= 4 && y.length >= 4 && Math.abs(x.length - y.length) <= 2) {
+        // einfache Tippfehler-Toleranz (Levenshtein <= 2)
+        const d: number[][] = Array.from({ length: x.length + 1 }, (_, i) => [i, ...Array(y.length).fill(0)])
+        for (let j = 1; j <= y.length; j++) d[0][j] = j
+        for (let i = 1; i <= x.length; i++)
+          for (let j = 1; j <= y.length; j++)
+            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1))
+        if (d[x.length][y.length] <= 2) best = Math.max(best, 0.7)
+      }
+    }
+    punkte += best
+  }
+  return punkte / Math.max(wa.length, wb.length)
+}
+
 export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: () => void }) {
   const { mitarbeiter: eigenerMitarbeiter, istAdmin } = useAktuellerMitarbeiter()
   const [modus, setModus] = useState<Modus>('auswahl')
@@ -132,6 +165,15 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   const [ausgelesenerAntrag, setAusgelesenerAntrag] = useState<AusgelesenerAntrag | null>(null)
   const [hochgeladeneDatei, setHochgeladeneDatei] = useState<File | null>(null)
   const [bilder, setBilder] = useState<File[]>([])
+  const [alleMitarbeiterNamen, setAlleMitarbeiterNamen] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    if (!istAdmin) return
+    supabase
+      .from('mitarbeiter')
+      .select('id, name')
+      .then(({ data }) => setAlleMitarbeiterNamen((data ?? []) as { id: string; name: string }[]))
+  }, [istAdmin])
 
   const [brauchbareTageProZeitraum, setBrauchbareTageProZeitraum] = useState<(number | null)[]>([])
   const [verfuegbarerResturlaub, setVerfuegbarerResturlaub] = useState<number | null>(null)
@@ -423,6 +465,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       }
 
       let mitarbeiterId: string | null = eigenerMitarbeiter?.id ?? null
+      let kanonischerName: string | null = null
       if (istAdmin) {
         const name = ausgelesenerAntrag.gemeinsam.name
         if (name) {
@@ -430,6 +473,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
           const signatur = namensSignatur(name)
           const treffer = (alleMitarbeiter ?? []).find((m) => namensSignatur(m.name) === signatur)
           mitarbeiterId = treffer?.id ?? null
+          if (treffer) kanonischerName = treffer.name
         }
       }
 
@@ -437,6 +481,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
 
       const zeilen = gueltigeZeitraeume.map((z) => ({
         ...ausgelesenerAntrag.gemeinsam,
+        ...(kanonischerName ? { name: kanonischerName } : {}),
         mitarbeiter_id: mitarbeiterId,
         erster_tag: z.erster_tag,
         letzter_tag: z.letzter_tag,
@@ -556,6 +601,41 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
               readOnly={!istAdmin}
             />
           </label>
+          {istAdmin && (() => {
+            const eingabe = (ausgelesenerAntrag.gemeinsam.name ?? '').trim()
+            if (!eingabe || alleMitarbeiterNamen.length === 0) return null
+            const sig = namensSignatur(eingabe)
+            if (alleMitarbeiterNamen.some((m) => namensSignatur(m.name) === sig)) {
+              return <div style={{ fontSize: 12, color: 'var(--success)', marginTop: -6 }}>✓ Mitarbeiter gefunden</div>
+            }
+            const vorschlaege = alleMitarbeiterNamen
+              .map((m) => ({ m, w: aehnlichkeit(eingabe, m.name) }))
+              .filter((x) => x.w >= 0.5)
+              .sort((a, b) => b.w - a.w)
+              .slice(0, 3)
+            return (
+              <div style={{ fontSize: 13, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', marginTop: -6 }}>
+                <div style={{ color: '#92400e', fontWeight: 500 }}>
+                  ⚠ „{eingabe}“ passt zu keinem Mitarbeiter – der Antrag bliebe ohne Zuordnung.
+                </div>
+                {vorschlaege.length > 0 && (
+                  <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span>Meintest du:</span>
+                    {vorschlaege.map(({ m }) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => gemeinsamesFeldAendern('name', m.name)}
+                        style={{ border: '1px solid var(--navy)', background: '#fff', color: 'var(--navy)', borderRadius: 999, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           <div>
             <div style={{ ...beschriftungStil, marginBottom: 6 }}>Urlaubszeiträume</div>

@@ -10,6 +10,7 @@ import Bahnstrom from './Bahnstrom'
 import Kennzahlen from './Kennzahlen'
 import Rechnungen from './Rechnungen'
 import Protokoll from './Protokoll'
+import PersonalProtokoll from './PersonalProtokoll'
 import Wirtschaftlichkeit from './Wirtschaftlichkeit'
 import Trassenpreise from './Trassenpreise'
 import UrlaubImport from './UrlaubImport'
@@ -68,6 +69,7 @@ const ALLE_TABS = [
   { id: 'protokoll', label: 'Änderungsprotokoll', kurz: 'Protokoll', nurAdmin: false },
   { id: 'benutzer', label: 'Benutzer & Rollen', kurz: 'Benutzer', nurAdmin: true },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
+  { id: 'personalprotokoll', label: 'Personal-Protokoll', kurz: 'Protokoll', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', kurz: 'Dienstplan', nurAdmin: true },
   { id: 'schichtvorlagen', label: 'Schichtvorlagen', kurz: 'Vorlagen', nurAdmin: true },
@@ -209,7 +211,7 @@ function AppInnen() {
     { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'protokoll'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
     { id: 'bahnstrom', label: 'Bahnstrom', tabs: ['bahnstrom'] },
-    { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer'] },
+    { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer', 'personalprotokoll'] },
     { id: 'streckenkunde', label: 'Streckenkunde', tabs: ['streckenkunde'] },
   ]
   const UNTERPUNKT_NAME: Partial<Record<TabId, string>> = { auftraege: 'Aufträge', abrechnung: 'Abrechnung', mitarbeiter: 'Mitarbeiter', benutzer: 'Profile & Rollen', meinplan: 'Mein Plan', dienstplan: 'Dienstplan', antraege: istAdmin ? 'Anträge' : 'Meine Anträge' }
@@ -658,6 +660,8 @@ function AppInnen() {
         {aktiverTab === 'jahreswechsel' && istAdmin && seite('Jahreswechsel: Resturlaub übernehmen', <Jahreswechsel />)}
 
         {aktiverTab === 'protokoll' && (darfDisponieren || darfAbrechnen) && seite('Änderungsprotokoll', <Protokoll />, { untertitel: 'alle Aufträge' })}
+
+        {aktiverTab === 'personalprotokoll' && istAdmin && seite('Personal-Protokoll', <PersonalProtokoll />, { untertitel: 'wer hat wann was geändert – Urlaub, Namen, Dienstplan, Wunschfrei' })}
 
         {aktiverTab === 'benutzer' && istAdmin && seite('Profile & Rollen', <BenutzerVerwaltung />, { untertitel: 'wer ist Admin, Disposition, Abrechnung oder Mitarbeiter' })}
 
