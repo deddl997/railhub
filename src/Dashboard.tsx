@@ -40,6 +40,8 @@ interface Zahlen {
   imUrlaub: string[] | null
   ohneZuordnung: number | null
   ohneEmail: number | null
+  ohneZuordnungNamen: string[]
+  ohneEmailNamen: string[]
   liste: (AuftragKurz & { besetzung: 'besetzt' | 'offen' | 'unbesetzt' })[]
 }
 
@@ -135,6 +137,8 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       imUrlaub: null,
       ohneZuordnung: null,
       ohneEmail: null,
+      ohneZuordnungNamen: [],
+      ohneEmailNamen: [],
       liste: [],
     }
 
@@ -153,11 +157,20 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
           neu.wunschfrei = await zahl(supabase.from('wunschfrei').select('id', { count: 'exact', head: true }).eq('status', 'offen').gte('datum', heuteIso))
         })(),
         (async () => {
-          neu.ohneZuordnung = await zahl(supabase.from('urlaubsantraege').select('id', { count: 'exact', head: true }).is('mitarbeiter_id', null))
+          const r = await supabase.from('urlaubsantraege').select('name').is('mitarbeiter_id', null)
+          if (!r.error) {
+            const namen = ((r.data ?? []) as { name: string | null }[]).map((x) => (x.name ?? '').trim() || '(ohne Namen)')
+            neu.ohneZuordnung = namen.length
+            neu.ohneZuordnungNamen = [...new Set(namen)].sort()
+          }
         })(),
         (async () => {
-          const r = await supabase.from('mitarbeiter').select('email')
-          if (!r.error) neu.ohneEmail = ((r.data ?? []) as { email: string | null }[]).filter((x) => !x.email || !x.email.trim()).length
+          const r = await supabase.from('mitarbeiter').select('name, email')
+          if (!r.error) {
+            const fehlt = ((r.data ?? []) as { name: string; email: string | null }[]).filter((x) => !x.email || !x.email.trim())
+            neu.ohneEmail = fehlt.length
+            neu.ohneEmailNamen = fehlt.map((x) => x.name).sort()
+          }
         })(),
         (async () => {
           const r = await supabase.from('urlaubsantraege').select('mitarbeiter_id, name').eq('status', 'genehmigt').lte('erster_tag', heuteIso).gte('letzter_tag', heuteIso)
@@ -357,6 +370,36 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
             </TabellenRahmen>
           )}
         </>
+      )}
+
+      {istAdmin && z && (z.ohneZuordnungNamen.length > 0 || z.ohneEmailNamen.length > 0) && (
+        <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {z.ohneZuordnungNamen.length > 0 && (
+            <div>
+              <h3 style={{ margin: '0 0 8px', color: '#14325c' }}>Anträge ohne zugeordneten Mitarbeiter</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {z.ohneZuordnungNamen.map((n) => (
+                  <span key={n} onClick={() => gehe('antraege')} style={{ cursor: 'pointer' }}>
+                    <Marke farbe="rot">{n}</Marke>
+                  </span>
+                ))}
+              </div>
+              <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Name im Antrag passt zu keinem Mitarbeiter – bitte Namen angleichen.</div>
+            </div>
+          )}
+          {z.ohneEmailNamen.length > 0 && (
+            <div>
+              <h3 style={{ margin: '0 0 8px', color: '#14325c' }}>Mitarbeiter ohne E-Mail</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {z.ohneEmailNamen.map((n) => (
+                  <span key={n} onClick={() => gehe('mitarbeiter')} style={{ cursor: 'pointer' }}>
+                    <Marke farbe="gelb">{n}</Marke>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {istAdmin && z?.imUrlaub && (
