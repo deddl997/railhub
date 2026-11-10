@@ -380,8 +380,80 @@ function AppInnen() {
     </div>
   )
 
+  const navigation = (
+    <nav
+          style={
+            nurMitarbeiter
+              ? {
+                  // Mitarbeiter: Reiter oben unter der Kopfzeile (wird auf dem iPhone unten nicht abgeschnitten)
+                  position: 'sticky',
+                  top: 52,
+                  zIndex: 450,
+                  background: '#ffffff',
+                  borderBottom: '1px solid var(--border)',
+                  boxShadow: '0 2px 8px rgba(15,23,42,0.06)',
+                  display: 'flex',
+                }
+              : {
+                  position: 'fixed',
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 800,
+                  background: '#ffffff',
+                  borderTop: '1px solid var(--border)',
+                  boxShadow: '0 -4px 16px rgba(15,23,42,0.06)',
+                  display: 'flex',
+                  paddingBottom: 'max(env(safe-area-inset-bottom), 14px)',
+                }
+          }
+        >
+          {untenLeiste.map((eintrag) => {
+            const gruppe = sichtbareGruppen.find((g) => g.tabs.includes(eintrag.id))
+            const aktiv = nurMitarbeiter ? aktiverTab === eintrag.id : aktiveGruppe?.id === gruppe?.id
+            return (
+              <button
+                key={eintrag.id}
+                onClick={() => setAktiverTab(eintrag.id)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '8px 2px 7px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 3,
+                  color: aktiv ? 'var(--navy)' : '#8a99ab',
+                  fontSize: 11,
+                  fontWeight: aktiv ? 700 : 500,
+                  cursor: 'pointer',
+                  position: 'relative',
+                }}
+              >
+                {aktiv && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      ...(nurMitarbeiter ? { bottom: 0, borderRadius: '3px 3px 0 0' } : { top: 0, borderRadius: '0 0 3px 3px' }),
+                      left: '25%',
+                      right: '25%',
+                      height: 3,
+                      background: 'var(--navy)',
+                    }}
+                  />
+                )}
+                {nurMitarbeiter ? tabSymbol(eintrag.id, 20) : gruppenSymbol(gruppe?.id ?? '', 22)}
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{eintrag.label}</span>
+              </button>
+            )
+          })}
+    </nav>
+  )
+
   return (
-    <div style={{ background: 'var(--bg)', minHeight: '100vh', paddingBottom: handy ? 'calc(68px + env(safe-area-inset-bottom))' : 0 }}>
+    <div style={{ background: 'var(--bg)', minHeight: '100vh', paddingBottom: handy && !nurMitarbeiter ? 'calc(80px + env(safe-area-inset-bottom))' : 0 }}>
       <header
         style={{
           background: 'linear-gradient(100deg, #0d2747 0%, #14325c 45%, #1d4a82 100%)',
@@ -461,6 +533,8 @@ function AppInnen() {
         {benutzerMenue}
       </header>
 
+      {handy && nurMitarbeiter && untenLeiste.length > 1 && navigation}
+
       {aktiveGruppe && aktiveGruppe.tabs.length > 1 && !(handy && nurMitarbeiter) && (
         <div
           style={{
@@ -507,7 +581,7 @@ function AppInnen() {
             position: 'fixed',
             left: 12,
             right: 12,
-            bottom: handy ? 'calc(80px + env(safe-area-inset-bottom))' : 12,
+            bottom: handy && !nurMitarbeiter ? 'calc(90px + env(safe-area-inset-bottom))' : 'calc(12px + env(safe-area-inset-bottom))',
             zIndex: 3000,
             background: 'var(--anthrazit)',
             color: '#ffffff',
@@ -602,53 +676,7 @@ function AppInnen() {
         {aktiverTab === 'schichtvorlagen' && istAdmin && seite('Schichtvorlagen', <SchichtvorlagenVerwaltung />)}
       </main>
 
-      {handy && untenLeiste.length > 1 && (
-        <nav
-          style={{
-            position: 'fixed',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 800,
-            background: '#ffffff',
-            borderTop: '1px solid var(--border)',
-            boxShadow: '0 -4px 16px rgba(15,23,42,0.06)',
-            display: 'flex',
-            paddingBottom: 'env(safe-area-inset-bottom)',
-          }}
-        >
-          {untenLeiste.map((eintrag) => {
-            const gruppe = sichtbareGruppen.find((g) => g.tabs.includes(eintrag.id))
-            const aktiv = nurMitarbeiter ? aktiverTab === eintrag.id : aktiveGruppe?.id === gruppe?.id
-            return (
-              <button
-                key={eintrag.id}
-                onClick={() => setAktiverTab(eintrag.id)}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  background: 'transparent',
-                  border: 'none',
-                  padding: '8px 2px 7px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 3,
-                  color: aktiv ? 'var(--navy)' : '#8a99ab',
-                  fontSize: 11,
-                  fontWeight: aktiv ? 700 : 500,
-                  cursor: 'pointer',
-                  position: 'relative',
-                }}
-              >
-                {aktiv && <span style={{ position: 'absolute', top: 0, left: '25%', right: '25%', height: 3, borderRadius: '0 0 3px 3px', background: 'var(--navy)' }} />}
-                {nurMitarbeiter ? tabSymbol(eintrag.id, 22) : gruppenSymbol(gruppe?.id ?? '', 22)}
-                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{eintrag.label}</span>
-              </button>
-            )
-          })}
-        </nav>
-      )}
+      {handy && !nurMitarbeiter && untenLeiste.length > 1 && navigation}
     </div>
   )
 }
