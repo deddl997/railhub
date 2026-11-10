@@ -42,6 +42,7 @@ interface Zahlen {
   ohneEmail: number | null
   ohneZuordnungNamen: string[]
   ohneEmailNamen: string[]
+  kontenProbleme: { name: string; jahr: number; grund: string }[]
   liste: (AuftragKurz & { besetzung: 'besetzt' | 'offen' | 'unbesetzt' })[]
 }
 
@@ -139,6 +140,7 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       ohneEmail: null,
       ohneZuordnungNamen: [],
       ohneEmailNamen: [],
+      kontenProbleme: [],
       liste: [],
     }
 
@@ -171,6 +173,38 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
             neu.ohneEmail = fehlt.length
             neu.ohneEmailNamen = fehlt.map((x) => x.name).sort()
           }
+        })(),
+        (async () => {
+          const jahrJetzt = heute.getFullYear()
+          const [jd, an, ma] = await Promise.all([
+            supabase.from('mitarbeiter_jahresdaten').select('mitarbeiter_id, jahr, urlaubsanspruch, resturlaub, resturlaub_vorjahr').in('jahr', [jahrJetzt, jahrJetzt + 1]),
+            supabase.from('urlaubsantraege').select('mitarbeiter_id, erster_tag, brauchbare_tage, anzahl_tage').eq('status', 'genehmigt').gte('erster_tag', `${jahrJetzt}-01-01`).lte('erster_tag', `${jahrJetzt + 1}-12-31`),
+            supabase.from('mitarbeiter').select('id, name'),
+          ])
+          if (jd.error || an.error || ma.error) return
+          const namen = new Map(((ma.data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]))
+          const genehmigt = new Map<string, number>()
+          for (const a of (an.data ?? []) as { mitarbeiter_id: string | null; erster_tag: string; brauchbare_tage: number | null; anzahl_tage: number | null }[]) {
+            if (!a.mitarbeiter_id) continue
+            const k = `${a.mitarbeiter_id}|${a.erster_tag.slice(0, 4)}`
+            genehmigt.set(k, (genehmigt.get(k) ?? 0) + Number(a.brauchbare_tage ?? a.anzahl_tage ?? 0))
+          }
+          const probleme: { name: string; jahr: number; grund: string }[] = []
+          for (const j of (jd.data ?? []) as { mitarbeiter_id: string; jahr: number; urlaubsanspruch: number | null; resturlaub: number | null; resturlaub_vorjahr: number | null }[]) {
+            const name = namen.get(j.mitarbeiter_id)
+            if (!name) continue
+            const anspruch = Number(j.urlaubsanspruch ?? 0)
+            const rest = Number(j.resturlaub ?? 0)
+            const vorjahr = Number(j.resturlaub_vorjahr ?? 0)
+            const gen = genehmigt.get(`${j.mitarbeiter_id}|${j.jahr}`) ?? 0
+            let grund: string | null = null
+            if (rest < 0 || vorjahr < 0) grund = 'negativer Wert'
+            else if (rest > anspruch + 0.01) grund = 'Resturlaub höher als Anspruch'
+            else if (gen === 0 && vorjahr > 0 && Math.abs(rest - anspruch) > 0.01) grund = 'nichts genehmigt, aber Resturlaub ≠ Anspruch'
+            if (grund) probleme.push({ name, jahr: j.jahr, grund })
+          }
+          probleme.sort((a, b) => a.name.localeCompare(b.name, 'de'))
+          neu.kontenProbleme = probleme
         })(),
         (async () => {
           const r = await supabase.from('urlaubsantraege').select('mitarbeiter_id, name').eq('status', 'genehmigt').lte('erster_tag', heuteIso).gte('letzter_tag', heuteIso)
@@ -282,7 +316,7 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
     laden()
   }, [laden])
 
-  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'offene_spotschichten', 'urlaubsantraege', 'zeitkorrekturen', 'wunschfrei', 'mitarbeiter'], laden)
+  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'offene_spotschichten', 'urlaubsantraege', 'zeitkorrekturen', 'wunschfrei', 'mitarbeiter', 'mitarbeiter_jahresdaten'], laden)
 
   const stunde = new Date().getHours()
   const gruss = stunde < 11 ? 'Guten Morgen' : stunde < 18 ? 'Guten Tag' : 'Guten Abend'
@@ -296,7 +330,8 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       <Kachel key="z" titel="Zeitkorrekturen offen" wert={z?.zeitkorrekturen ?? '–'} unter={z?.zeitkorrekturen ? 'im Dienstplan prüfen' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.zeitkorrekturen ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
       <Kachel key="w" titel="Wunschfrei offen" wert={z?.wunschfrei ?? '–'} unter={z?.wunschfrei ? 'im Dienstplan prüfen' : 'keine Wünsche offen'} farbe={farbeAnzahl(z?.wunschfrei ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
       <Kachel key="oz" titel="Anträge ohne Mitarbeiter" wert={z?.ohneZuordnung ?? '–'} unter={z?.ohneZuordnung ? 'Name passt zu keinem Mitarbeiter' : 'alle zugeordnet'} farbe={farbeAnzahl(z?.ohneZuordnung ?? null)} onClick={() => gehe('antraege')} laedt={laedt} />,
-      <Kachel key="oe" titel="Mitarbeiter ohne E-Mail" wert={z?.ohneEmail ?? '–'} unter={z?.ohneEmail ? 'E-Mail nachtragen' : 'alle hinterlegt'} farbe={farbeAnzahl(z?.ohneEmail ?? null)} onClick={() => gehe('mitarbeiter')} laedt={laedt} />
+      <Kachel key="oe" titel="Mitarbeiter ohne E-Mail" wert={z?.ohneEmail ?? '–'} unter={z?.ohneEmail ? 'E-Mail nachtragen' : 'alle hinterlegt'} farbe={farbeAnzahl(z?.ohneEmail ?? null)} onClick={() => gehe('mitarbeiter')} laedt={laedt} />,
+      <Kachel key="uk" titel="Urlaubskonten prüfen" wert={z?.kontenProbleme.length ?? '–'} unter={z?.kontenProbleme.length ? 'Zahlen passen nicht zusammen' : 'alles plausibel'} farbe={farbeAnzahl(z?.kontenProbleme.length ?? null)} onClick={() => gehe('mitarbeiter')} laedt={laedt} />
     )
   }
   if (planer) {
@@ -372,7 +407,7 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
         </>
       )}
 
-      {istAdmin && z && (z.ohneZuordnungNamen.length > 0 || z.ohneEmailNamen.length > 0) && (
+      {istAdmin && z && (z.ohneZuordnungNamen.length > 0 || z.ohneEmailNamen.length > 0 || z.kontenProbleme.length > 0) && (
         <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {z.ohneZuordnungNamen.length > 0 && (
             <div>
@@ -385,6 +420,19 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
                 ))}
               </div>
               <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Name im Antrag passt zu keinem Mitarbeiter – bitte Namen angleichen.</div>
+            </div>
+          )}
+          {z.kontenProbleme.length > 0 && (
+            <div>
+              <h3 style={{ margin: '0 0 8px', color: '#14325c' }}>Urlaubskonten prüfen</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {z.kontenProbleme.map((p) => (
+                  <span key={`${p.name}${p.jahr}`} onClick={() => gehe('mitarbeiter')} style={{ cursor: 'pointer' }} title={p.grund}>
+                    <Marke farbe="rot">{p.name} ({p.jahr}): {p.grund}</Marke>
+                  </span>
+                ))}
+              </div>
+              <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Bitte in der Mitarbeiterübersicht beim passenden Jahr Resturlaub und Rest Vorjahr kontrollieren.</div>
             </div>
           )}
           {z.ohneEmailNamen.length > 0 && (

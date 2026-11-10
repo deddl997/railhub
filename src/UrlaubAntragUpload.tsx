@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { namensSignatur } from './namensAbgleich'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
+import { bestaetigen } from './ui'
 
 interface GemeinsameFelder {
   jahr: number | null
@@ -474,6 +475,16 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
           const treffer = (alleMitarbeiter ?? []).find((m) => namensSignatur(m.name) === signatur)
           mitarbeiterId = treffer?.id ?? null
           if (treffer) kanonischerName = treffer.name
+        }
+        if (!mitarbeiterId) {
+          const weiter = await bestaetigen(
+            `„${name ?? ''}“ passt zu keinem Mitarbeiter. Der Antrag würde ohne Zuordnung gespeichert und beim Resturlaub nicht mitgezählt. Trotzdem speichern?`,
+            { titel: 'Kein Mitarbeiter gefunden', jaText: 'Trotzdem speichern', gefahr: true }
+          )
+          if (!weiter) {
+            setLadeVorgang(false)
+            return
+          }
         }
       }
 

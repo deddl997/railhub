@@ -32,6 +32,39 @@ interface Zeile {
   simulatorDatum: string | null
 }
 
+function wortTeile(n: string): string[] {
+  return n
+    .toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .split(/[\s\-,]+/)
+    .filter((w) => w.length > 1)
+}
+
+function editDistanz(x: string, y: string): number {
+  const d: number[][] = Array.from({ length: x.length + 1 }, (_, i) => [i, ...Array(y.length).fill(0)])
+  for (let j = 1; j <= y.length; j++) d[0][j] = j
+  for (let i = 1; i <= x.length; i++)
+    for (let j = 1; j <= y.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1))
+  return d[x.length][y.length]
+}
+
+function namensAehnlichkeit(a: string, b: string): number {
+  const wa = wortTeile(a)
+  const wb = wortTeile(b)
+  if (wa.length === 0 || wb.length === 0) return 0
+  let punkte = 0
+  for (const x of wa) {
+    let best = 0
+    for (const y of wb) {
+      if (x === y) best = Math.max(best, 1)
+      else if (x.length >= 4 && y.length >= 4 && Math.abs(x.length - y.length) <= 2 && editDistanz(x, y) <= 2) best = Math.max(best, 0.7)
+    }
+    punkte += best
+  }
+  return punkte / Math.max(wa.length, wb.length)
+}
+
 export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenAuslöser: number }) {
   const { mitarbeiter: eigenerMitarbeiter } = useAktuellerMitarbeiter()
   const toast = useToast()
@@ -234,6 +267,18 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
   async function mitarbeiterHinzufuegen() {
     const name = neuerName.trim()
     if (!name) return
+    const aehnliche = zeilen
+      .map((z) => ({ z, w: namensSignatur(z.name) === namensSignatur(name) ? 1 : namensAehnlichkeit(name, z.name) }))
+      .filter((x) => x.w >= 0.55)
+      .sort((a, b) => b.w - a.w)
+      .slice(0, 3)
+    if (aehnliche.length > 0) {
+      const weiter = await bestaetigen(
+        `Es gibt schon einen ähnlichen Mitarbeiter: ${aehnliche.map((x) => `„${x.z.name}“`).join(', ')}.\n\nIst „${name}“ wirklich eine andere Person? Falls es dieselbe ist, benenne den vorhandenen Eintrag lieber um, statt einen Doppelten anzulegen.`,
+        { titel: 'Mögliche Doppelanlage', jaText: 'Ja, neu anlegen', gefahr: true }
+      )
+      if (!weiter) return
+    }
     setWirdHinzugefuegt(true)
     await supabase.from('mitarbeiter').insert({ name })
     setNeuerName('')
