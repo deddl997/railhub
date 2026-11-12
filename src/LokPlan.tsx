@@ -150,6 +150,44 @@ function leistungenAus(auftraege: AuftragZeile[], kanon: Map<string, string>): L
   return ergebnis
 }
 
+// Ein Block = ein Auftrag auf einer Lok: Lokzuführung + Zugfahrt(en) + Rückführung verschmolzen
+interface Block {
+  key: string
+  auftragId: string
+  lok: string
+  titel: string
+  kunde: string
+  start: number
+  ende: number
+  teile: Leistung[]
+  warnung: boolean
+}
+
+function bloeckeAus(leistungen: Leistung[]): Block[] {
+  const karte = new Map<string, Leistung[]>()
+  for (const l of leistungen) {
+    const k = `${l.auftragId}|${l.lok}`
+    karte.set(k, [...(karte.get(k) ?? []), l])
+  }
+  const ergebnis: Block[] = []
+  for (const [key, teile] of karte) {
+    teile.sort((a, b) => a.start - b.start)
+    const zuege = Array.from(new Set(teile.filter((t) => t.art === 'Zugfahrt').map((t) => t.titel)))
+    ergebnis.push({
+      key,
+      auftragId: teile[0].auftragId,
+      lok: teile[0].lok,
+      titel: zuege.length > 0 ? zuege.join(' / ') : teile[0].titel,
+      kunde: teile[0].kunde,
+      start: teile[0].start,
+      ende: Math.max(...teile.map((t) => t.ende)),
+      teile,
+      warnung: teile.some((t) => t.warnungen.length > 0),
+    })
+  }
+  return ergebnis.sort((a, b) => a.start - b.start)
+}
+
 // Prüft pro Lok: Doppelbelegung, zu kurze Wendezeit, Ortssprung
 function pruefen(leistungen: Leistung[]): string[] {
   const hinweise: string[] = []
@@ -168,7 +206,7 @@ function pruefen(leistungen: Leistung[]): string[] {
         v.warnungen.push('Doppelbelegung')
         n.warnungen.push('Doppelbelegung')
         hinweise.push(`${bezug}: Doppelbelegung, die Lok ist zweimal gleichzeitig eingeplant.`)
-      } else if (n.start >= v.ende && n.start - v.ende < WENDE_MINUTEN) {
+      } else if (n.auftragId !== v.auftragId && n.start >= v.ende && n.start - v.ende < WENDE_MINUTEN) {
         v.warnungen.push('Wendezeit')
         n.warnungen.push('Wendezeit')
         hinweise.push(`${bezug}: nur ${n.start - v.ende} Min. Wendezeit (Minimum ${WENDE_MINUTEN} Min.).`)
@@ -308,7 +346,29 @@ export default function LokPlan() {
   }
 
   const ohneLokAnzahl = new Set(leistungen.filter((l) => l.lok === OHNE_LOK).map((l) => l.auftragId)).size
-  const gewaehlteLeistung = leistungen.find((l) => l.key === gewaehlt) ?? null
+  const bloecke = useMemo(() => bloeckeAus(leistungen), [leistungen])
+  const gewaehlterBlock = bloecke.find((b) => b.key === gewaehlt) ?? null
+  const [dragZiel, setDragZiel] = useState<string | null>(null)
+
+  // Auftrag per Drag & Drop auf eine andere Lok legen: Lok im Auftrag und in allen passenden Fahrtzeilen (Zuführung, Zug, Rückführung) ändern
+  async function lokZuweisen(auftragId: string, quelle: string, ziel: string) {
+    setDragZiel(null)
+    if (quelle === ziel) return
+    const a = auftraege.find((x) => x.id === auftragId)
+    if (!a) return
+    const zielName = ziel === OHNE_LOK ? '' : ziel
+    const q = lokSchluessel(quelle)
+    const passt = (t: string | null | undefined) => lokSchluessel(lokName(t)) === q
+    const update: { lok?: string | null; fahrten?: Fahrtzeile[] } = {}
+    if (Array.isArray(a.fahrten) && a.fahrten.length > 0) {
+      update.fahrten = fahrtenPruefen(a.fahrten).map((f) => (passt(f.lok || a.lok) ? { ...f, lok: zielName } : f))
+    }
+    if (passt(a.lok)) update.lok = zielName === '' ? null : zielName
+    if (update.lok === undefined && update.fahrten === undefined) update.lok = zielName === '' ? null : zielName
+    const r = await supabase.from('auftraege').update(update).eq('id', auftragId)
+    setMeldung(r.error ? `Fehler beim Verschieben: ${r.error.message}` : `Verschoben auf ${ziel}.`)
+    void laden()
+  }
 
   function springen(tage: number) {
     setTag(isoPlus(tag, ansicht === 'tag' ? tage : tage * 7))
@@ -417,10 +477,14 @@ export default function LokPlan() {
           )}
 
           {ansicht === 'tag' ? (
-            <TagesBalken typVon={typVon} tag={tag} leistungen={leistungen} loks={loks} gewaehlt={gewaehlt} onWahl={setGewaehlt} />
+            <TagesBalken tag={tag} bloecke={bloecke} loks={loks} typVon={typVon} gewaehlt={gewaehlt} onWahl={setGewaehlt} dragZiel={dragZiel} setDragZiel={setDragZiel} onDrop={lokZuweisen} />
           ) : (
-            <WochenTabelle tage={tageDerWoche} leistungen={leistungen} loks={loks} tfProAuftrag={tfProAuftrag} onWahl={(k) => { setGewaehlt(k) }} />
+            <WochenTabelle tage={tageDerWoche} bloecke={bloecke} loks={loks} tfProAuftrag={tfProAuftrag} onWahl={setGewaehlt} dragZiel={dragZiel} setDragZiel={setDragZiel} onDrop={lokZuweisen} />
           )}
+          <div className="lp-nodruck" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+            Tipp: Einen Auftrag mit der Maus auf die Zeile einer anderen Lok ziehen, um ihn dieser Lok zuzuweisen. Zuführung und Rückführung wandern automatisch mit.
+          </div>
+          {meldung && !verwalten && <div className="lp-nodruck" style={{ fontSize: 13, marginTop: 6, color: '#14325c' }}>{meldung}</div>}
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }} className="lp-nodruck">
             <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#14325c', marginRight: 5, verticalAlign: -2 }} />Zugfahrt</span>
@@ -429,27 +493,30 @@ export default function LokPlan() {
             <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, outline: '2px solid #b91c1c', marginRight: 5, verticalAlign: -2 }} />Warnung</span>
           </div>
 
-          {gewaehlteLeistung && (
+          {gewaehlterBlock && (
             <div className="lp-nodruck" style={{ marginTop: 14, border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', background: '#f8fafc', fontSize: 14 }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                {gewaehlteLeistung.art}: {gewaehlteLeistung.titel}
-              </div>
-              <div>
-                {gewaehlteLeistung.von || '?'} {minutenAlsUhr(gewaehlteLeistung.start)} → {gewaehlteLeistung.nach || '?'} {minutenAlsUhr(gewaehlteLeistung.ende)}
-                <span style={{ color: 'var(--text-muted)' }}> · {datumDe(absAlsIso(gewaehlteLeistung.start))}</span>
-              </div>
-              <div>Lok: <b>{gewaehlteLeistung.lok}</b></div>
-              {gewaehlteLeistung.kunde && <div style={{ color: 'var(--text-muted)' }}>Kunde: {gewaehlteLeistung.kunde}</div>}
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{gewaehlterBlock.titel}</div>
+              <div>Lok: <b>{gewaehlterBlock.lok}</b>{gewaehlterBlock.kunde && <span style={{ color: 'var(--text-muted)' }}> · Kunde: {gewaehlterBlock.kunde}</span>}</div>
+              <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
+                {gewaehlterBlock.teile.map((t) => (
+                  <li key={t.key}>
+                    {t.art}{t.art !== 'Zugfahrt' ? '' : ` ${t.titel}`}: {t.von || '?'} {minutenAlsUhr(t.start)} → {t.nach || '?'} {minutenAlsUhr(t.ende)}
+                    <span style={{ color: 'var(--text-muted)' }}> · {datumDe(absAlsIso(t.start))}</span>
+                  </li>
+                ))}
+              </ul>
               <div>
                 Lokführer im Dienstplan:{' '}
-                {(tfProAuftrag.get(gewaehlteLeistung.auftragId) ?? []).length > 0 ? (
-                  <b>{(tfProAuftrag.get(gewaehlteLeistung.auftragId) ?? []).join(', ')}</b>
+                {(tfProAuftrag.get(gewaehlterBlock.auftragId) ?? []).length > 0 ? (
+                  <b>{(tfProAuftrag.get(gewaehlterBlock.auftragId) ?? []).join(', ')}</b>
                 ) : (
                   <span style={{ color: '#b45309' }}>noch niemand eingeteilt</span>
                 )}
               </div>
-              {gewaehlteLeistung.warnungen.length > 0 && (
-                <div style={{ color: '#b91c1c', marginTop: 4 }}>⚠ {Array.from(new Set(gewaehlteLeistung.warnungen)).join(', ')}</div>
+              {gewaehlterBlock.warnung && (
+                <div style={{ color: '#b91c1c', marginTop: 4 }}>
+                  ⚠ {Array.from(new Set(gewaehlterBlock.teile.flatMap((t) => t.warnungen))).join(', ')}
+                </div>
               )}
             </div>
           )}
@@ -459,24 +526,64 @@ export default function LokPlan() {
   )
 }
 
+// ---------- Gemeinsame Drag-&-Drop-Hilfen ----------
+interface DndProps {
+  dragZiel: string | null
+  setDragZiel: (z: string | null) => void
+  onDrop: (auftragId: string, quelle: string, ziel: string) => void
+}
+function dndQuelle(b: Block) {
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ auftragId: b.auftragId, lok: b.lok }))
+      e.dataTransfer.effectAllowed = 'move'
+    },
+  }
+}
+function dndZiel(lok: string, p: DndProps) {
+  return {
+    onDragOver: (e: React.DragEvent) => {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      if (p.dragZiel !== lok) p.setDragZiel(lok)
+    },
+    onDragLeave: () => p.setDragZiel(null),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      try {
+        const d = JSON.parse(e.dataTransfer.getData('text/plain')) as { auftragId: string; lok: string }
+        p.onDrop(d.auftragId, d.lok, lok)
+      } catch {
+        p.setDragZiel(null)
+      }
+    },
+  }
+}
+const kurzArt = (art: string) => (art === 'Lokzuführung' ? 'Zuf.' : art === 'Lokrückführung' ? 'Rück' : art === 'Zugfahrt' ? '' : art)
+
 // ---------- Tagesansicht ----------
 function TagesBalken({
   tag,
-  leistungen,
+  bloecke,
   loks,
+  typVon,
   gewaehlt,
   onWahl,
-  typVon,
+  dragZiel,
+  setDragZiel,
+  onDrop,
 }: {
-  typVon?: Map<string, string>
   tag: string
-  leistungen: Leistung[]
+  bloecke: Block[]
   loks: string[]
+  typVon: Map<string, string>
   gewaehlt: string | null
   onWahl: (k: string | null) => void
-}) {
+} & DndProps) {
   const start = tagStart(tag)
-  const prozent = (min: number) => ((Math.min(Math.max(min, start), start + 1440) - start) / 1440) * 100
+  const klemmen = (min: number) => Math.min(Math.max(min, start), start + 1440)
+  const prozent = (min: number) => ((klemmen(min) - start) / 1440) * 100
   return (
     <div style={{ fontSize: 12 }}>
       <div style={{ display: 'flex', marginLeft: 120, position: 'relative', height: 18, color: 'var(--text-muted)' }}>
@@ -489,47 +596,56 @@ function TagesBalken({
         </div>
       </div>
       {loks.map((lok) => {
-        const meine = leistungen.filter((l) => l.lok === lok)
+        const meine = bloecke.filter((b) => b.lok === lok && b.ende > start && b.start < start + 1440)
         const ohne = lok === OHNE_LOK
+        const aktiv = dragZiel === lok
         return (
-          <div key={lok} style={{ display: 'flex', alignItems: 'center', borderTop: '1px solid var(--border)', minHeight: 44 }}>
-            <div style={{ width: 120, flex: 'none', fontWeight: 600, fontSize: 13, color: ohne ? '#b91c1c' : 'var(--text)' }}>{lok}{typVon && typVon.get(lok) ? <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{typVon.get(lok) === 'E-Lok' ? 'E' : 'D'}</span> : null}</div>
+          <div key={lok} {...dndZiel(lok, { dragZiel, setDragZiel, onDrop })} style={{ display: 'flex', alignItems: 'center', borderTop: '1px solid var(--border)', minHeight: 44, background: aktiv ? '#dbeafe' : undefined }}>
+            <div style={{ width: 120, flex: 'none', fontWeight: 600, fontSize: 13, color: ohne ? '#b91c1c' : 'var(--text)' }}>
+              {lok}
+              {typVon.get(lok) ? <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{typVon.get(lok) === 'E-Lok' ? 'E' : 'D'}</span> : null}
+            </div>
             <div style={{ position: 'relative', flex: 1, height: 34, background: ohne ? '#fef2f2' : '#f1f5f9', borderRadius: 4 }}>
               {[3, 6, 9, 12, 15, 18, 21].map((h) => (
                 <div key={h} style={{ position: 'absolute', left: `${(h / 24) * 100}%`, top: 0, bottom: 0, borderLeft: '1px solid #e2e8f0' }} />
               ))}
-              {meine.map((l) => {
-                const f = farbe(l.art)
-                const links = prozent(l.start)
-                const breite = Math.max(prozent(l.ende) - links, 0.8)
-                const warn = l.warnungen.length > 0
+              {meine.map((b) => {
+                const bs = klemmen(b.start)
+                const be = klemmen(b.ende)
+                const gesamt = Math.max(be - bs, 1)
                 return (
                   <div
-                    key={l.key}
-                    onClick={() => onWahl(gewaehlt === l.key ? null : l.key)}
-                    title={`${l.art}: ${l.titel}\n${l.von} ${minutenAlsUhr(l.start)} → ${l.nach} ${minutenAlsUhr(l.ende)}`}
+                    key={b.key}
+                    {...dndQuelle(b)}
+                    onClick={() => onWahl(gewaehlt === b.key ? null : b.key)}
+                    title={`${b.titel}\n${b.teile.map((t) => `${t.art}: ${t.von} ${minutenAlsUhr(t.start)} → ${t.nach} ${minutenAlsUhr(t.ende)}`).join('\n')}`}
                     style={{
                       position: 'absolute',
                       top: 3,
                       height: 28,
-                      left: `${links}%`,
-                      width: `${breite}%`,
-                      background: f.bg,
-                      color: f.fg,
-                      border: `1px ${l.art.startsWith('Lok') ? 'dashed' : 'solid'} ${f.rand}`,
-                      outline: warn ? '2px solid #b91c1c' : gewaehlt === l.key ? '2px solid #f59e0b' : undefined,
-                      outlineOffset: 1,
-                      borderRadius: 4,
-                      boxSizing: 'border-box',
+                      left: `${prozent(b.start)}%`,
+                      width: `${Math.max(prozent(b.ende) - prozent(b.start), 0.8)}%`,
+                      borderRadius: 5,
                       overflow: 'hidden',
-                      whiteSpace: 'nowrap',
-                      fontSize: 11,
-                      lineHeight: '26px',
-                      padding: '0 5px',
-                      cursor: 'pointer',
+                      boxSizing: 'border-box',
+                      outline: b.warnung ? '2px solid #b91c1c' : gewaehlt === b.key ? '2px solid #f59e0b' : undefined,
+                      outlineOffset: 1,
+                      cursor: 'grab',
                     }}
                   >
-                    {l.titel}
+                    {b.teile.map((t) => {
+                      const f = farbe(t.art)
+                      const l = ((klemmen(t.start) - bs) / gesamt) * 100
+                      const w = ((klemmen(t.ende) - klemmen(t.start)) / gesamt) * 100
+                      return (
+                        <div
+                          key={t.key}
+                          style={{ position: 'absolute', top: 0, bottom: 0, left: `${l}%`, width: `${w}%`, background: f.bg, color: f.fg, fontSize: 11, lineHeight: '28px', padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', boxSizing: 'border-box', borderLeft: l > 0 ? '1px solid rgba(255,255,255,0.7)' : undefined }}
+                        >
+                          {t.art === 'Zugfahrt' ? b.titel : kurzArt(t.art)}
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -544,17 +660,20 @@ function TagesBalken({
 // ---------- Wochenansicht ----------
 function WochenTabelle({
   tage,
-  leistungen,
+  bloecke,
   loks,
   tfProAuftrag,
   onWahl,
+  dragZiel,
+  setDragZiel,
+  onDrop,
 }: {
   tage: string[]
-  leistungen: Leistung[]
+  bloecke: Block[]
   loks: string[]
   tfProAuftrag: Map<string, string[]>
   onWahl: (k: string | null) => void
-}) {
+} & DndProps) {
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: 900, fontSize: 12 }}>
@@ -576,39 +695,43 @@ function WochenTabelle({
         </thead>
         <tbody>
           {loks.map((lok) => (
-            <tr key={lok}>
+            <tr key={lok} {...dndZiel(lok, { dragZiel, setDragZiel, onDrop })} style={{ background: dragZiel === lok ? '#dbeafe' : undefined }}>
               <td style={{ verticalAlign: 'top', padding: 6, borderBottom: '1px solid var(--border)', fontWeight: 600, color: lok === OHNE_LOK ? '#b91c1c' : 'var(--text)' }}>{lok}</td>
               {tage.map((t) => {
                 const ab = tagStart(t)
-                const zelle = leistungen.filter((l) => l.lok === lok && l.start >= ab && l.start < ab + 1440).sort((a, b) => a.start - b.start)
+                const zelle = bloecke.filter((b) => b.lok === lok && b.start >= ab && b.start < ab + 1440)
                 return (
-                  <td key={t} style={{ verticalAlign: 'top', padding: 4, borderBottom: '1px solid var(--border)' }}>
-                    {zelle.map((l) => {
-                      const f = farbe(l.art)
-                      const tf = tfProAuftrag.get(l.auftragId) ?? []
+                  <td key={t} style={{ verticalAlign: 'top', padding: 4, borderBottom: '1px solid var(--border)', minHeight: 40 }}>
+                    {zelle.map((b) => {
+                      const tf = tfProAuftrag.get(b.auftragId) ?? []
+                      const zug = b.teile.filter((x) => x.art === 'Zugfahrt')
+                      const erste = zug[0] ?? b.teile[0]
+                      const letzte = zug[zug.length - 1] ?? b.teile[b.teile.length - 1]
+                      const nebenteile = b.teile.filter((x) => x.art !== 'Zugfahrt')
                       return (
                         <div
-                          key={l.key}
-                          onClick={() => onWahl(l.key)}
-                          style={{
-                            background: f.bg,
-                            color: f.fg,
-                            border: `1px ${l.art.startsWith('Lok') ? 'dashed' : 'solid'} ${f.rand}`,
-                            outline: l.warnungen.length ? '2px solid #b91c1c' : undefined,
-                            outlineOffset: 1,
-                            borderRadius: 4,
-                            padding: '3px 5px',
-                            marginBottom: 4,
-                            fontSize: 11,
-                            lineHeight: 1.35,
-                            cursor: 'pointer',
-                          }}
+                          key={b.key}
+                          {...dndQuelle(b)}
+                          onClick={() => onWahl(b.key)}
+                          style={{ border: '1px solid #14325c', outline: b.warnung ? '2px solid #b91c1c' : undefined, outlineOffset: 1, borderRadius: 5, marginBottom: 5, overflow: 'hidden', cursor: 'grab', fontSize: 11, lineHeight: 1.35 }}
                         >
-                          <b>{l.titel}</b>
-                          <div>
-                            {minutenAlsUhr(l.start)}–{minutenAlsUhr(l.ende)} {l.von && l.nach ? `· ${l.von}→${l.nach}` : ''}
+                          {nebenteile.filter((x) => x.start < erste.start).map((x) => (
+                            <div key={x.key} style={{ background: '#e2e8f0', color: '#334155', padding: '2px 5px' }}>
+                              {kurzArt(x.art)} {minutenAlsUhr(x.start)}–{minutenAlsUhr(x.ende)} {x.von}→{x.nach}
+                            </div>
+                          ))}
+                          <div style={{ background: '#14325c', color: '#fff', padding: '3px 5px' }}>
+                            <b>{b.titel}</b>
+                            <div>
+                              {minutenAlsUhr(erste.start)}–{minutenAlsUhr(letzte.ende)} · {erste.von}→{letzte.nach}
+                            </div>
+                            {tf.length > 0 && <div style={{ opacity: 0.9 }}>{tf.join(', ')}</div>}
                           </div>
-                          {tf.length > 0 && <div style={{ opacity: 0.9 }}>{tf.join(', ')}</div>}
+                          {nebenteile.filter((x) => x.start >= erste.start).map((x) => (
+                            <div key={x.key} style={{ background: '#e2e8f0', color: '#334155', padding: '2px 5px' }}>
+                              {kurzArt(x.art)} {minutenAlsUhr(x.start)}–{minutenAlsUhr(x.ende)} {x.von}→{x.nach}
+                            </div>
+                          ))}
                         </div>
                       )
                     })}
