@@ -100,18 +100,24 @@ function AppInnen() {
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
   const [startTabGesetzt, setStartTabGesetzt] = useState(false)
+  const [planerStartGesetzt, setPlanerStartGesetzt] = useState(false)
 
   // Mitarbeiter starten direkt in ihrem Dienstplan
   useEffect(() => {
+    // Nach dem Abmelden beim naechsten Anmelden wieder die passende Startseite waehlen
+    if (!session) {
+      setStartTabGesetzt(false)
+      setPlanerStartGesetzt(false)
+      return
+    }
     if (!ladeRolle && !startTabGesetzt) {
       if (istAdmin || rolle === 'disponent' || rolle === 'abrechnung') setAktiverTab('start')
       else if (mitarbeiter) setAktiverTab('meinplan')
       setStartTabGesetzt(true)
     }
-  }, [ladeRolle, mitarbeiter, istAdmin, rolle, startTabGesetzt])
+  }, [session, ladeRolle, mitarbeiter, istAdmin, rolle, startTabGesetzt])
 
   // Rolle kommt manchmal etwas später: Planer (Disponent/Abrechnung) landen dann ebenfalls auf der Startseite
-  const [planerStartGesetzt, setPlanerStartGesetzt] = useState(false)
   useEffect(() => {
     if (startTabGesetzt && !planerStartGesetzt && (rolle === 'disponent' || rolle === 'abrechnung')) {
       setPlanerStartGesetzt(true)
@@ -171,8 +177,25 @@ function AppInnen() {
     setNeuLadenAuslöser((n) => n + 1)
   }
 
+  // Abmelden: Sitzung auf diesem Geraet sicher loeschen und die App komplett neu starten,
+  // damit nichts vom vorherigen Benutzer im Speicher bleibt
   async function abmelden() {
-    await supabase.auth.signOut()
+    setMenueOffen(false)
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) await supabase.auth.signOut({ scope: 'local' })
+    } catch {
+      // egal – unten wird trotzdem alles geloescht
+    }
+    try {
+      for (const schluessel of Object.keys(localStorage)) {
+        if (schluessel.startsWith('sb-')) localStorage.removeItem(schluessel)
+      }
+      sessionStorage.clear()
+    } catch {
+      // Speicher nicht verfuegbar
+    }
+    window.location.replace(window.location.origin + '/')
   }
 
   if (ladeSession) {
@@ -350,6 +373,9 @@ function AppInnen() {
               <div style={{ fontWeight: 600, fontSize: 14 }}>{mitarbeiter?.name ?? ''}</div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {rollenName} · {FIRMA.name}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }} title="Mit diesem Login bist du angemeldet">
+                Login: {session?.user.email ?? '–'}
               </div>
             </div>
             {istAdmin && (
