@@ -133,6 +133,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [urlaube, setUrlaube] = useState<{ erster_tag: string; letzter_tag: string }[]>([])
   const [ansicht, setAnsicht] = useState<'plan' | 'wunsch' | 'zeit'>('plan')
   const [gelesen, setGelesen] = useState<string[]>([])
+  const [gelesenGeladen, setGelesenGeladen] = useState(false)
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
   const [pushZustand, setPushZustand] = useState<PushStatus>('aus')
   const [pushMeldung, setPushMeldung] = useState<string | null>(null)
@@ -236,6 +237,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
       supabase.from('urlaubsantraege').select('id, gruppe_id').eq('mitarbeiter_id', mitarbeiterId).eq('status', 'offen'),
     ])
     setGelesen((gel.data ?? []).map((g) => String(g.woche_start)))
+    setGelesenGeladen(true)
     setWuensche((wun.data ?? []) as Wunsch[])
     setJahresdaten(jd.data ?? null)
     setOffeneAntraege(new Set((offen.data ?? []).map((x: { id: string; gruppe_id: string | null }) => x.gruppe_id ?? x.id)).size)
@@ -354,10 +356,17 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
   const wochen = Array.from({ length: anzahlWochen }, (_, i) => addTage(ersteWoche, i * 7))
 
+  // Eine veröffentlichte, noch nicht vergangene Woche ist gesperrt, bis der Mitarbeiter sie bestätigt hat
+  function gesperrt(woche: Date): boolean {
+    const iso = datumZuISO(woche)
+    return freigegeben.includes(iso) && !gelesen.includes(iso) && datumZuISO(addTage(woche, 6)) >= heuteIso
+  }
+  const offeneWochen = wochen.filter((w) => gesperrt(w))
+
   // Naechster Dienst
   let naechster: { tag: Date; dienst: Dienst } | null = null
   for (const woche of wochen) {
-    if (!freigegeben.includes(datumZuISO(woche))) continue
+    if (!freigegeben.includes(datumZuISO(woche)) || gesperrt(woche)) continue
     for (let i = 0; i < 7; i++) {
       const tag = addTage(woche, i)
       const iso = datumZuISO(tag)
@@ -385,7 +394,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     const zeilen: string[] = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Rail Bavaria Logistik//Dienstplan//DE', 'CALSCALE:GREGORIAN']
     const stempel = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')
     for (const woche of wochen) {
-      if (!freigegeben.includes(datumZuISO(woche))) continue
+      if (!freigegeben.includes(datumZuISO(woche)) || gesperrt(woche)) continue
       for (let i = 0; i < 7; i++) {
         const tag = addTage(woche, i)
         const iso = datumZuISO(tag)
@@ -727,6 +736,27 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         ))}
       </div>
 
+      {offeneWochen.length > 0 && (
+        <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: 12, padding: 16, marginBottom: 18 }}>
+          <div style={{ fontWeight: 700, color: '#92400e', fontSize: 16, marginBottom: 4 }}>
+            📬 Neuer Dienstplan wartet auf deine Bestätigung
+          </div>
+          <div style={{ fontSize: 13, color: '#92400e', marginBottom: 10 }}>
+            Bitte bestätige {offeneWochen.length > 1 ? 'die Wochen' : 'die Woche'} ab {offeneWochen.map((w) => datumKurz(w)).join(', ')}. Erst danach siehst du deine Dienste und deine Lok.
+          </div>
+          {gelesenGeladen && (
+            <button
+              onClick={async () => {
+                for (const w of offeneWochen) await gelesenBestaetigen(datumZuISO(w))
+              }}
+              style={{ ...knopfVoll, padding: '10px 18px', fontSize: 14 }}
+            >
+              Dienstplan ansehen und bestätigen
+            </button>
+          )}
+        </div>
+      )}
+
       {naechster ? (
         <div
           onClick={() => setOffenerTag(datumZuISO(naechster!.tag))}
@@ -772,7 +802,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
         </div>
       ) : (
         <div style={{ background: '#f1f5f9', borderRadius: 12, padding: 16, marginBottom: 18, color: '#475569', fontSize: 14 }}>
-          Aktuell ist kein kommender Dienst veröffentlicht.
+          {offeneWochen.length > 0 ? 'Bestätige zuerst den neuen Dienstplan, dann siehst du hier deinen nächsten Dienst.' : 'Aktuell ist kein kommender Dienst veröffentlicht.'}
         </div>
       )}
 
@@ -803,7 +833,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                 <div style={{ fontWeight: 700, color: 'var(--navy)' }}>
                   KW {kalenderwoche(woche)} · {datumKurz(woche)} – {datumKurz(addTage(woche, 6))}
                 </div>
-                {veroeffentlicht &&
+                {veroeffentlicht && !gesperrt(woche) &&
                   (() => {
                     let summe = 0
                     for (let i = 0; i < 7; i++) {
@@ -825,6 +855,10 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                   <span style={{ fontSize: 11, background: '#dcfce7', color: '#166534', borderRadius: 999, padding: '2px 10px', fontWeight: 600 }}>
                     ✓ Gelesen
                   </span>
+                ) : gesperrt(woche) ? (
+                  <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', borderRadius: 999, padding: '2px 10px', fontWeight: 600 }}>
+                    🔒 bitte bestätigen
+                  </span>
                 ) : (
                   <button
                     onClick={() => gelesenBestaetigen(wocheIso)}
@@ -835,7 +869,22 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                 ))}
             </div>
 
-            {veroeffentlicht ? (
+            {veroeffentlicht && gesperrt(woche) ? (
+              <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: 18, textAlign: 'center' }}>
+                <div style={{ fontSize: 28 }}>🔒</div>
+                <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 4 }}>Neuer Dienstplan veröffentlicht</div>
+                <div style={{ fontSize: 13, color: '#92400e', marginBottom: 12 }}>
+                  Bitte bestätige zuerst, dass du ihn zur Kenntnis nimmst. Danach siehst du deine Dienste und deine Lok.
+                </div>
+                {gelesenGeladen ? (
+                  <button onClick={() => gelesenBestaetigen(wocheIso)} style={{ ...knopfVoll, padding: '10px 18px', fontSize: 14 }}>
+                    Dienstplan ansehen und bestätigen
+                  </button>
+                ) : (
+                  <div style={{ fontSize: 12, color: '#92400e' }}>Lädt …</div>
+                )}
+              </div>
+            ) : veroeffentlicht ? (
               <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
                 {Array.from({ length: 7 }, (_, i) => {
                   const tag = addTage(woche, i)
