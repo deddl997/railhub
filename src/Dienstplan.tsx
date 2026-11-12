@@ -320,6 +320,16 @@ export default function Dienstplan() {
   const [offenSpotBearbeitenId, setOffenSpotBearbeitenId] = useState<string | null>(null)
   const [gezogenerEintrag, setGezogenerEintrag] = useState<{ mitarbeiterId: string; datum: string } | null>(null)
   const [vorschlagFuer, setVorschlagFuer] = useState<OffenesElement | null>(null)
+  const [vorschlagSuche, setVorschlagSuche] = useState('')
+  useEffect(() => {
+    setVorschlagSuche('')
+  }, [vorschlagFuer])
+  // Suche nach Namen: jedes eingegebene Wort muss im Namen vorkommen (Reihenfolge egal)
+  const trefferSuche = (name: string) => {
+    const woerter = vorschlagSuche.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    const n = name.toLowerCase()
+    return woerter.every((w) => n.includes(w))
+  }
   const [hoverZiel, setHoverZiel] = useState<string | null>(null)
   const [gewaehlteVorlage, setGewaehlteVorlage] = useState('')
   const [spotFormularOffen, setSpotFormularOffen] = useState(false)
@@ -2047,10 +2057,20 @@ export default function Dienstplan() {
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
                     Sortiert: zuerst wer passt, dann wer in dieser Woche am wenigsten arbeitet.
                   </div>
+                  <input
+                    autoFocus
+                    value={vorschlagSuche}
+                    onChange={(ev) => setVorschlagSuche(ev.target.value)}
+                    placeholder="🔍 Name suchen …"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, marginBottom: 8 }}
+                  />
                   {liste.length === 0 && (
                     <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Keine Personen in diesem Bereich.</p>
                   )}
-                  {liste.map(({ m, e, wm }) => (
+                  {liste.length > 0 && liste.filter(({ m }) => trefferSuche(m.name)).length === 0 && (
+                    <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Keine Treffer für „{vorschlagSuche}“.</p>
+                  )}
+                  {liste.filter(({ m }) => trefferSuche(m.name)).map(({ m, e, wm }) => (
                     <div
                       key={m.id}
                       style={{
