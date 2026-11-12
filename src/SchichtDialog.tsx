@@ -195,6 +195,18 @@ export default function SchichtDialog({
   const klein: React.CSSProperties = { ...eingabe, padding: '5px 6px', fontSize: 13 }
   const brutto = beginn && ende ? bruttoVon(beginn, ende) : 0
 
+  const [loksListe, setLoksListe] = useState<string[]>([])
+  useEffect(() => {
+    supabase
+      .from('loks')
+      .select('bezeichnung')
+      .eq('aktiv', true)
+      .order('sortierung')
+      .then(({ data, error }) => {
+        if (!error) setLoksListe(((data ?? []) as { bezeichnung: string }[]).map((l) => l.bezeichnung))
+      })
+  }, [])
+
   return (
     <div
       onClick={onSchliessen}
@@ -264,7 +276,12 @@ export default function SchichtDialog({
                         <input type="time" value={f.nach_zeit} onChange={(e) => fahrtAendern(i, { nach_zeit: e.target.value })} style={{ ...klein, width: 92 }} />
                       </td>
                       <td style={{ padding: '3px 4px' }}>
-                        <input value={f.lok} onChange={(e) => fahrtAendern(i, { lok: e.target.value })} style={{ ...klein, width: 90 }} />
+                        <datalist id="lok-liste-sd">
+                          {loksListe.map((l) => (
+                            <option key={l} value={l} />
+                          ))}
+                        </datalist>
+                        <input list="lok-liste-sd" value={f.lok} onChange={(e) => fahrtAendern(i, { lok: e.target.value })} style={{ ...klein, width: 90 }} />
                       </td>
                       <td style={{ padding: '3px 4px', whiteSpace: 'nowrap' }}>
                         <button onClick={() => verschieben(i, -1)} title="nach oben" style={{ ...knopf, padding: '3px 7px' }}>

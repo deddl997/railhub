@@ -309,6 +309,19 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
   const [auftraege, setAuftraege] = useState<Auftrag[]>([])
   const [besetzung, setBesetzung] = useState<Record<string, Besetzung>>({})
   const [kundenListe, setKundenListe] = useState<string[]>([])
+  const [loksListe, setLoksListe] = useState<string[]>([])
+
+  // Loks aus dem Lokumlaufplan als Auswahlvorschläge im Feld "Lok"
+  useEffect(() => {
+    supabase
+      .from('loks')
+      .select('bezeichnung')
+      .eq('aktiv', true)
+      .order('sortierung')
+      .then(({ data, error }) => {
+        if (!error) setLoksListe(((data ?? []) as { bezeichnung: string }[]).map((l) => l.bezeichnung))
+      })
+  }, [])
   const [laedt, setLaedt] = useState(true)
   const [fehler, setFehler] = useState<string | null>(null)
   const [suche, setSuche] = useState('')
@@ -641,6 +654,11 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
 
   return (
     <div>
+      <datalist id="lok-liste">
+        {loksListe.map((l) => (
+          <option key={l} value={l} />
+        ))}
+      </datalist>
       <datalist id="kunden-liste">
         {kundenListe.map((k) => (
           <option key={k} value={k} />
@@ -976,7 +994,7 @@ export default function Auftraege({ darfDisponieren, darfAbrechnen }: { darfDisp
               {abschnitt('Einsatz')}
               {feld('Anzahl Wagen', 'anzahl_wagen', { typ: 'number', sperre: sperreDispo })}
               {feld('Last / Leer, Zuschläge', 'ggk', { sperre: sperreDispo })}
-              {feld('Lok', 'lok', { sperre: sperreDispo })}
+              {feld('Lok', 'lok', { liste: 'lok-liste', sperre: sperreDispo })}
               {aktuellerAuftrag && (besetzung[aktuellerAuftrag.id]?.namen.length ?? 0) > 0 && (
                 <label style={{ fontSize: 12, color: '#475569' }}>
                   Lokführer (aus dem Dienstplan)
