@@ -350,6 +350,33 @@ export default function LokPlan() {
   const gewaehlterBlock = bloecke.find((b) => b.key === gewaehlt) ?? null
   const [dragZiel, setDragZiel] = useState<string | null>(null)
 
+  // Beim Ziehen am oberen oder unteren Rand scrollt die Seite automatisch mit
+  useEffect(() => {
+    function scrollbarerVorfahr(start: EventTarget | null): HTMLElement | null {
+      let el = start instanceof HTMLElement ? start : null
+      while (el && el !== document.body) {
+        const oy = getComputedStyle(el).overflowY
+        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return el
+        el = el.parentElement
+      }
+      return null
+    }
+    function beimZiehen(e: DragEvent) {
+      const rand = 100
+      const behaelter = scrollbarerVorfahr(e.target)
+      const oben = behaelter ? behaelter.getBoundingClientRect().top : 0
+      const unten = behaelter ? behaelter.getBoundingClientRect().bottom : window.innerHeight
+      let schritt = 0
+      if (e.clientY < oben + rand) schritt = -Math.ceil(((oben + rand - e.clientY) / rand) * 25)
+      else if (e.clientY > unten - rand) schritt = Math.ceil(((e.clientY - (unten - rand)) / rand) * 25)
+      if (schritt === 0) return
+      if (behaelter) behaelter.scrollBy(0, schritt)
+      window.scrollBy(0, schritt)
+    }
+    document.addEventListener('dragover', beimZiehen)
+    return () => document.removeEventListener('dragover', beimZiehen)
+  }, [])
+
   // Auftrag per Drag & Drop auf eine andere Lok legen: Lok im Auftrag und in allen passenden Fahrtzeilen (Zuführung, Zug, Rückführung) ändern
   async function lokZuweisen(auftragId: string, quelle: string, ziel: string) {
     setDragZiel(null)
