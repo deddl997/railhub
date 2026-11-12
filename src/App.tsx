@@ -10,6 +10,7 @@ import Bahnstrom from './Bahnstrom'
 import Kennzahlen from './Kennzahlen'
 import Rechnungen from './Rechnungen'
 import Protokoll from './Protokoll'
+import LokPlan from './LokPlan'
 import PersonalProtokoll from './PersonalProtokoll'
 import Datenpruefung from './Datenpruefung'
 import Urlaubsregeln from './Urlaubsregeln'
@@ -70,6 +71,7 @@ const ALLE_TABS = [
   { id: 'trassenpreise', label: 'Trassenpreise', kurz: 'Trassen', nurAdmin: false },
   { id: 'urlaubimport', label: 'Urlaub importieren', kurz: 'Import', nurAdmin: true },
   { id: 'jahreswechsel', label: 'Jahreswechsel', kurz: 'Jahreswechsel', nurAdmin: true },
+  { id: 'lokplan', label: 'Lokumlaufplan', kurz: 'Lokplan', nurAdmin: false },
   { id: 'protokoll', label: 'Änderungsprotokoll', kurz: 'Protokoll', nurAdmin: false },
   { id: 'benutzer', label: 'Benutzer & Rollen', kurz: 'Benutzer', nurAdmin: true },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
@@ -243,7 +245,7 @@ function AppInnen() {
   // (und in der Datenbank die Funktion darf_kosten() anpassen, siehe kosten.sql).
   const darfKosten = istAdmin
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' || tab.id === 'lokplan' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
@@ -254,7 +256,7 @@ function AppInnen() {
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
       tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubsregeln', 'urlaubimport', 'jahreswechsel'],
     },
-    { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'protokoll'] },
+    { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'lokplan', 'protokoll'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
     { id: 'bahnstrom', label: 'Bahnstrom', tabs: ['bahnstrom'] },
     { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer', 'datenpruefung', 'personalprotokoll'] },
@@ -716,6 +718,7 @@ function AppInnen() {
 
         {aktiverTab === 'jahreswechsel' && istAdmin && seite('Jahreswechsel: Resturlaub übernehmen', <Jahreswechsel />)}
 
+        {aktiverTab === 'lokplan' && (darfDisponieren || darfAbrechnen) && seite('Lokumlaufplan', <LokPlan />, { untertitel: 'Zeitbalken pro Lok aus den Aufträgen, mit Lokführern aus dem Dienstplan' })}
         {aktiverTab === 'protokoll' && (darfDisponieren || darfAbrechnen) && seite('Änderungsprotokoll', <Protokoll />, { untertitel: 'alle Aufträge' })}
 
         {aktiverTab === 'urlaubsregeln' && istAdmin && seite('Urlaubsregeln', <Urlaubsregeln />, { untertitel: 'Urlaubssperren und Mindestbesetzung' })}

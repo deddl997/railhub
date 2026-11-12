@@ -144,6 +144,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [neuLadenZaehler, setNeuLadenZaehler] = useState(0)
   const stillNeuLaden = useRef(false)
   const [offeneFahrten, setOffeneFahrten] = useState<Fahrtzeile[]>([])
+  const [loks, setLoks] = useState<Record<string, string>>({})
   const offenerAuftragId = offenerTag ? (eintraege.find((e) => e.datum === offenerTag)?.auftrag_id ?? null) : null
 
   // Fahrten (Lokzuführung, Zugfahrt, Rückführung) der geöffneten Schicht laden
@@ -163,6 +164,26 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   heute.setHours(0, 0, 0, 0)
   const heuteIso = datumZuISO(heute)
   const ersteWoche = montagDerWoche(heute)
+
+  // Lok pro Diensttag laden (aus dem Auftrag, der dem Dienst zugeordnet ist). Fehlt die Funktion, bleibt die Anzeige einfach leer.
+  useEffect(() => {
+    let abgebrochen = false
+    const von = datumZuISO(ersteWoche)
+    const bis = datumZuISO(addTage(ersteWoche, anzahlWochen * 7 - 1))
+    supabase.rpc('meine_loks', { p_von: von, p_bis: bis }).then(({ data, error }) => {
+      if (abgebrochen || error) return
+      const karte: Record<string, string> = {}
+      for (const z of (data ?? []) as { datum: string; lok: string | null }[]) {
+        if (z.lok) karte[String(z.datum).slice(0, 10)] = z.lok
+      }
+      setLoks(karte)
+    })
+    return () => {
+      abgebrochen = true
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datumZuISO(ersteWoche), anzahlWochen, neuLadenZaehler])
+
 
   useEffect(() => {
     async function laden() {
@@ -228,7 +249,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
   // Aenderungen vom Planer erscheinen von selbst
   useLiveAktualisierung(
-    ['dienstplan_eintraege', 'dienstplan_freigaben', 'schichtvorlagen', 'wunschfrei', 'dienstplan_gelesen', 'urlaubsantraege'],
+    ['dienstplan_eintraege', 'dienstplan_freigaben', 'schichtvorlagen', 'wunschfrei', 'dienstplan_gelesen', 'urlaubsantraege', 'auftraege'],
     () => {
       stillNeuLaden.current = true
       setNeuLadenZaehler((z) => z + 1)
@@ -729,6 +750,11 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
           <div style={{ fontSize: 28, fontWeight: 700 }}>
             {kurz(naechster.dienst.beginn)} – {kurz(naechster.dienst.ende)}
           </div>
+          {loks[datumZuISO(naechster.tag)] && (
+            <div style={{ marginTop: 6, fontSize: 16, fontWeight: 700, background: 'rgba(255,255,255,0.18)', borderRadius: 6, padding: '5px 10px', display: 'inline-block' }}>
+              🚂 Lok: {loks[datumZuISO(naechster.tag)]}
+            </div>
+          )}
           <div style={{ fontSize: 13, color: '#c9d6ea', marginTop: 6 }}>
             {dauerText(naechster.dienst.beginn, naechster.dienst.ende)} · Pause {naechster.dienst.pause} Min. inklusive
             {naechster.dienst.ort ? ` · ${naechster.dienst.ort}` : ''}
@@ -864,6 +890,7 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                                 {dienst.ort ? ` · ${dienst.ort}` : ''}
                               </span>
                             </div>
+                            {loks[iso] && <div style={{ fontSize: 12, fontWeight: 700, color: '#14325c', marginTop: 2 }}>🚂 Lok: {loks[iso]}</div>}
                             {dienst.info && <div style={{ fontSize: 12, color: '#92400e', marginTop: 2 }}>ℹ {dienst.info}</div>}
                           </div>
                         ) : eintrag?.status === 'ruhe' ? (
@@ -981,6 +1008,11 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
                     <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', borderRadius: 8, padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>
                       ✎ Diese Schicht weicht von der Standard-Schicht ab
                       {dienst.standard ? ` (Standard: ${dienst.standard})` : ''}.
+                    </div>
+                  )}
+                  {offenerTag && loks[offenerTag] && (
+                    <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#14325c', borderRadius: 8, padding: '8px 12px', fontSize: 14, fontWeight: 700, marginBottom: 10 }}>
+                      🚂 Deine Lok: {loks[offenerTag]}
                     </div>
                   )}
                   {offeneFahrten.length > 0 && (
