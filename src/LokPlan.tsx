@@ -62,6 +62,19 @@ interface Sperre {
   grund: string | null
 }
 
+interface Einsatz {
+  id: string
+  lok_id: string
+  art: string
+  standort: string
+  von: string
+  bis: string | null
+  bemerkung: string | null
+}
+
+const EINSATZ_ARTEN = ['Rangierdienst', 'Streckendienst', 'Bereitstellung', 'Sonstiges']
+const UNBEGRENZT = 1e12
+
 // Schreibweise-unabhängiger Vergleich: "185 537", "185-537" und "185537" gelten als dieselbe Lok
 function lokSchluessel(t: string): string {
   return t.toLowerCase().replace(/[\s\-_.]/g, '')
@@ -279,6 +292,18 @@ function kalenderwoche(iso: string): { kw: number; jahr: number } {
   return { kw, jahr }
 }
 
+// Zeitraum eines Einsatzes in Minuten (ohne Enddatum = dauerhaft)
+function einsatzZeit(e: Einsatz): { a: number; b: number } {
+  return { a: tagStart(e.von), b: e.bis ? tagStart(e.bis) + 1440 : UNBEGRENZT }
+}
+function einsaetzeIm(einsaetze: Einsatz[], lokId: string | undefined, von: number, bis: number): Einsatz[] {
+  if (!lokId) return []
+  return einsaetze.filter((e) => e.lok_id === lokId && einsatzZeit(e).a < bis && einsatzZeit(e).b > von)
+}
+function einsatzText(e: Einsatz): string {
+  return `${e.art} ${e.standort}`
+}
+
 // Lok-Bezeichnungen wie "185-xxx" oder "(ohne Lok)" sind Platzhalter, keine echte Lok
 function istOffen(lok: string): boolean {
   return lok === OHNE_LOK || /x{2,}/i.test(lok)
@@ -301,6 +326,8 @@ export default function LokPlan() {
   const [gewaehlt, setGewaehlt] = useState<string | null>(null)
   const [stamm, setStamm] = useState<StammLok[]>([])
   const [sperren, setSperren] = useState<Sperre[]>([])
+  const [einsaetze, setEinsaetze] = useState<Einsatz[]>([])
+  const [einsatzForm, setEinsatzForm] = useState({ art: 'Rangierdienst', standort: '', von: heuteIso, bis: heuteIso, unbefristet: true, bemerkung: '' })
   const [verwalten, setVerwalten] = useState(false)
   const [auslastungAn, setAuslastungAn] = useState(false)
   const [neuName, setNeuName] = useState('')
@@ -309,6 +336,7 @@ export default function LokPlan() {
   const [dragZiel, setDragZiel] = useState<string | null>(null)
   const [sperrForm, setSperrForm] = useState({ lokId: '', von: heuteIso, bis: heuteIso, art: 'Werkstatt', grund: '' })
   const [arbeitet, setArbeitet] = useState(false)
+  const [lokDialogId, setLokDialogId] = useState<string | null>(null)
 
   // Beim Ziehen am oberen oder unteren Rand scrollt die Seite automatisch mit
   useEffect(() => {
@@ -381,6 +409,8 @@ export default function LokPlan() {
     }
     const sp = await supabase.from('lok_sperren').select('id, lok_id, von, bis, art, grund').order('von')
     if (!sp.error) setSperren((sp.data ?? []) as Sperre[])
+    const ei = await supabase.from('lok_einsaetze').select('id, lok_id, art, standort, von, bis, bemerkung').order('von')
+    if (!ei.error) setEinsaetze((ei.data ?? []) as Einsatz[])
     setFehler(null)
     setLaedt(false)
   }, [vonIso, bisIso])
@@ -389,7 +419,7 @@ export default function LokPlan() {
     setLaedt(true)
     void laden()
   }, [laden])
-  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'loks', 'lok_sperren'], laden)
+  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'loks', 'lok_sperren', 'lok_einsaetze'], laden)
 
   const fensterStart = tagStart(vonIso)
   const fensterEnde = tagStart(bisIso) + 1440
@@ -419,6 +449,11 @@ export default function LokPlan() {
           hinw.push({ text: `Lok ${b.lok}: ${b.titel} liegt in der Sperre „${s.art}${s.grund ? ': ' + s.grund : ''}“ (${datumDe(s.von)}–${datumDe(s.bis)}).`, ids: [b.auftragId] })
         }
       }
+      for (const e of einsaetzeIm(einsaetze, lok.id, b.start, b.ende)) {
+        b.warnung = true
+        b.hinweise.push(`im Einsatz: ${einsatzText(e)}`)
+        hinw.push({ text: `Lok ${b.lok}: ${b.titel} liegt im Dauereinsatz „${einsatzText(e)}“ (seit ${datumDe(e.von)}${e.bis ? ' bis ' + datumDe(e.bis) : ', unbefristet'}).`, ids: [b.auftragId] })
+      }
       if (lok.naechste_untersuchung && b.start >= tagStart(lok.naechste_untersuchung) + 1440) {
         b.warnung = true
         b.hinweise.push(`Untersuchungsfrist ${datumDe(lok.naechste_untersuchung)} überschritten`)
@@ -427,7 +462,7 @@ export default function LokPlan() {
     }
     return { bloeckeAlle: bl, hinweiseAlle: hinw }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auftraege, stamm, sperren, tfProAuftrag])
+  }, [auftraege, stamm, sperren, einsaetze, tfProAuftrag])
 
   const bloecke = useMemo(() => bloeckeAlle.filter((b) => b.ende > fensterStart && b.start < fensterEnde), [bloeckeAlle, fensterStart, fensterEnde])
   const leistungen = useMemo(() => bloecke.flatMap((b) => b.teile).filter((l) => l.ende > fensterStart && l.start < fensterEnde), [bloecke, fensterStart, fensterEnde])
@@ -473,6 +508,7 @@ export default function LokPlan() {
       const z = sperreZeitraum(s)
       if (b.start < z.b && b.ende > z.a) liste.push(`gesperrt: ${s.art}${s.grund ? ` (${s.grund})` : ''}, ${datumDe(s.von)}–${datumDe(s.bis)}`)
     }
+    for (const e of einsaetzeIm(einsaetze, lok.id, b.start, b.ende)) liste.push(`im Einsatz: ${einsatzText(e)} (seit ${datumDe(e.von)}${e.bis ? ' bis ' + datumDe(e.bis) : ', unbefristet'})`)
     if (lok.naechste_untersuchung && b.start >= tagStart(lok.naechste_untersuchung) + 1440) liste.push(`Untersuchungsfrist ${datumDe(lok.naechste_untersuchung)} ist dann überschritten`)
     for (const o of bloeckeAlle) {
       if (o.lok !== ziel || o.auftragId === b.auftragId) continue
@@ -601,6 +637,41 @@ export default function LokPlan() {
     void laden()
   }
 
+  async function einsatzAnlegen() {
+    if (!dialogLok) return
+    const standort = einsatzForm.standort.trim()
+    if (!standort) {
+      setMeldung('Bitte einen Standort eintragen (z. B. NSL).')
+      return
+    }
+    if (!einsatzForm.unbefristet && einsatzForm.bis < einsatzForm.von) {
+      setMeldung('„Bis“ darf nicht vor „Von“ liegen.')
+      return
+    }
+    const r = await supabase.from('lok_einsaetze').insert({
+      lok_id: dialogLok.id,
+      art: einsatzForm.art,
+      standort,
+      von: einsatzForm.von,
+      bis: einsatzForm.unbefristet ? null : einsatzForm.bis,
+      bemerkung: einsatzForm.bemerkung.trim() || null,
+    })
+    setMeldung(r.error ? `Fehler: ${r.error.message} (wurde das SQL „lok_einsaetze.sql“ ausgeführt?)` : 'Einsatz eingetragen.')
+    if (!r.error) setEinsatzForm({ ...einsatzForm, bemerkung: '' })
+    void laden()
+  }
+  async function einsatzLoeschen(id: string) {
+    const r = await supabase.from('lok_einsaetze').delete().eq('id', id)
+    if (r.error) setMeldung(`Fehler: ${r.error.message}`)
+    void laden()
+  }
+  async function einsatzBeenden(e: Einsatz) {
+    const ende = heuteIso < e.von ? e.von : heuteIso
+    const r = await supabase.from('lok_einsaetze').update({ bis: ende }).eq('id', e.id)
+    setMeldung(r.error ? `Fehler: ${r.error.message}` : `Einsatz endet am ${datumDe(ende)}.`)
+    void laden()
+  }
+
   function springen(tage: number) {
     setTag(isoPlus(tag, ansicht === 'tag' ? tage : tage * 7))
     setGewaehlt(null)
@@ -631,7 +702,17 @@ export default function LokPlan() {
   const tageDerWoche = Array.from({ length: 7 }, (_, i) => isoPlus(montagVon(tag), i))
   const kw = kalenderwoche(montagVon(tag))
   const jetztText = `${datumDe(heuteIso)} ${String(jetzt.getHours()).padStart(2, '0')}:${String(jetzt.getMinutes()).padStart(2, '0')}`
-  const daten = { bloecke, loks, typVon, stammVon, sperren, tfProAuftrag, gewaehlt, onWahl: setGewaehlt, dragZiel, setDragZiel, onDrop: lokZuweisen }
+  function lokOeffnen(name: string) {
+    const l = stammVon.get(name)
+    if (!l) return
+    setSperrForm({ lokId: l.id, von: vonIso, bis: vonIso, art: 'Werkstatt', grund: '' })
+    setEinsatzForm({ art: 'Rangierdienst', standort: '', von: vonIso, bis: vonIso, unbefristet: true, bemerkung: '' })
+    setMeldung(null)
+    setLokDialogId(l.id)
+  }
+  const dialogLok = stamm.find((x) => x.id === lokDialogId) ?? null
+  const orteListe = Array.from(new Set([...auftraege.flatMap((a) => [a.abfahrt_ort, a.ankunft_ort]), ...einsaetze.map((e) => e.standort)].map((o) => (o ?? '').trim()).filter(Boolean))).sort()
+  const daten = { onLokKlick: lokOeffnen, einsaetze, bloecke, loks, typVon, stammVon, sperren, tfProAuftrag, gewaehlt, onWahl: setGewaehlt, dragZiel, setDragZiel, onDrop: lokZuweisen }
   const gewaehlteLokSperre = stamm.find((x) => x.id === sperrForm.lokId)
 
   const druckTitel = ansicht === 'tag' ? `Tagesplan ${datumDe(tag)}` : `KW ${kw.kw}/${kw.jahr} · ${datumDe(vonIso)} – ${datumDe(bisIso)}`
@@ -713,7 +794,7 @@ export default function LokPlan() {
             </div>
           ))}
 
-          <div style={{ fontWeight: 700, margin: '16px 0 8px', borderTop: '1px solid var(--border)', paddingTop: 12 }}>Sperren &amp; Fristen (Werkstatt, Untersuchung …)</div>
+          <div style={{ fontWeight: 700, margin: '16px 0 8px', borderTop: '1px solid var(--border)', paddingTop: 12 }}>Sperren &amp; Fristen (Werkstatt, Untersuchung …) <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text-muted)' }}>– oder direkt im Plan auf den Lok-Namen klicken</span></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
             <select value={sperrForm.lokId} onChange={(e) => setSperrForm({ ...sperrForm, lokId: e.target.value })} style={feldStil}>
               <option value="">Lok wählen …</option>
@@ -756,6 +837,112 @@ export default function LokPlan() {
         </div>
       )}
 
+      {dialogLok && (
+        <div className="lp-nodruck" onClick={() => setLokDialogId(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 18, width: 'min(560px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--navy)' }}>🚂 {dialogLok.bezeichnung}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{dialogLok.typ} · Werkstatt, Sperren und Fristen</div>
+              </div>
+              <button onClick={() => setLokDialogId(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+            </div>
+
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Neuer Werkstatt-Aufenthalt / neue Sperre</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+              <label style={{ fontSize: 12 }}>
+                Von <input type="date" value={sperrForm.von} onChange={(e) => setSperrForm({ ...sperrForm, lokId: dialogLok.id, von: e.target.value, bis: sperrForm.bis < e.target.value ? e.target.value : sperrForm.bis })} style={feldStil} />
+              </label>
+              <label style={{ fontSize: 12 }}>
+                Bis (inklusive) <input type="date" value={sperrForm.bis} min={sperrForm.von} onChange={(e) => setSperrForm({ ...sperrForm, lokId: dialogLok.id, bis: e.target.value })} style={feldStil} />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <select value={sperrForm.art} onChange={(e) => setSperrForm({ ...sperrForm, lokId: dialogLok.id, art: e.target.value })} style={feldStil}>
+                <option>Werkstatt</option>
+                <option>Untersuchung</option>
+                <option>Defekt</option>
+                <option>Sonstiges</option>
+              </select>
+              <input value={sperrForm.grund} onChange={(e) => setSperrForm({ ...sperrForm, lokId: dialogLok.id, grund: e.target.value })} placeholder="Grund / Werkstatt (optional)" style={{ ...feldStil, flex: 1, minWidth: 160 }} />
+              <button style={knopf(true)} onClick={() => void sperreAnlegen()}>+ Eintragen</button>
+            </div>
+            {meldung && <div style={{ fontSize: 13, margin: '6px 0', color: '#14325c' }}>{meldung}</div>}
+
+            <div style={{ fontWeight: 600, fontSize: 13, margin: '14px 0 6px' }}>Eingetragen</div>
+            {sperren.filter((s) => s.lok_id === dialogLok.id && s.bis >= isoPlus(heuteIso, -30)).length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Noch keine Einträge.</div>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+                {sperren.filter((s) => s.lok_id === dialogLok.id && s.bis >= isoPlus(heuteIso, -30)).map((s) => (
+                  <li key={s.id} style={{ marginBottom: 3 }}>
+                    <b>{s.art}</b> · {datumDe(s.von)}–{datumDe(s.bis)}{s.grund ? ` · ${s.grund}` : ''}{s.bis < heuteIso ? ' (vorbei)' : ''}{' '}
+                    <button title="Löschen" onClick={() => void sperreLoeschen(s.id)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}>🗑</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div style={{ fontWeight: 600, fontSize: 13, margin: '18px 0 6px', borderTop: '1px solid var(--border)', paddingTop: 14 }}>Dauerhafter Einsatz an einem Standort (z. B. Rangierdienst)</div>
+            <datalist id="lp-orte">
+              {orteListe.map((o) => (
+                <option key={o} value={o} />
+              ))}
+            </datalist>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <select value={einsatzForm.art} onChange={(e) => setEinsatzForm({ ...einsatzForm, art: e.target.value })} style={feldStil}>
+                {EINSATZ_ARTEN.map((a) => (
+                  <option key={a}>{a}</option>
+                ))}
+              </select>
+              <input list="lp-orte" value={einsatzForm.standort} onChange={(e) => setEinsatzForm({ ...einsatzForm, standort: e.target.value })} placeholder="Standort, z. B. NSL" style={{ ...feldStil, width: 160 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+              <label style={{ fontSize: 12 }}>
+                Ab <input type="date" value={einsatzForm.von} onChange={(e) => setEinsatzForm({ ...einsatzForm, von: e.target.value, bis: einsatzForm.bis < e.target.value ? e.target.value : einsatzForm.bis })} style={feldStil} />
+              </label>
+              <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="checkbox" checked={einsatzForm.unbefristet} onChange={(e) => setEinsatzForm({ ...einsatzForm, unbefristet: e.target.checked })} />
+                dauerhaft (ohne Ende)
+              </label>
+              {!einsatzForm.unbefristet && (
+                <label style={{ fontSize: 12 }}>
+                  Bis (inklusive) <input type="date" value={einsatzForm.bis} min={einsatzForm.von} onChange={(e) => setEinsatzForm({ ...einsatzForm, bis: e.target.value })} style={feldStil} />
+                </label>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <input value={einsatzForm.bemerkung} onChange={(e) => setEinsatzForm({ ...einsatzForm, bemerkung: e.target.value })} placeholder="Bemerkung (optional)" style={{ ...feldStil, flex: 1, minWidth: 160 }} />
+              <button style={knopf(true)} onClick={() => void einsatzAnlegen()}>+ Einsatz eintragen</button>
+            </div>
+            {einsaetze.filter((e) => e.lok_id === dialogLok.id).length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Noch kein Dauereinsatz eingetragen.</div>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+                {einsaetze.filter((e) => e.lok_id === dialogLok.id).map((e) => (
+                  <li key={e.id} style={{ marginBottom: 3 }}>
+                    <b>{e.art} {e.standort}</b> · ab {datumDe(e.von)} {e.bis ? `bis ${datumDe(e.bis)}${e.bis < heuteIso ? ' (vorbei)' : ''}` : '· dauerhaft'}{e.bemerkung ? ` · ${e.bemerkung}` : ''}{' '}
+                    {!e.bis && (
+                      <button title="Einsatz heute beenden" onClick={() => void einsatzBeenden(e)} style={{ ...knopf(false), padding: '1px 6px', fontSize: 11 }}>beenden</button>
+                    )}{' '}
+                    <button title="Löschen" onClick={() => void einsatzLoeschen(e.id)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}>🗑</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div style={{ fontWeight: 600, fontSize: 13, margin: '14px 0 6px' }}>Nächste Untersuchung / Frist</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input type="date" value={dialogLok.naechste_untersuchung ?? ''} onChange={(e) => void lokAendern(dialogLok.id, { naechste_untersuchung: e.target.value || null })} style={feldStil} />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aufträge nach diesem Tag werden als Warnung markiert.</span>
+            </div>
+            <div style={{ textAlign: 'right', marginTop: 16 }}>
+              <button style={knopf(false)} onClick={() => setLokDialogId(null)}>Schließen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ fontWeight: 600, marginBottom: 10, color: '#14325c' }} className="lp-nodruck">{druckTitel}</div>
 
       {fehler && <p style={{ color: 'var(--danger)' }}>Fehler: {fehler}</p>}
@@ -778,7 +965,7 @@ export default function LokPlan() {
             </div>
           )}
 
-          {auslastungAn && <Auslastung stamm={stamm.filter((x) => x.aktiv)} bloecke={bloecke} sperren={sperren} von={fensterStart} bis={fensterEnde} />}
+          {auslastungAn && <Auslastung stamm={stamm.filter((x) => x.aktiv)} bloecke={bloecke} sperren={sperren} einsaetze={einsaetze} von={fensterStart} bis={fensterEnde} />}
 
           {ansicht === 'tag' ? <TagesBalken tag={tag} {...daten} /> : <WochenTabelle tage={tageDerWoche} {...daten} />}
 
@@ -793,6 +980,7 @@ export default function LokPlan() {
             <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: '#fde68a', marginRight: 5, verticalAlign: -2 }} />Rangieren, Warten, Sonstiges</span>
             <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: 'repeating-linear-gradient(45deg,#cbd5e1,#cbd5e1 3px,#f1f5f9 3px,#f1f5f9 6px)', marginRight: 5, verticalAlign: -2 }} />Sperre (Werkstatt …)</span>
             <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, outline: '2px solid #b91c1c', marginRight: 5, verticalAlign: -2 }} />Warnung</span>
+            <span><i style={{ display: 'inline-block', width: 12, height: 5, borderRadius: 3, background: '#14b8a6', marginRight: 5, verticalAlign: 2 }} />🏗 Dauereinsatz (Rangierdienst …)</span>
             <span>👤? = noch kein Lokführer</span>
             <span>📍 = Standort der Lok am Ende</span>
           </div>
@@ -854,7 +1042,7 @@ export default function LokPlan() {
 }
 
 // ---------- Auslastung ----------
-function Auslastung({ stamm, bloecke, sperren, von, bis }: { stamm: StammLok[]; bloecke: Block[]; sperren: Sperre[]; von: number; bis: number }) {
+function Auslastung({ stamm, bloecke, sperren, einsaetze, von, bis }: { stamm: StammLok[]; bloecke: Block[]; sperren: Sperre[]; einsaetze: Einsatz[]; von: number; bis: number }) {
   const gesamt = bis - von
   const klemm = (a: number, b: number) => Math.max(0, Math.min(b, bis) - Math.max(a, von))
   const zeilen = stamm.map((x) => {
@@ -870,10 +1058,12 @@ function Auslastung({ stamm, bloecke, sperren, von, bis }: { stamm: StammLok[]; 
         else sonst += m
       }
     }
+    let dauer = 0
+    for (const e of einsaetze) if (e.lok_id === x.id) dauer += klemm(einsatzZeit(e).a, einsatzZeit(e).b)
     let gesperrt = 0
     for (const s of sperren) if (s.lok_id === x.id) gesperrt += klemm(tagStart(s.von), tagStart(s.bis) + 1440)
     const verfuegbar = Math.max(gesamt - gesperrt, 1)
-    return { x, zug, fuehrung, sonst, gesperrt, quote: Math.min(100, Math.round(((zug + fuehrung + sonst) / verfuegbar) * 100)) }
+    return { x, zug, fuehrung, sonst, dauer, gesperrt, quote: Math.min(100, Math.round(((zug + fuehrung + sonst + dauer) / verfuegbar) * 100)) }
   })
   const h = (m: number) => `${(m / 60).toFixed(1).replace('.', ',')} h`
   return (
@@ -886,6 +1076,7 @@ function Auslastung({ stamm, bloecke, sperren, von, bis }: { stamm: StammLok[]; 
             <th style={{ padding: 4 }}>Zugfahrt</th>
             <th style={{ padding: 4 }}>Zu-/Rückführung (Leerfahrt)</th>
             <th style={{ padding: 4 }}>Sonstiges</th>
+            <th style={{ padding: 4 }}>Dauereinsatz</th>
             <th style={{ padding: 4 }}>Gesperrt</th>
             <th style={{ padding: 4, width: '28%' }}>Auslastung</th>
           </tr>
@@ -897,6 +1088,7 @@ function Auslastung({ stamm, bloecke, sperren, von, bis }: { stamm: StammLok[]; 
               <td style={{ padding: 4 }}>{h(z.zug)}</td>
               <td style={{ padding: 4 }}>{h(z.fuehrung)}</td>
               <td style={{ padding: 4 }}>{h(z.sonst)}</td>
+              <td style={{ padding: 4 }}>{z.dauer > 0 ? h(z.dauer) : '–'}</td>
               <td style={{ padding: 4 }}>{z.gesperrt > 0 ? h(z.gesperrt) : '–'}</td>
               <td style={{ padding: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -922,6 +1114,8 @@ interface DndProps {
   onDrop: (auftragId: string, quelle: string, ziel: string) => void
 }
 interface Ansichtsdaten extends DndProps {
+  einsaetze: Einsatz[]
+  onLokKlick: (lok: string) => void
   bloecke: Block[]
   loks: string[]
   typVon: Map<string, string>
@@ -978,7 +1172,7 @@ function fristHinweis(l: StammLok | undefined, heute: number): { text: string; f
 }
 
 // ---------- Tagesansicht ----------
-function TagesBalken({ tag, bloecke, loks, typVon, stammVon, sperren, tfProAuftrag, gewaehlt, onWahl, dragZiel, setDragZiel, onDrop }: { tag: string } & Ansichtsdaten) {
+function TagesBalken({ tag, onLokKlick, einsaetze, bloecke, loks, typVon, stammVon, sperren, tfProAuftrag, gewaehlt, onWahl, dragZiel, setDragZiel, onDrop }: { tag: string } & Ansichtsdaten) {
   const start = tagStart(tag)
   const heute = tagStart(datumZuISO(new Date()))
   const klemmen = (min: number) => Math.min(Math.max(min, start), start + 1440)
@@ -999,28 +1193,44 @@ function TagesBalken({ tag, bloecke, loks, typVon, stammVon, sperren, tfProAuftr
         const ohne = lok === OHNE_LOK
         const aktiv = dragZiel === lok
         const stl = stammVon.get(lok)
-        const standort = stl ? standortAm(bloecke, lok, start + 1440) : ''
+        const meineEinsaetze = einsaetzeIm(einsaetze, stl?.id, start, start + 1440)
+        const standort = stl ? standortAm(bloecke, lok, start + 1440) || (meineEinsaetze[0]?.standort ?? '') : ''
         const frist = fristHinweis(stl, heute)
         const meineSperren = stl ? sperren.filter((s) => s.lok_id === stl.id && tagStart(s.von) < start + 1440 && tagStart(s.bis) + 1440 > start) : []
         return (
           <div key={lok} {...dndZiel(lok, { dragZiel, setDragZiel, onDrop })} className="lp-block" style={{ display: 'flex', alignItems: 'center', borderTop: '1px solid var(--border)', minHeight: 48, background: aktiv ? '#dbeafe' : undefined }}>
-            <div style={{ width: 130, flex: 'none', paddingRight: 6 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: ohne ? '#b91c1c' : 'var(--text)' }}>
+            <div style={{ width: 130, flex: 'none', paddingRight: 6, cursor: stl ? 'pointer' : undefined }} onClick={() => stl && onLokKlick(lok)} title={stl ? 'Klicken: Werkstatt, Sperren und Fristen dieser Lok eintragen' : undefined}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: ohne ? '#b91c1c' : 'var(--text)', textDecoration: stl ? 'underline dotted' : undefined }}>
                 {lok}
                 {typVon.get(lok) ? <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{typVon.get(lok) === 'E-Lok' ? 'E' : 'D'}</span> : null}
               </div>
               {standort && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>📍 {standort}</div>}
+              {meineEinsaetze.map((e) => (
+                <div key={e.id} style={{ fontSize: 10, color: '#0f766e', fontWeight: 600 }}>🏗 {einsatzText(e)}</div>
+              ))}
               {frist && <div style={{ fontSize: 10, color: frist.farbe }}>{frist.text}</div>}
             </div>
             <div style={{ position: 'relative', flex: 1, height: 34, background: ohne ? '#fef2f2' : '#f1f5f9', borderRadius: 4 }}>
               {[3, 6, 9, 12, 15, 18, 21].map((h) => (
                 <div key={h} style={{ position: 'absolute', left: `${(h / 24) * 100}%`, top: 0, bottom: 0, borderLeft: '1px solid #e2e8f0' }} />
               ))}
+              {meineEinsaetze.map((e) => {
+                const z = einsatzZeit(e)
+                return (
+                  <div
+                    key={`e-${e.id}`}
+                    onClick={() => onLokKlick(lok)}
+                    title={`${einsatzText(e)} · ab ${datumDe(e.von)}${e.bis ? ' bis ' + datumDe(e.bis) : ' (dauerhaft)'}${e.bemerkung ? '\n' + e.bemerkung : ''}`}
+                    style={{ position: 'absolute', left: `${prozent(z.a)}%`, width: `${prozent(Math.min(z.b, start + 1440)) - prozent(z.a)}%`, bottom: 0, height: 6, background: '#14b8a6', borderRadius: 3, cursor: 'pointer' }}
+                  />
+                )
+              })}
               {meineSperren.map((s) => (
                 <div
                   key={s.id}
+                  onClick={() => onLokKlick(lok)}
                   title={`${s.art}${s.grund ? ': ' + s.grund : ''} (${datumDe(s.von)}–${datumDe(s.bis)})`}
-                  style={{ position: 'absolute', top: 0, bottom: 0, left: `${prozent(tagStart(s.von))}%`, width: `${prozent(tagStart(s.bis) + 1440) - prozent(tagStart(s.von))}%`, background: SCHRAFFUR, color: '#475569', fontSize: 11, lineHeight: '34px', paddingLeft: 6, overflow: 'hidden', whiteSpace: 'nowrap', borderRadius: 4 }}
+                  style={{ cursor: 'pointer', position: 'absolute', top: 0, bottom: 0, left: `${prozent(tagStart(s.von))}%`, width: `${prozent(tagStart(s.bis) + 1440) - prozent(tagStart(s.von))}%`, background: SCHRAFFUR, color: '#475569', fontSize: 11, lineHeight: '34px', paddingLeft: 6, overflow: 'hidden', whiteSpace: 'nowrap', borderRadius: 4 }}
                 >
                   🔧 {s.art}{s.grund ? `: ${s.grund}` : ''}
                 </div>
@@ -1101,7 +1311,7 @@ function TagesBalken({ tag, bloecke, loks, typVon, stammVon, sperren, tfProAuftr
 }
 
 // ---------- Wochenansicht ----------
-function WochenTabelle({ tage, bloecke, loks, typVon, stammVon, sperren, tfProAuftrag, onWahl, dragZiel, setDragZiel, onDrop }: { tage: string[] } & Ansichtsdaten) {
+function WochenTabelle({ tage, onLokKlick, einsaetze, bloecke, loks, typVon, stammVon, sperren, tfProAuftrag, onWahl, dragZiel, setDragZiel, onDrop }: { tage: string[] } & Ansichtsdaten) {
   const heute = tagStart(datumZuISO(new Date()))
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -1128,8 +1338,8 @@ function WochenTabelle({ tage, bloecke, loks, typVon, stammVon, sperren, tfProAu
             const frist = fristHinweis(stl, heute)
             return (
               <tr key={lok} {...dndZiel(lok, { dragZiel, setDragZiel, onDrop })} className="lp-block" style={{ background: dragZiel === lok ? '#dbeafe' : undefined }}>
-                <td style={{ verticalAlign: 'top', padding: 6, borderBottom: '1px solid var(--border)', fontWeight: 600, color: lok === OHNE_LOK ? '#b91c1c' : 'var(--text)' }}>
-                  {lok}
+                <td onClick={() => stl && onLokKlick(lok)} title={stl ? 'Klicken: Werkstatt, Sperren und Fristen dieser Lok eintragen' : undefined} style={{ verticalAlign: 'top', padding: 6, borderBottom: '1px solid var(--border)', fontWeight: 600, color: lok === OHNE_LOK ? '#b91c1c' : 'var(--text)', cursor: stl ? 'pointer' : undefined }}>
+                  <span style={{ textDecoration: stl ? 'underline dotted' : undefined }}>{lok}</span>
                   {typVon.get(lok) ? <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{typVon.get(lok) === 'E-Lok' ? 'E' : 'D'}</span> : null}
                   {frist && <div style={{ fontSize: 10, fontWeight: 400, color: frist.farbe }}>{frist.text}</div>}
                 </td>
@@ -1137,11 +1347,17 @@ function WochenTabelle({ tage, bloecke, loks, typVon, stammVon, sperren, tfProAu
                   const ab = tagStart(t)
                   const zelle = bloecke.filter((b) => b.lok === lok && b.start >= ab && b.start < ab + 1440)
                   const tagSperren = stl ? sperren.filter((s) => s.lok_id === stl.id && tagStart(s.von) <= ab && tagStart(s.bis) >= ab) : []
-                  const standort = stl && zelle.length > 0 ? standortAm(bloecke, lok, ab + 1440) : ''
+                  const tagEinsaetze = einsaetzeIm(einsaetze, stl?.id, ab, ab + 1440)
+                  const standort = stl && (zelle.length > 0 || tagEinsaetze.length > 0) ? standortAm(bloecke, lok, ab + 1440) || (tagEinsaetze[0]?.standort ?? '') : ''
                   return (
                     <td key={t} style={{ verticalAlign: 'top', padding: 4, borderBottom: '1px solid var(--border)', background: tagSperren.length > 0 ? SCHRAFFUR : undefined }}>
+                      {tagEinsaetze.map((e) => (
+                        <div key={e.id} onClick={() => onLokKlick(lok)} title={e.bemerkung ?? ''} style={{ cursor: 'pointer', fontSize: 11, color: '#0f766e', background: '#ccfbf1', borderRadius: 4, padding: '1px 5px', marginBottom: 4 }}>
+                          🏗 {einsatzText(e)}
+                        </div>
+                      ))}
                       {tagSperren.map((s) => (
-                        <div key={s.id} title={`${s.art}${s.grund ? ': ' + s.grund : ''}`} style={{ fontSize: 11, color: '#475569', marginBottom: 4 }}>
+                        <div key={s.id} onClick={() => onLokKlick(lok)} title={`${s.art}${s.grund ? ': ' + s.grund : ''}`} style={{ cursor: 'pointer', fontSize: 11, color: '#475569', marginBottom: 4 }}>
                           🔧 {s.art}{s.grund ? `: ${s.grund}` : ''}
                         </div>
                       ))}
