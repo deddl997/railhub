@@ -280,7 +280,16 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
       if (!weiter) return
     }
     setWirdHinzugefuegt(true)
-    await supabase.from('mitarbeiter').insert({ name })
+    const { error: anlegeFehler } = await supabase.from('mitarbeiter').insert({ name })
+    if (anlegeFehler) {
+      toast.fehler(
+        anlegeFehler.code === '23505'
+          ? `Es gibt schon einen Mitarbeiter mit dem Namen „${name}“ (auch bei vertauschter Reihenfolge).`
+          : 'Mitarbeiter konnte nicht angelegt werden: ' + anlegeFehler.message
+      )
+      setWirdHinzugefuegt(false)
+      return
+    }
     setNeuerName('')
     setWirdHinzugefuegt(false)
     await laden()
@@ -390,7 +399,11 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
     }
     const { error } = await supabase.from('mitarbeiter').update({ name: neu }).eq('id', zeile.mitarbeiterId)
     if (error) {
-      toast.fehler('Name konnte nicht gespeichert werden: ' + error.message)
+      toast.fehler(
+        error.code === '23505'
+          ? `Es gibt schon einen Mitarbeiter mit dem Namen „${neu}“ – bitte unter „Datenprüfung“ zusammenführen.`
+          : 'Name konnte nicht gespeichert werden: ' + error.message
+      )
       nameAendern(zeile.mitarbeiterId, alt)
       return
     }

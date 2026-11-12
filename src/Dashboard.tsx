@@ -329,9 +329,9 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       <Kachel key="u" titel="Urlaubsanträge offen" wert={z?.urlaub ?? '–'} unter={z?.urlaub ? 'warten auf Entscheidung' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.urlaub ?? null)} onClick={() => gehe('antraege')} laedt={laedt} />,
       <Kachel key="z" titel="Zeitkorrekturen offen" wert={z?.zeitkorrekturen ?? '–'} unter={z?.zeitkorrekturen ? 'im Dienstplan prüfen' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.zeitkorrekturen ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
       <Kachel key="w" titel="Wunschfrei offen" wert={z?.wunschfrei ?? '–'} unter={z?.wunschfrei ? 'im Dienstplan prüfen' : 'keine Wünsche offen'} farbe={farbeAnzahl(z?.wunschfrei ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
-      <Kachel key="oz" titel="Anträge ohne Mitarbeiter" wert={z?.ohneZuordnung ?? '–'} unter={z?.ohneZuordnung ? 'Name passt zu keinem Mitarbeiter' : 'alle zugeordnet'} farbe={farbeAnzahl(z?.ohneZuordnung ?? null)} onClick={() => gehe('antraege')} laedt={laedt} />,
+      <Kachel key="oz" titel="Anträge ohne Mitarbeiter" wert={z?.ohneZuordnung ?? '–'} unter={z?.ohneZuordnung ? 'Name passt zu keinem Mitarbeiter' : 'alle zugeordnet'} farbe={farbeAnzahl(z?.ohneZuordnung ?? null)} onClick={() => gehe('datenpruefung')} laedt={laedt} />,
       <Kachel key="oe" titel="Mitarbeiter ohne E-Mail" wert={z?.ohneEmail ?? '–'} unter={z?.ohneEmail ? 'E-Mail nachtragen' : 'alle hinterlegt'} farbe={farbeAnzahl(z?.ohneEmail ?? null)} onClick={() => gehe('mitarbeiter')} laedt={laedt} />,
-      <Kachel key="uk" titel="Urlaubskonten prüfen" wert={z?.kontenProbleme.length ?? '–'} unter={z?.kontenProbleme.length ? 'Zahlen passen nicht zusammen' : 'alles plausibel'} farbe={farbeAnzahl(z?.kontenProbleme.length ?? null)} onClick={() => gehe('mitarbeiter')} laedt={laedt} />
+      <Kachel key="uk" titel="Urlaubskonten prüfen" wert={z?.kontenProbleme.length ?? '–'} unter={z?.kontenProbleme.length ? 'Zahlen passen nicht zusammen' : 'alles plausibel'} farbe={farbeAnzahl(z?.kontenProbleme.length ?? null)} onClick={() => gehe('datenpruefung')} laedt={laedt} />
     )
   }
   if (planer) {
@@ -414,12 +414,12 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
               <h3 style={{ margin: '0 0 8px', color: '#14325c' }}>Anträge ohne zugeordneten Mitarbeiter</h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {z.ohneZuordnungNamen.map((n) => (
-                  <span key={n} onClick={() => gehe('antraege')} style={{ cursor: 'pointer' }}>
+                  <span key={n} onClick={() => gehe('datenpruefung')} style={{ cursor: 'pointer' }}>
                     <Marke farbe="rot">{n}</Marke>
                   </span>
                 ))}
               </div>
-              <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Name im Antrag passt zu keinem Mitarbeiter – bitte Namen angleichen.</div>
+              <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Name im Antrag passt zu keinem Mitarbeiter – unter „Datenprüfung“ mit einem Klick zuordnen.</div>
             </div>
           )}
           {z.kontenProbleme.length > 0 && (
@@ -427,12 +427,12 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
               <h3 style={{ margin: '0 0 8px', color: '#14325c' }}>Urlaubskonten prüfen</h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {z.kontenProbleme.map((p) => (
-                  <span key={`${p.name}${p.jahr}`} onClick={() => gehe('mitarbeiter')} style={{ cursor: 'pointer' }} title={p.grund}>
+                  <span key={`${p.name}${p.jahr}`} onClick={() => gehe('datenpruefung')} style={{ cursor: 'pointer' }} title={p.grund}>
                     <Marke farbe="rot">{p.name} ({p.jahr}): {p.grund}</Marke>
                   </span>
                 ))}
               </div>
-              <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Bitte in der Mitarbeiterübersicht beim passenden Jahr Resturlaub und Rest Vorjahr kontrollieren.</div>
+              <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>Mehr dazu unter „Datenprüfung“.</div>
             </div>
           )}
           {z.ohneEmailNamen.length > 0 && (
