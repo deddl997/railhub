@@ -128,6 +128,21 @@ async function excelAlsText(datei: File): Promise<string> {
   return teile.join('\n')
 }
 
+// Screenshot verkleinern (JPEG), damit auch mehrere Bilder zusammen durch die Upload-Grenze passen
+async function bildKomprimieren(datei: File, maxSeite: number, qualitaet: number): Promise<string> {
+  const bmp = await createImageBitmap(datei)
+  const faktor = Math.min(1, maxSeite / Math.max(bmp.width, bmp.height))
+  const leinwand = document.createElement('canvas')
+  leinwand.width = Math.round(bmp.width * faktor)
+  leinwand.height = Math.round(bmp.height * faktor)
+  const ctx = leinwand.getContext('2d')
+  if (!ctx) throw new Error('Bild konnte nicht verarbeitet werden')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, leinwand.width, leinwand.height)
+  ctx.drawImage(bmp, 0, 0, leinwand.width, leinwand.height)
+  return leinwand.toDataURL('image/jpeg', qualitaet).split(',')[1] ?? ''
+}
+
 function dateiAlsBase64(datei: File): Promise<string> {
   return new Promise((ok, fehler) => {
     const leser = new FileReader()
@@ -274,20 +289,48 @@ export default function BestellungImport({
       })
   }, [])
 
-  async function dateiWaehlen(datei: File | undefined) {
-    if (!datei) return
+  // Screenshots mit Strg+V direkt einfügen
+  useEffect(() => {
+    if (schritt !== 'wahl') return
+    function eingefuegt(e: ClipboardEvent) {
+      const bilder = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'))
+      if (bilder.length > 0) {
+        e.preventDefault()
+        void dateiWaehlen(bilder)
+      }
+    }
+    window.addEventListener('paste', eingefuegt)
+    return () => window.removeEventListener('paste', eingefuegt)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schritt])
+
+  async function dateiWaehlen(dateien: File[]) {
+    if (dateien.length === 0) return
     setFehler(null)
     setSchritt('laden')
     try {
+      const datei = dateien[0]
       const name = datei.name.toLowerCase()
-      let body: Record<string, string>
-      if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      let body: Record<string, unknown>
+      const nurBilder = dateien.every((d) => d.type.startsWith('image/'))
+      if (dateien.length > 1 && !nurBilder) throw new Error('Mehrere Dateien gehen nur bei Screenshots/Fotos. Excel oder PDF bitte einzeln hochladen.')
+      if (dateien.length > 8) throw new Error('Bitte höchstens 8 Bilder auf einmal.')
+      if (nurBilder) {
+        let bilder: string[] = []
+        for (const [maxSeite, qualitaet] of [[2000, 0.85], [1500, 0.7], [1100, 0.6]] as const) {
+          bilder = []
+          for (const d of dateien) bilder.push(await bildKomprimieren(d, maxSeite, qualitaet))
+          if (bilder.reduce((a, b) => a + b.length, 0) < 3_800_000) break
+        }
+        if (bilder.reduce((a, b) => a + b.length, 0) >= 3_800_000) throw new Error('Die Bilder sind zusammen zu groß. Bitte weniger Bilder auf einmal hochladen.')
+        body = { art: 'bilder', bilder: bilder.map((daten) => ({ mime: 'image/jpeg', daten })) }
+      } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
         body = { art: 'text', text: await excelAlsText(datei) }
-      } else if (name.endsWith('.pdf') || datei.type.startsWith('image/')) {
+      } else if (name.endsWith('.pdf')) {
         if (datei.size > 3_000_000) throw new Error('Die Datei ist zu groß (maximal 3 MB). Bitte verkleinern oder als Excel hochladen.')
         body = {
           art: 'datei',
-          mime: name.endsWith('.pdf') ? 'application/pdf' : datei.type,
+          mime: 'application/pdf',
           daten: await dateiAlsBase64(datei),
         }
       } else {
@@ -537,7 +580,7 @@ export default function BestellungImport({
         {schritt === 'wahl' && (
           <div>
             <div style={{ fontSize: 13, color: '#475569', margin: '6px 0 14px' }}>
-              Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Foto). Die KI liest die Fahrten aus. Aus jeder Referenz wird ein
+              Lade die Bestellung der Autoverkehre hoch (Excel, PDF oder Screenshots/Fotos, bei Bildern auch mehrere auf einmal). Die KI liest die Fahrten aus. Aus jeder Referenz wird ein
               Auftrag in der Auftragsliste (mit Personalwechsel am Zwischenhalt, dann je Teilstrecke eine Schicht) und, wenn du möchtest, eine offene Spotschicht für Lokführer: Dienstbeginn {VORLAUF_MINUTEN} Minuten vor der Abfahrt, Dienstende zur Ankunftszeit, mindestens aber 8 Stunden Dienstdauer. Die Pause ist in der Dienstdauer enthalten und wird nach dem Arbeitszeitgesetz eingeplant (über 6 Std. = 30 Min., über 9 Std. = 45 Min.).
               Wagenmeister-Angaben werden nicht übernommen. Vor dem Anlegen siehst du eine Vorschau und kannst alles ändern.
             </div>
@@ -561,6 +604,11 @@ export default function BestellungImport({
               <span style={{ fontSize: 11, color: '#94a3b8' }}>wird bei allen angelegten Aufträgen eingetragen</span>
             </div>
             <label
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                void dateiWaehlen(Array.from(e.dataTransfer.files))
+              }}
               style={{
                 display: 'block',
                 border: '2px dashed #cbd5e1',
@@ -572,11 +620,18 @@ export default function BestellungImport({
                 fontWeight: 600,
               }}
             >
-              Datei auswählen
+              Datei oder Screenshots auswählen (auch mehrere Bilder)
+              <div style={{ fontWeight: 400, fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                Oder Bilder hierher ziehen bzw. einen Screenshot mit Strg+V einfügen
+              </div>
               <input
                 type="file"
+                multiple
                 accept=".xlsx,.xls,.pdf,image/*"
-                onChange={(e) => dateiWaehlen(e.target.files?.[0])}
+                onChange={(e) => {
+                  void dateiWaehlen(Array.from(e.target.files ?? []))
+                  e.target.value = ''
+                }}
                 style={{ display: 'none' }}
               />
             </label>

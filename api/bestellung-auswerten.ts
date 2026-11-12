@@ -15,6 +15,7 @@ Aufgabe:
 - "tf_hinweis": steht in der Spalte "Tf" ein Text (z.B. "bereits bekannt aus Vorwoche", "RBL KW 45"), gib ihn hier wörtlich an, sonst null. Ein "-" oder eine leere Zelle ist null.
 - Wagenmeister-Angaben (WTU, Bolle, Spieß, Slot) NICHT in die Fahrten übernehmen.
 - Zeilen ohne Abfahrts- und Ankunftszeit (z.B. "Bedienung NSL", "Slot 1") gehören NICHT zu "fahrten", sondern in "uebersprungen" mit kurzer Begründung.
+- Bekommst du mehrere Bilder (Screenshots), gehören sie zur selben Bestellung und können sich überlappen. Gib eine Fahrt, die auf mehreren Bildern zu sehen ist, nur EINMAL aus. Fehlt auf einem Bild das Datum, übernimm es aus der Zeile darüber oder von den anderen Bildern.
 - Erfinde nichts. Nichts erkennbar: leere Listen.
 
 Antworte AUSSCHLIESSLICH mit JSON in genau diesem Format, ohne Text davor oder danach:
@@ -47,6 +48,11 @@ export default async function handler(req, res) {
       inhalt.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: daten } })
     } else {
       inhalt.push({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: daten } })
+    }
+    inhalt.push({ type: 'text', text: PROMPT })
+  } else if (art === 'bilder' && Array.isArray(req.body.bilder) && req.body.bilder.length > 0 && req.body.bilder.length <= 8) {
+    for (const b of req.body.bilder) {
+      inhalt.push({ type: 'image', source: { type: 'base64', media_type: b.mime || 'image/jpeg', data: b.daten } })
     }
     inhalt.push({ type: 'text', text: PROMPT })
   } else if (art === 'text' && text) {
