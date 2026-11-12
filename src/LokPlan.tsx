@@ -189,11 +189,11 @@ function bloeckeAus(leistungen: Leistung[]): Block[] {
 }
 
 // Prüft pro Lok: Doppelbelegung, zu kurze Wendezeit, Ortssprung
-function pruefen(leistungen: Leistung[]): string[] {
+function pruefen(leistungen: Leistung[], eigene: Set<string>): string[] {
   const hinweise: string[] = []
   const proLok = new Map<string, Leistung[]>()
   for (const l of leistungen) {
-    if (l.lok === OHNE_LOK) continue
+    if (l.lok === OHNE_LOK || !eigene.has(l.lok)) continue // Fremdloks (z. B. Vectron Raaberbahn, Taurus ÖBB) werden nicht geprüft
     proLok.set(l.lok, [...(proLok.get(l.lok) ?? []), l])
   }
   for (const [lok, liste] of proLok) {
@@ -304,7 +304,7 @@ export default function LokPlan() {
   const { leistungen, hinweise } = useMemo(() => {
     const kanon = new Map(stamm.map((x) => [lokSchluessel(x.bezeichnung), x.bezeichnung]))
     const alle = leistungenAus(auftraege, kanon)
-    const hinw = pruefen(alle)
+    const hinw = pruefen(alle, new Set(stamm.map((x) => x.bezeichnung)))
     const imFenster = alle.filter((l) => l.ende > fensterStart && l.start < fensterEnde)
     // Hinweise nur für Leistungen im Fenster
     const relevant = hinw.filter((h) => imFenster.some((l) => h.includes(l.titel)))

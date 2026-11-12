@@ -170,7 +170,7 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
   gruppen.forEach((legs, g) => {
     const tfHinweis = legs.map((l) => l.tf_hinweis).find(Boolean) ?? null
     legs.forEach((f, teil) => {
-      const hinweise: string[] = tfHinweis ? [`In der Bestellung vermerkt: ${tfHinweis}`] : []
+      const hinweise: string[] = tfHinweis ? [`Vermerk in der Spalte Tf: „${tfHinweis}“ (nur Personalvorschlag, steht in der Schichtinfo)`] : []
       let beginnMin = zeitInMinuten(f.von_zeit) - VORLAUF_MINUTEN
       let datum = f.datum
       if (beginnMin < 0) {
@@ -196,7 +196,7 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
       }
       zeilen.push({
         id: 0,
-        aktiv: !tfHinweis,
+        aktiv: true,
         name: `${f.referenz} ${f.von}–${f.nach}`,
         datum,
         beginn: minutenAlsZeit(beginnMin),
@@ -205,7 +205,8 @@ function fahrtenZuZeilen(fahrten: Fahrt[]): Zeile[] {
         info:
           `Zug ${f.referenz}${nummer}: ${f.von} ${f.von_zeit} → ${f.nach} ${f.nach_zeit}.` +
           (f.lok ? ` Geplante Lok: ${f.lok}.` : '') +
-          wechsel,
+          wechsel +
+          (tfHinweis ? ` Personalvorschlag der Planer (Spalte Tf): ${tfHinweis}. Nur ein Vorschlag, kein fester Einsatz.` : ''),
         hinweise,
         doppelt: false,
         verlaengertVon,
