@@ -44,6 +44,19 @@ interface Leistung {
 
 type Ansicht = 'tag' | 'woche'
 
+interface StammLok {
+  id: string
+  bezeichnung: string
+  typ: string
+  aktiv: boolean
+  sortierung: number
+}
+
+// Schreibweise-unabhängiger Vergleich: "185 537", "185-537" und "185537" gelten als dieselbe Lok
+function lokSchluessel(t: string): string {
+  return t.toLowerCase().replace(/[\s\-_.]/g, '')
+}
+
 // ---------- Hilfen ----------
 function tagStart(iso: string): number {
   const [j, m, t] = iso.split('-').map(Number)
@@ -84,7 +97,7 @@ function lokName(roh: string | null | undefined): string {
 }
 
 // Zerlegt die Aufträge in einzelne Leistungen (Lokzuführung, Zugfahrt, Rückführung, Rangieren ...) mit absoluten Zeiten
-function leistungenAus(auftraege: AuftragZeile[]): Leistung[] {
+function leistungenAus(auftraege: AuftragZeile[], kanon: Map<string, string>): Leistung[] {
   const ergebnis: Leistung[] = []
   for (const a of auftraege) {
     let fahrten: Fahrtzeile[] = fahrtenPruefen(a.fahrten).filter((f) => f.von_zeit && f.nach_zeit)
@@ -119,7 +132,10 @@ function leistungenAus(auftraege: AuftragZeile[]): Leistung[] {
       ergebnis.push({
         key: `${a.id}-${i}`,
         auftragId: a.id,
-        lok: lokName(f.lok || a.lok),
+        lok: (() => {
+          const n = lokName(f.lok || a.lok)
+          return kanon.get(lokSchluessel(n)) ?? n
+        })(),
         art: f.art,
         titel,
         kunde: a.kunde ?? '',
@@ -192,6 +208,11 @@ export default function LokPlan() {
   const [laedt, setLaedt] = useState(true)
   const [fehler, setFehler] = useState<string | null>(null)
   const [gewaehlt, setGewaehlt] = useState<string | null>(null)
+  const [stamm, setStamm] = useState<StammLok[]>([])
+  const [verwalten, setVerwalten] = useState(false)
+  const [neuName, setNeuName] = useState('')
+  const [neuTyp, setNeuTyp] = useState('Diesel')
+  const [meldung, setMeldung] = useState<string | null>(null)
 
   const vonIso = ansicht === 'tag' ? tag : montagVon(tag)
   const bisIso = ansicht === 'tag' ? tag : isoPlus(montagVon(tag), 6)
@@ -227,6 +248,8 @@ export default function LokPlan() {
       if (!alt.includes(n)) karte.set(e.auftrag_id, [...alt, n])
     }
     setTfProAuftrag(karte)
+    const sl = await supabase.from('loks').select('id, bezeichnung, typ, aktiv, sortierung').order('sortierung').order('bezeichnung')
+    if (!sl.error) setStamm((sl.data ?? []) as StammLok[])
     setFehler(null)
     setLaedt(false)
   }, [vonIso, bisIso])
@@ -235,24 +258,54 @@ export default function LokPlan() {
     setLaedt(true)
     void laden()
   }, [laden])
-  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege'], laden)
+  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'loks'], laden)
 
   // Alle Leistungen, die das gewählte Zeitfenster berühren
   const fensterStart = tagStart(vonIso)
   const fensterEnde = tagStart(bisIso) + 1440
   const { leistungen, hinweise } = useMemo(() => {
-    const alle = leistungenAus(auftraege)
+    const kanon = new Map(stamm.map((x) => [lokSchluessel(x.bezeichnung), x.bezeichnung]))
+    const alle = leistungenAus(auftraege, kanon)
     const hinw = pruefen(alle)
     const imFenster = alle.filter((l) => l.ende > fensterStart && l.start < fensterEnde)
     // Hinweise nur für Leistungen im Fenster
     const relevant = hinw.filter((h) => imFenster.some((l) => h.includes(l.titel)))
     return { leistungen: imFenster, hinweise: Array.from(new Set(relevant)) }
-  }, [auftraege, fensterStart, fensterEnde])
+  }, [auftraege, stamm, fensterStart, fensterEnde])
 
+  // Zeilen: erst "(ohne Lok)" (falls nötig), dann alle angelegten Loks, dann Loks aus Aufträgen, die noch nicht angelegt sind
+  const typVon = useMemo(() => new Map(stamm.map((x) => [x.bezeichnung, x.typ])), [stamm])
   const loks = useMemo(() => {
-    const namen = Array.from(new Set(leistungen.map((l) => l.lok)))
-    return namen.sort((a, b) => (a === OHNE_LOK ? -1 : b === OHNE_LOK ? 1 : a.localeCompare(b, 'de', { numeric: true })))
-  }, [leistungen])
+    const angelegt = stamm.filter((x) => x.aktiv).map((x) => x.bezeichnung)
+    const unbekannt = Array.from(new Set(leistungen.map((l) => l.lok))).filter((n) => n !== OHNE_LOK && !typVon.has(n)).sort((a, b) => a.localeCompare(b, 'de', { numeric: true }))
+    const ohne = leistungen.some((l) => l.lok === OHNE_LOK) ? [OHNE_LOK] : []
+    return [...ohne, ...angelegt, ...unbekannt]
+  }, [stamm, leistungen, typVon])
+
+  async function lokAnlegen() {
+    const name = neuName.trim()
+    if (!name) return
+    if (stamm.some((x) => lokSchluessel(x.bezeichnung) === lokSchluessel(name))) {
+      setMeldung(`„${name}“ gibt es schon.`)
+      return
+    }
+    const sort = Math.max(0, ...stamm.map((x) => x.sortierung)) + 10
+    const r = await supabase.from('loks').insert({ bezeichnung: name, typ: neuTyp, sortierung: sort })
+    setMeldung(r.error ? `Fehler: ${r.error.message}` : `„${name}“ angelegt.`)
+    if (!r.error) setNeuName('')
+    void laden()
+  }
+  async function lokAendern(id: string, felder: Partial<StammLok>) {
+    const r = await supabase.from('loks').update(felder).eq('id', id)
+    if (r.error) setMeldung(`Fehler: ${r.error.message}`)
+    void laden()
+  }
+  async function lokLoeschen(l: StammLok) {
+    if (!window.confirm(`Lok „${l.bezeichnung}“ wirklich löschen? Bereits eingetragene Aufträge bleiben unverändert.`)) return
+    const r = await supabase.from('loks').delete().eq('id', l.id)
+    if (r.error) setMeldung(`Fehler: ${r.error.message}`)
+    void laden()
+  }
 
   const ohneLokAnzahl = new Set(leistungen.filter((l) => l.lok === OHNE_LOK).map((l) => l.auftragId)).size
   const gewaehlteLeistung = leistungen.find((l) => l.key === gewaehlt) ?? null
@@ -302,6 +355,7 @@ export default function LokPlan() {
       <button style={knopf(false)} onClick={() => springen(1)} aria-label="Weiter">▶</button>
       <button style={knopf(false)} onClick={() => (setTag(heuteIso), setGewaehlt(null))}>Heute</button>
       <span style={{ flex: 1 }} />
+      <button style={knopf(verwalten)} onClick={() => setVerwalten(!verwalten)}>🚂 Loks verwalten</button>
       <button style={knopf(false)} onClick={excelExportieren}>⬇ Excel</button>
       <button style={knopf(false)} onClick={() => window.print()}>🖨 Drucken / PDF</button>
     </div>
@@ -311,6 +365,34 @@ export default function LokPlan() {
     <div id="lokplan-druck">
       <style>{`@media print { body * { visibility: hidden !important; } #lokplan-druck, #lokplan-druck * { visibility: visible !important; } #lokplan-druck { position: absolute; left: 0; top: 0; width: 100%; } .lp-nodruck { display: none !important; } }`}</style>
       <div className="lp-nodruck">{kopf}</div>
+      {verwalten && (
+        <div className="lp-nodruck" style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14, marginBottom: 16, background: '#f8fafc' }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Loks verwalten</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            <input value={neuName} onChange={(e) => setNeuName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void lokAnlegen()} placeholder="Bezeichnung, z. B. 185-537" style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14 }} />
+            <select value={neuTyp} onChange={(e) => setNeuTyp(e.target.value)} style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14 }}>
+              <option>E-Lok</option>
+              <option>Diesel</option>
+            </select>
+            <button style={knopf(true)} onClick={() => void lokAnlegen()}>+ Anlegen</button>
+          </div>
+          {meldung && <div style={{ fontSize: 13, marginBottom: 8, color: '#14325c' }}>{meldung}</div>}
+          {(['E-Lok', 'Diesel'] as const).map((t) => (
+            <div key={t} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', margin: '6px 0 4px' }}>{t === 'E-Lok' ? 'E-Loks' : 'Diesel-Loks'}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {stamm.filter((x) => x.typ === t).map((x) => (
+                  <span key={x.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 16, padding: '3px 6px 3px 10px', background: x.aktiv ? '#fff' : '#f1f5f9', color: x.aktiv ? 'inherit' : '#94a3b8', fontSize: 13 }}>
+                    {x.bezeichnung}
+                    <button title={x.aktiv ? 'Ausblenden (z. B. Werkstatt/verkauft)' : 'Wieder einblenden'} onClick={() => void lokAendern(x.id, { aktiv: !x.aktiv })} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13 }}>{x.aktiv ? '👁' : '🚫'}</button>
+                    <button title="Löschen" onClick={() => void lokLoeschen(x)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13 }}>🗑</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ fontWeight: 600, marginBottom: 10, color: '#14325c' }}>
         {ansicht === 'tag' ? `${WOCHENTAGE[new Date(tag).getDay()]}, ${datumDe(tag)}` : `Woche ${datumDe(vonIso)} – ${datumDe(bisIso)}`}
       </div>
@@ -318,8 +400,8 @@ export default function LokPlan() {
       {fehler && <p style={{ color: 'var(--danger)' }}>Fehler: {fehler}</p>}
       {laedt ? (
         <p style={{ color: 'var(--text-muted)' }}>Lädt…</p>
-      ) : leistungen.length === 0 ? (
-        <p style={{ color: 'var(--text-muted)' }}>Keine Aufträge mit Zeiten in diesem Zeitraum.</p>
+      ) : loks.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)' }}>Noch keine Loks angelegt. Über „Loks verwalten“ kannst du welche hinzufügen.</p>
       ) : (
         <>
           {(ohneLokAnzahl > 0 || hinweise.length > 0) && (
@@ -335,7 +417,7 @@ export default function LokPlan() {
           )}
 
           {ansicht === 'tag' ? (
-            <TagesBalken tag={tag} leistungen={leistungen} loks={loks} gewaehlt={gewaehlt} onWahl={setGewaehlt} />
+            <TagesBalken typVon={typVon} tag={tag} leistungen={leistungen} loks={loks} gewaehlt={gewaehlt} onWahl={setGewaehlt} />
           ) : (
             <WochenTabelle tage={tageDerWoche} leistungen={leistungen} loks={loks} tfProAuftrag={tfProAuftrag} onWahl={(k) => { setGewaehlt(k) }} />
           )}
@@ -384,7 +466,9 @@ function TagesBalken({
   loks,
   gewaehlt,
   onWahl,
+  typVon,
 }: {
+  typVon?: Map<string, string>
   tag: string
   leistungen: Leistung[]
   loks: string[]
@@ -409,7 +493,7 @@ function TagesBalken({
         const ohne = lok === OHNE_LOK
         return (
           <div key={lok} style={{ display: 'flex', alignItems: 'center', borderTop: '1px solid var(--border)', minHeight: 44 }}>
-            <div style={{ width: 120, flex: 'none', fontWeight: 600, fontSize: 13, color: ohne ? '#b91c1c' : 'var(--text)' }}>{lok}</div>
+            <div style={{ width: 120, flex: 'none', fontWeight: 600, fontSize: 13, color: ohne ? '#b91c1c' : 'var(--text)' }}>{lok}{typVon && typVon.get(lok) ? <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{typVon.get(lok) === 'E-Lok' ? 'E' : 'D'}</span> : null}</div>
             <div style={{ position: 'relative', flex: 1, height: 34, background: ohne ? '#fef2f2' : '#f1f5f9', borderRadius: 4 }}>
               {[3, 6, 9, 12, 15, 18, 21].map((h) => (
                 <div key={h} style={{ position: 'absolute', left: `${(h / 24) * 100}%`, top: 0, bottom: 0, borderLeft: '1px solid #e2e8f0' }} />
