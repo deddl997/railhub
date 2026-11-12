@@ -4,6 +4,7 @@ import { namensSignatur } from './namensAbgleich'
 import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { erstelleUrlaubsantragPdf } from './pdfErstellung'
 import { bestaetigen } from './ui'
+import { pushSenden } from './pushAbo'
 
 interface Antrag {
   id: string
@@ -110,6 +111,19 @@ async function konfliktPruefen(zeilen: Antrag[], name: string | null): Promise<s
   const von = zeitraeume.map((z) => z.erster_tag).sort()[0]
   const bis = zeitraeume.map((z) => z.letzter_tag).sort().slice(-1)[0]
 
+  // 0) Urlaubssperren
+  const { data: sperrenDaten } = await supabase.from('urlaubssperren').select('von, bis, grund').lte('von', bis).gte('bis', von)
+  for (const sp of (sperrenDaten ?? []) as { von: string; bis: string; grund: string | null }[]) {
+    const tageInSperre = new Set(
+      zeitraeume.flatMap((z) => tageZwischen(z.erster_tag, z.letzter_tag)).filter((t) => t >= sp.von && t <= sp.bis)
+    )
+    if (tageInSperre.size > 0) {
+      hinweise.push(
+        `Urlaubssperre ${datumDe(sp.von)} – ${datumDe(sp.bis)}${sp.grund ? ` (${sp.grund})` : ''}: Der Antrag liegt an ${tageInSperre.size} Tag${tageInSperre.size === 1 ? '' : 'en'} in dieser Sperrzeit.`
+      )
+    }
+  }
+
   const { data: alle } = await supabase.from('mitarbeiter').select('id, name, kategorie')
   const personen = (alle ?? []) as { id: string; name: string; kategorie: string | null }[]
   const signatur = namensSignatur(name)
@@ -141,6 +155,8 @@ async function konfliktPruefen(zeilen: Antrag[], name: string | null): Promise<s
   const kategorie = person?.kategorie ?? null
   if (kategorie) {
     const gruppe = personen.filter((m) => m.kategorie === kategorie)
+    const { data: mbDaten } = await supabase.from('mindestbesetzung').select('minimum').eq('kategorie', kategorie).maybeSingle()
+    const mindestAnwesend = mbDaten ? Number((mbDaten as { minimum: number }).minimum) : null
     const { data: andere } = await supabase
       .from('urlaubsantraege')
       .select('mitarbeiter_id, name, erster_tag, letzter_tag')
@@ -158,13 +174,17 @@ async function konfliktPruefen(zeilen: Antrag[], name: string | null): Promise<s
         const id = u.mitarbeiter_id && idsGruppe.has(u.mitarbeiter_id) ? u.mitarbeiter_id : gruppe.find((m) => u.name && namensSignatur(m.name) === namensSignatur(u.name))?.id
         if (id) weg.add(id)
       }
-      if (gruppe.length >= 3 && weg.size / gruppe.length >= 0.4) kritisch.push({ tag, weg: weg.size })
+      const zuViele =
+        mindestAnwesend !== null ? gruppe.length - weg.size < mindestAnwesend : gruppe.length >= 3 && weg.size / gruppe.length >= 0.4
+      if (zuViele) kritisch.push({ tag, weg: weg.size })
     }
     if (kritisch.length > 0) {
       kritisch.sort((a, b) => b.weg - a.weg || a.tag.localeCompare(b.tag))
       const schlimmster = kritisch[0]
       hinweise.push(
-        `Bei „${kategorie}“ wären an ${kritisch.length} Tag${kritisch.length === 1 ? '' : 'en'} 40 % oder mehr gleichzeitig weg, am knappsten am ${datumDe(schlimmster.tag)}: ${schlimmster.weg} von ${gruppe.length} im Urlaub.`
+        mindestAnwesend !== null
+          ? `Mindestbesetzung „${kategorie}“ (mindestens ${mindestAnwesend} anwesend) wird an ${kritisch.length} Tag${kritisch.length === 1 ? '' : 'en'} unterschritten, am knappsten am ${datumDe(schlimmster.tag)}: nur ${gruppe.length - schlimmster.weg} von ${gruppe.length} wären da.`
+          : `Bei „${kategorie}“ wären an ${kritisch.length} Tag${kritisch.length === 1 ? '' : 'en'} 40 % oder mehr gleichzeitig weg, am knappsten am ${datumDe(schlimmster.tag)}: ${schlimmster.weg} von ${gruppe.length} im Urlaub.`
       )
     }
   }
@@ -304,6 +324,20 @@ export default function MeineAntraege({
         .in('id', ids)
     } else {
       await supabase.from('urlaubsantraege').update({ status: neuerStatus }).in('id', ids)
+    }
+
+    // Mitarbeiter per Push informieren (still, falls Push nicht eingerichtet ist)
+    const empfaenger = gruppe.zeilen[0]?.mitarbeiter_id
+    if (empfaenger && neuerStatus !== gruppe.status && (neuerStatus === 'genehmigt' || neuerStatus === 'abgelehnt')) {
+      const zeitraeumeText = gruppe.zeilen
+        .filter((z) => z.erster_tag && z.letzter_tag)
+        .map((z) => `${datumDe(z.erster_tag as string)} – ${datumDe(z.letzter_tag as string)}`)
+        .join(', ')
+      void pushSenden(
+        neuerStatus === 'genehmigt' ? 'Urlaub genehmigt' : 'Urlaub abgelehnt',
+        `Dein Urlaub ${zeitraeumeText} wurde ${neuerStatus === 'genehmigt' ? 'genehmigt' : 'abgelehnt'}.`,
+        [empfaenger]
+      )
     }
 
     await laden()

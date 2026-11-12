@@ -100,3 +100,20 @@ export async function pushSenden(
     return { ok: false, meldung: e instanceof Error ? e.message : String(e) }
   }
 }
+
+// Fuer Mitarbeiter: meldet den Admins, dass gerade ein Urlaubsantrag eingereicht wurde.
+// Schlaegt still fehl, wenn Push nicht eingerichtet ist – der Antrag ist ja bereits gespeichert.
+export async function pushAnAdmins(): Promise<void> {
+  try {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
+    if (!token) return
+    await fetch('/api/push-neuer-antrag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: '{}',
+    })
+  } catch {
+    // egal
+  }
+}

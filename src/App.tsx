@@ -12,6 +12,9 @@ import Rechnungen from './Rechnungen'
 import Protokoll from './Protokoll'
 import PersonalProtokoll from './PersonalProtokoll'
 import Datenpruefung from './Datenpruefung'
+import Urlaubsregeln from './Urlaubsregeln'
+import { pushAktivieren, pushDeaktivieren, pushStatus } from './pushAbo'
+import type { PushStatus } from './pushAbo'
 import Wirtschaftlichkeit from './Wirtschaftlichkeit'
 import Trassenpreise from './Trassenpreise'
 import UrlaubImport from './UrlaubImport'
@@ -70,6 +73,7 @@ const ALLE_TABS = [
   { id: 'protokoll', label: 'Änderungsprotokoll', kurz: 'Protokoll', nurAdmin: false },
   { id: 'benutzer', label: 'Benutzer & Rollen', kurz: 'Benutzer', nurAdmin: true },
   { id: 'mitarbeiter', label: 'Mitarbeiter', kurz: 'Personal', nurAdmin: true },
+  { id: 'urlaubsregeln', label: 'Urlaubsregeln', kurz: 'Regeln', nurAdmin: true },
   { id: 'datenpruefung', label: 'Datenprüfung', kurz: 'Prüfung', nurAdmin: true },
   { id: 'personalprotokoll', label: 'Personal-Protokoll', kurz: 'Protokoll', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
@@ -91,6 +95,8 @@ function AppInnen() {
   const rolle = useRolle(!!session)
   const [handy, setHandy] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches)
   const [menueOffen, setMenueOffen] = useState(false)
+  const [pushZustand, setPushZustand] = useState<PushStatus>('aus')
+  const [pushMeldung, setPushMeldung] = useState<string | null>(null)
 
   // Handy-Ansicht: schmale Kopfzeile, Reiter unten am Bildschirmrand
   useEffect(() => {
@@ -101,6 +107,21 @@ function AppInnen() {
   }, [])
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
+  useEffect(() => {
+    if (session) pushStatus().then(setPushZustand)
+  }, [session, menueOffen])
+
+  async function pushUmschalten() {
+    setPushMeldung(null)
+    if (pushZustand === 'aktiv') {
+      await pushDeaktivieren()
+    } else if (mitarbeiter) {
+      const fehlerText = await pushAktivieren(mitarbeiter.id)
+      if (fehlerText) setPushMeldung(fehlerText)
+    }
+    setPushZustand(await pushStatus())
+  }
+
   const [startTabGesetzt, setStartTabGesetzt] = useState(false)
   const [planerStartGesetzt, setPlanerStartGesetzt] = useState(false)
 
@@ -231,7 +252,7 @@ function AppInnen() {
     {
       id: 'plan',
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
-      tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubimport', 'jahreswechsel'],
+      tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubsregeln', 'urlaubimport', 'jahreswechsel'],
     },
     { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'protokoll'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
@@ -401,6 +422,14 @@ function AppInnen() {
             >
               <SymbolSchluessel groesse={18} /> Passwort ändern
             </button>
+            {pushZustand !== 'nicht-unterstuetzt' && pushZustand !== 'nicht-konfiguriert' && (
+              <>
+                <button onClick={pushUmschalten} className="rbl-menue-eintrag" style={menueKnopfStil} disabled={pushZustand === 'blockiert'}>
+                  <span style={{ width: 18, textAlign: 'center' }}>🔔</span> Benachrichtigungen: {pushZustand === 'aktiv' ? 'an (ausschalten)' : pushZustand === 'blockiert' ? 'im Browser blockiert' : 'aus (einschalten)'}
+                </button>
+                {pushMeldung && <div style={{ fontSize: 12, color: '#b91c1c', padding: '0 12px 6px' }}>{pushMeldung}</div>}
+              </>
+            )}
             <button onClick={abmelden} className="rbl-menue-eintrag" style={{ ...menueKnopfStil, color: '#b91c1c' }}>
               <SymbolAbmelden groesse={18} /> Abmelden
             </button>
@@ -688,6 +717,8 @@ function AppInnen() {
         {aktiverTab === 'jahreswechsel' && istAdmin && seite('Jahreswechsel: Resturlaub übernehmen', <Jahreswechsel />)}
 
         {aktiverTab === 'protokoll' && (darfDisponieren || darfAbrechnen) && seite('Änderungsprotokoll', <Protokoll />, { untertitel: 'alle Aufträge' })}
+
+        {aktiverTab === 'urlaubsregeln' && istAdmin && seite('Urlaubsregeln', <Urlaubsregeln />, { untertitel: 'Urlaubssperren und Mindestbesetzung' })}
 
         {aktiverTab === 'datenpruefung' && istAdmin && seite('Datenprüfung', <Datenpruefung />, { untertitel: 'Namen, Doppelte, Urlaubskonten und Datensicherung' })}
 

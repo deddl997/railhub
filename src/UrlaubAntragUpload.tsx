@@ -5,6 +5,7 @@ import { berechneBrauchbareTage } from './urlaubsberechnung'
 import { namensSignatur } from './namensAbgleich'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 import { bestaetigen } from './ui'
+import { pushAnAdmins } from './pushAbo'
 
 interface GemeinsameFelder {
   jahr: number | null
@@ -166,7 +167,17 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
   const [ausgelesenerAntrag, setAusgelesenerAntrag] = useState<AusgelesenerAntrag | null>(null)
   const [hochgeladeneDatei, setHochgeladeneDatei] = useState<File | null>(null)
   const [bilder, setBilder] = useState<File[]>([])
+  const [sperren, setSperren] = useState<{ von: string; bis: string; grund: string | null }[]>([])
   const [alleMitarbeiterNamen, setAlleMitarbeiterNamen] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    const heute = new Date().toISOString().slice(0, 10)
+    supabase
+      .from('urlaubssperren')
+      .select('von, bis, grund')
+      .gte('bis', heute)
+      .then(({ data }) => setSperren((data ?? []) as { von: string; bis: string; grund: string | null }[]))
+  }, [])
 
   useEffect(() => {
     if (!istAdmin) return
@@ -510,7 +521,7 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
       setAusgelesenerAntrag(null)
       setHochgeladeneDatei(null)
       setBilder([])
-    setBilder([])
+      if (!istAdmin) void pushAnAdmins()
       onGespeichert()
     } catch (err) {
       setFehler(err instanceof Error ? err.message : 'Fehler beim Speichern')
@@ -644,6 +655,20 @@ export default function UrlaubAntragUpload({ onGespeichert }: { onGespeichert: (
                     ))}
                   </div>
                 )}
+              </div>
+            )
+          })()}
+
+          {(() => {
+            const treffer = sperren.filter((sp) =>
+              ausgelesenerAntrag.zeitraeume.some((z) => z.erster_tag && z.letzter_tag && z.erster_tag <= sp.bis && z.letzter_tag >= sp.von)
+            )
+            if (treffer.length === 0) return null
+            return (
+              <div style={{ fontSize: 13, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px', color: '#92400e' }}>
+                ⚠ Dein Antrag liegt in einer Urlaubssperre:{' '}
+                {treffer.map((sp) => `${sp.von.split('-').reverse().join('.')} – ${sp.bis.split('-').reverse().join('.')}${sp.grund ? ` (${sp.grund})` : ''}`).join('; ')}.
+                Du kannst ihn trotzdem einreichen, die Genehmigung ist in dieser Zeit aber unwahrscheinlich.
               </div>
             )
           })()}
