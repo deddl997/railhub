@@ -3806,43 +3806,67 @@ export default function Dienstplan() {
     return (
       <div
         style={{
-          border: '1px solid var(--border)',
-          borderRadius: 12,
+          border: '1px solid #e2e8f0',
+          borderRadius: 14,
           overflow: 'hidden',
+          background: '#ffffff',
           boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
         }}
       >
-        <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed', fontSize: 12 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed', fontSize: 13 }}>
           <colgroup>
-            <col style={{ width: 170 }} />
+            <col style={{ width: 230 }} />
             {tage.map((_, i) => (
               <col key={i} />
             ))}
-            <col style={{ width: 64 }} />
           </colgroup>
           <thead>
             <tr>
-              <th style={{ ...kopfZelleStil, textAlign: 'left', paddingLeft: 16 }}>Mitarbeiter</th>
-              {tage.map((tag, i) => (
-                <th
-                  key={i}
-                  onClick={() => {
-                    setBezugsdatum(tag)
-                    setAnsicht('tag')
-                  }}
-                  title="Tagesansicht öffnen"
-                  style={{
-                    ...kopfZelleStil,
-                    cursor: 'pointer',
-                    background: istHeute(tag) ? '#dbe6f5' : istWochenende(tag) ? '#eef1f5' : '#f8fafc',
-                    color: istHeute(tag) ? 'var(--navy)' : '#475569',
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{WOCHENTAGE_KURZ[i]}</div>
-                  <div style={{ fontSize: 10, fontWeight: 400 }}>{datumKurz(tag)}</div>
-                </th>
-              ))}
-              <th style={{ ...kopfZelleStil, background: '#f8fafc', color: '#475569' }}>Std.</th>
+              <th style={{ ...kopfZelleStil, textAlign: 'left', paddingLeft: 16, background: '#ffffff', color: '#64748b', fontSize: 13, verticalAlign: 'bottom' }}>Personal</th>
+              {tage.map((tag, i) => {
+                const iso = datumZuISO(tag)
+                const anzahlSchichten = mitarbeiterListe.filter((m) => {
+                  const e = eintragFuer(m.id, iso)
+                  return !!e && !e.status && (!!e.schichtvorlage_id || e.ist_spotschicht) && !istUrlaub(m.id, iso)
+                }).length
+                return (
+                  <th
+                    key={i}
+                    onClick={() => {
+                      setBezugsdatum(tag)
+                      setAnsicht('tag')
+                    }}
+                    title="Tagesansicht öffnen"
+                    style={{
+                      ...kopfZelleStil,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      padding: '12px 12px 10px',
+                      borderLeft: '1px solid #eef1f5',
+                      background: istWochenende(tag) ? '#f8fafc' : '#ffffff',
+                      color: '#475569',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>{WOCHENTAGE_KURZ[i]}</span>
+                      <span
+                        style={{
+                          fontSize: 22,
+                          fontWeight: 700,
+                          lineHeight: 1.1,
+                          color: istHeute(tag) ? '#ffffff' : 'var(--navy)',
+                          background: istHeute(tag) ? 'var(--navy)' : 'transparent',
+                          borderRadius: 8,
+                          padding: istHeute(tag) ? '1px 8px' : 0,
+                        }}
+                      >
+                        {tag.getDate()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 400, color: '#94a3b8', marginTop: 4 }}>{anzahlSchichten === 0 ? 'Keine Schicht' : anzahlSchichten === 1 ? '1 Schicht' : `${anzahlSchichten} Schichten`}</div>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
@@ -3851,13 +3875,18 @@ export default function Dienstplan() {
                 <td
                   style={{
                     ...zellBasisStil,
-                    padding: '6px 16px',
-                    background: '#fff7ed',
-                    borderBottom: '1px solid #fed7aa',
+                    padding: '12px 16px',
+                    background: '#fffbeb',
+                    borderBottom: '1px solid #fde68a',
                   }}
                 >
-                  <div style={{ fontWeight: 700, fontSize: 11, color: '#9a3412' }}>Offene Schichten</div>
-                  <div style={{ fontWeight: 600, fontSize: 11, color: 'var(--navy)' }}>{bereich}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#fef3c7', color: '#b45309', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>◈</div>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>Offene Schichten</div>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>{bereich} · noch niemandem zugewiesen</div>
+                    </div>
+                  </div>
                 </td>
                 {tage.map((tag) => {
                   const datumIso = datumZuISO(tag)
@@ -3883,14 +3912,15 @@ export default function Dienstplan() {
                       }}
                       style={{
                         ...zellBasisStil,
-                        background: hoverZiel === zielSchluessel ? '#ffedd5' : '#fff7ed',
-                        borderBottom: '1px solid #fed7aa',
-                        padding: 5,
+                        background: hoverZiel === zielSchluessel ? '#fef3c7' : '#fffbeb',
+                        borderBottom: '1px solid #fde68a',
+                        borderLeft: '1px solid #fde68a',
+                        padding: 6,
                         verticalAlign: 'top',
                       }}
                     >
                       {offeneV.length === 0 && offeneS.length === 0 ? (
-                        <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--success)' }}>
+                        <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--success)', padding: '10px 0' }}>
                           ✓ besetzt
                         </div>
                       ) : (
@@ -3905,20 +3935,22 @@ export default function Dienstplan() {
                               onDragEnd={() => setGezogeneVorlage(null)}
                               title="Nach unten auf die Person ziehen"
                               style={{
-                                background: vorlage.farbe,
-                                color: '#ffffff',
-                                borderRadius: 6,
-                                padding: '4px 6px',
+                                background: '#ffffff',
+                                color: '#1e293b',
+                                borderRadius: 8,
+                                borderLeft: `4px solid ${vorlage.farbe}`,
+                                boxShadow: '0 1px 2px rgba(15,23,42,0.12)',
+                                padding: '6px 8px',
                                 cursor: 'grab',
-                                fontSize: 10,
-                                fontWeight: 600,
+                                fontSize: 12,
+                                fontWeight: 700,
                               }}
                             >
                               <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {vorlage.name}
                                 {besetzungText(vorlage, datumIso, tag.getDay())}
                               </div>
-                              <div style={{ fontSize: 9, opacity: 0.85, fontWeight: 400 }}>
+                              <div style={{ fontSize: 12, color: '#64748b', fontWeight: 400 }}>
                                 {zeitKurz(vorlage.beginn_zeit)}–{zeitKurz(vorlage.ende_zeit)}
                               </div>
                               {vorschlagKnopf(
@@ -3938,23 +3970,25 @@ export default function Dienstplan() {
                               onClick={() => offenSpotBearbeiten(x)}
                               title="Offene Spotschicht: Klick zum Bearbeiten, nach unten auf die Person ziehen zum Zuweisen"
                               style={{
-                                background: x.farbe ?? '#8b1a1a',
-                                color: '#ffffff',
-                                borderRadius: 6,
-                                padding: '4px 6px',
+                                background: '#ffffff',
+                                color: '#1e293b',
+                                borderRadius: 8,
+                                borderLeft: `4px solid ${x.farbe ?? '#8b1a1a'}`,
+                                boxShadow: '0 1px 2px rgba(15,23,42,0.12)',
+                                padding: '6px 8px',
                                 cursor: 'grab',
-                                fontSize: 10,
-                                fontWeight: 600,
+                                fontSize: 12,
+                                fontWeight: 700,
                                 position: 'relative',
                               }}
                             >
                               <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 14 }}>
-                                <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: 3, padding: '0 4px', fontSize: 8, marginRight: 4 }}>
+                                <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 3, padding: '0 4px', fontSize: 9, marginRight: 4 }}>
                                   SPOT
                                 </span>
                                 {x.name}
                               </div>
-                              <div style={{ fontSize: 9, opacity: 0.9, fontWeight: 400 }}>
+                              <div style={{ fontSize: 12, color: '#64748b', fontWeight: 400 }}>
                                 {zeitKurz(x.beginn_zeit)}–{zeitKurz(x.ende_zeit)}
                               </div>
                               {vorschlagKnopf(
@@ -3973,7 +4007,7 @@ export default function Dienstplan() {
                                   right: 4,
                                   background: 'none',
                                   border: 'none',
-                                  color: '#ffffff',
+                                  color: '#94a3b8',
                                   cursor: 'pointer',
                                   fontSize: 11,
                                   lineHeight: 1,
@@ -3988,7 +4022,6 @@ export default function Dienstplan() {
                     </td>
                   )
                 })}
-                <td style={{ ...zellBasisStil, background: '#fff7ed', borderBottom: '1px solid #fed7aa' }} />
               </tr>
             ))}
             {anzeigeListe.map((mitarbeiter, zeilenIndex) => {
@@ -3999,55 +4032,69 @@ export default function Dienstplan() {
                   {neueGruppe && (
                     <tr key={`gruppe-${mitarbeiter.kategorie ?? 'ohne'}`}>
                       <td
-                        colSpan={9}
+                        colSpan={8}
                         style={{
-                          background: '#eef2f7',
-                          color: 'var(--navy)',
+                          background: '#f8fafc',
+                          color: '#64748b',
                           fontWeight: 700,
-                          fontSize: 11,
-                          padding: '6px 16px',
+                          fontSize: 12,
+                          padding: '10px 16px',
                           textTransform: 'uppercase',
-                          letterSpacing: 0.4,
-                          borderBottom: '1px solid var(--border)',
-                          borderTop: zeilenIndex > 0 ? '1px solid var(--border)' : undefined,
+                          letterSpacing: 0.6,
+                          borderBottom: '1px solid #eef1f5',
+                          borderTop: '1px solid #eef1f5',
                         }}
                       >
                         {mitarbeiter.kategorie ?? 'Ohne Qualifikation'}
                       </td>
                     </tr>
                   )}
-                  <tr key={mitarbeiter.id} style={{ background: zeilenIndex % 2 === 0 ? '#ffffff' : '#fafbfc' }}>
-                    <td style={{ ...zellBasisStil, padding: '8px 16px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <tr key={mitarbeiter.id} style={{ background: '#ffffff' }}>
+                    <td style={{ ...zellBasisStil, padding: '12px 16px', verticalAlign: 'top', borderBottom: '1px solid #eef1f5' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div
                           style={{
-                            width: 26,
-                            height: 26,
+                            width: 38,
+                            height: 38,
                             borderRadius: '50%',
-                            background: farbeFuerAvatar(mitarbeiter.name),
-                            color: '#ffffff',
+                            background: '#e8eefb',
+                            color: 'var(--navy)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            fontSize: 10,
+                            fontSize: 13,
                             fontWeight: 700,
                             flexShrink: 0,
                           }}
                         >
                           {initialen(mitarbeiter.name)}
                         </div>
-                        <span
-                          style={{
-                            fontWeight: 500,
-                            color: '#1e293b',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          {mitarbeiter.name}
-                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 15, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mitarbeiter.name}</div>
+                          <div style={{ fontSize: 12, color: wochenMinuten(mitarbeiter.id) > 48 * 60 ? '#dc2626' : '#64748b', marginTop: 1 }}>
+                            {wochenMinuten(mitarbeiter.id) > 48 * 60 ? '⚠ ' : ''}
+                            {wochenArbeitszeit(mitarbeiter.id)} von 40:00 h
+                          </div>
+                          <div style={{ height: 4, borderRadius: 2, background: '#e2e8f0', marginTop: 5, overflow: 'hidden' }}>
+                            <div
+                              style={{
+                                height: '100%',
+                                width: `${Math.min(100, (wochenMinuten(mitarbeiter.id) / (40 * 60)) * 100)}%`,
+                                background: wochenMinuten(mitarbeiter.id) > 48 * 60 ? '#dc2626' : '#2563eb',
+                              }}
+                            />
+                          </div>
+                        </div>
                       </div>
+                      {(mitarbeiter.lok_typen ?? []).length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                          {(mitarbeiter.lok_typen ?? []).map((t) => (
+                            <span key={t} style={{ background: '#e8eefb', color: 'var(--navy)', borderRadius: 6, padding: '2px 8px', fontSize: 12, fontWeight: 600 }}>
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     {tage.map((tag) => {
                       const datumIso = datumZuISO(tag)
@@ -4056,6 +4103,9 @@ export default function Dienstplan() {
                       const ausgewaehlt =
                         ausgewaehlteZelle?.mitarbeiterId === mitarbeiter.id && ausgewaehlteZelle?.datum === datumIso
                       const spalteBetont = istHeute(tag) || istWochenende(tag)
+
+                      const warnungenTag = warnungenFuer(mitarbeiter.id, tag)
+                      const rotUmrandet = warnungenTag.some((w) => w.art === 'ueberschneidung' || w.art === 'ruhezeit')
 
                       let karte: React.ReactNode = null
 
@@ -4068,6 +4118,7 @@ export default function Dienstplan() {
                       } else if (eintrag?.ist_spotschicht) {
                         karte = (
                           <SchichtKarte
+                            rot={rotUmrandet}
                             farbe={eintrag.spot_farbe ?? '#8b1a1a'}
                             titel={eintrag.spot_name ?? ''}
                             zeile2={`${zeitKurz(eintrag.spot_beginn_zeit)}–${zeitKurz(eintrag.spot_ende_zeit)}`}
@@ -4081,6 +4132,7 @@ export default function Dienstplan() {
                           const si = schichtInfoVon(eintrag)
                           karte = (
                             <SchichtKarte
+                              rot={rotUmrandet}
                               farbe={vorlage.farbe}
                               titel={vorlage.name + (si?.abweichung ? ' ✎' : '')}
                               zeile2={
@@ -4097,7 +4149,6 @@ export default function Dienstplan() {
 
                       const zielSchluessel = `${mitarbeiter.id}-${datumIso}`
                       const falscherTagBeimZiehen = !!gezogeneVorlage && gezogeneVorlage.tagDatum !== datumIso
-                      const warnungenTag = warnungenFuer(mitarbeiter.id, tag)
 
                       return (
                         <td
@@ -4123,19 +4174,22 @@ export default function Dienstplan() {
                           }}
                           style={{
                             ...zellBasisStil,
+                            borderBottom: '1px solid #eef1f5',
+                            borderLeft: '1px solid #eef1f5',
+                            verticalAlign: 'top',
                             opacity: falscherTagBeimZiehen ? 0.5 : 1,
                             background:
                               hoverZiel === zielSchluessel
                                 ? '#e0f2fe'
                                 : spalteBetont
                                 ? istHeute(tag)
-                                  ? '#f3f7fd'
+                                  ? '#f5f8fe'
                                   : '#fafbfc'
                                 : undefined,
                             position: 'relative',
                             cursor: urlaub && !eintrag ? 'default' : 'pointer',
                             boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
-                            padding: 5,
+                            padding: 8,
                           }}
                         >
                           {warnungenTag.length > 0 && (
@@ -4196,7 +4250,7 @@ export default function Dienstplan() {
                             <div
                               className="dienstplan-leerzelle"
                               style={{
-                                height: 44,
+                                height: 60,
                                 borderRadius: 8,
                                 border: '1.5px dashed #e2e8f0',
                                 display: 'flex',
@@ -4212,19 +4266,6 @@ export default function Dienstplan() {
                         </td>
                       )
                     })}
-                    <td style={{ ...zellBasisStil, textAlign: 'center' }}>
-                      <div
-                        title={wochenMinuten(mitarbeiter.id) > 48 * 60 ? 'Über 48 Wochenstunden' : undefined}
-                        style={{
-                          fontWeight: 700,
-                          color: wochenMinuten(mitarbeiter.id) > 48 * 60 ? '#dc2626' : 'var(--navy)',
-                          fontSize: 13,
-                        }}
-                      >
-                        {wochenMinuten(mitarbeiter.id) > 48 * 60 ? '⚠ ' : ''}
-                        {wochenArbeitszeit(mitarbeiter.id)}
-                      </div>
-                    </td>
                   </tr>
                 </Fragment>
               )
@@ -4243,6 +4284,7 @@ function SchichtKarte({
   zeile3,
   info,
   umrandet,
+  rot,
 }: {
   farbe: string
   titel: string
@@ -4250,21 +4292,22 @@ function SchichtKarte({
   zeile3?: string
   info?: string
   umrandet?: boolean
+  rot?: boolean
 }) {
   if (umrandet) {
     return (
       <div
         style={{
-          height: 44,
+          height: 60,
           borderRadius: 8,
-          border: `1.5px solid ${farbe}`,
-          background: `${farbe}15`,
+          border: `1.5px solid ${farbe}55`,
+          background: `${farbe}12`,
           color: farbe,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           fontWeight: 700,
-          fontSize: 12,
+          fontSize: 13,
         }}
       >
         {titel}
@@ -4275,41 +4318,34 @@ function SchichtKarte({
   return (
     <div
       style={{
-        minHeight: 44,
+        minHeight: 60,
         borderRadius: 8,
-        background: farbe,
-        color: '#ffffff',
-        padding: '5px 7px',
+        background: '#ffffff',
+        color: '#1e293b',
+        border: rot ? '2px solid #dc2626' : '1px solid #e2e8f0',
+        borderLeft: rot ? '5px solid ' + farbe : `5px solid ${farbe}`,
+        boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
+        padding: '6px 9px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
-        gap: 1,
+        gap: 2,
       }}
     >
+      {zeile2 && <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2, letterSpacing: -0.2 }}>{zeile2}</div>}
       <div
-        style={{
-          fontWeight: 700,
-          fontSize: 11,
-          lineHeight: 1.25,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
+        style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
         title={titel}
       >
         {titel}
       </div>
-      {zeile2 && <div style={{ fontSize: 10, opacity: 0.9 }}>{zeile2}</div>}
       {zeile3 && (
-        <div style={{ fontSize: 9, opacity: 0.8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={zeile3}>
           {zeile3}
         </div>
       )}
       {info && (
-        <div
-          title={info}
-          style={{ fontSize: 9, opacity: 0.95, fontStyle: 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-        >
+        <div title={info} style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           ℹ {info}
         </div>
       )}
