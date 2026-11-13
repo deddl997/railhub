@@ -2636,7 +2636,7 @@ export default function Dienstplan() {
     const jetztMinuten = jetzt.getHours() * 60 + jetzt.getMinutes()
     const zeigeJetzt = istHeute(bezugsdatum)
     const raster: React.CSSProperties = {
-      backgroundImage: 'linear-gradient(to right, #e8edf4 1px, transparent 1px)',
+      backgroundImage: 'linear-gradient(to right, #eef1f5 1px, transparent 1px)',
       backgroundSize: `${100 / 24}% 100%`,
     }
 
@@ -2713,7 +2713,7 @@ export default function Dienstplan() {
       }
     }
 
-    const linkeSpalte: React.CSSProperties = { width: 210, flexShrink: 0, padding: '0 14px' }
+    const linkeSpalte: React.CSSProperties = { width: 240, flexShrink: 0, padding: '0 16px' }
     const kachelStil: React.CSSProperties = {
       background: '#f1f5f9',
       borderRadius: 8,
@@ -2726,8 +2726,8 @@ export default function Dienstplan() {
           style={{
             flex: '999 1 640px',
             minWidth: 0,
-            border: '1px solid var(--border)',
-            borderRadius: 12,
+            border: '1px solid #e2e8f0',
+            borderRadius: 14,
             overflow: 'hidden',
             boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
             background: '#ffffff',
@@ -2736,18 +2736,21 @@ export default function Dienstplan() {
           <div style={{ overflowX: 'auto' }}>
             <div style={{ minWidth: 1100 }}>
               {/* Kopfzeile mit Uhrzeiten */}
-              <div style={{ display: 'flex', background: '#14325c', color: '#ffffff' }}>
-                <div style={{ ...linkeSpalte, padding: '11px 14px', fontWeight: 600, fontSize: 13 }}>Mitarbeiter</div>
+              <div style={{ display: 'flex', background: '#ffffff', color: '#64748b', borderBottom: '1px solid #e2e8f0' }}>
+                <div style={{ ...linkeSpalte, padding: '14px 16px', fontWeight: 600, fontSize: 13 }}>
+                  Personal
+                  <span style={{ fontWeight: 400, color: '#94a3b8' }}> · {dienste} Dienste{offeneAnzahl > 0 ? ` · ${offeneAnzahl} offen` : ''}</span>
+                </div>
                 <div style={{ flex: 1, display: 'flex' }}>
                   {STUNDEN.map((h) => (
                     <div
                       key={h}
                       style={{
                         flex: 1,
-                        padding: '11px 0 11px 5px',
+                        padding: '14px 0 14px 5px',
                         fontSize: 11,
-                        color: '#c9d6ea',
-                        borderLeft: '1px solid rgba(255,255,255,0.14)',
+                        color: '#94a3b8',
+                        borderLeft: '1px solid #eef1f5',
                       }}
                     >
                       {String(h).padStart(2, '0')}
@@ -2764,7 +2767,7 @@ export default function Dienstplan() {
                 return (
                   <div
                     key={bereich}
-                    style={{ display: 'flex', background: '#fff7ed', borderBottom: '1px solid var(--border)' }}
+                    style={{ display: 'flex', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}
                     onDragOver={(e) => {
                       e.preventDefault()
                       setHoverZiel(poolSchluessel)
@@ -2788,8 +2791,8 @@ export default function Dienstplan() {
                         gap: 1,
                       }}
                     >
-                      <div style={{ fontWeight: 700, fontSize: 11, color: '#9a3412' }}>Offene Schichten</div>
-                      <div style={{ fontWeight: 600, fontSize: 11, color: 'var(--navy)' }}>{bereich}</div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>Offene Schichten</div>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>{bereich} · noch niemandem zugewiesen</div>
                     </div>
                     <div
                       style={{
@@ -2954,23 +2957,23 @@ export default function Dienstplan() {
                     className="dp-zeile"
                     style={{
                       display: 'flex',
-                      borderBottom: '1px solid #eef2f8',
+                      borderBottom: '1px solid #eef1f5',
                       alignItems: 'stretch',
                       opacity: lokUnpassend || eignungDrag?.stufe === 2 ? 0.4 : 1,
                     }}
                   >
-                    <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px' }}>
+                    <div style={{ ...linkeSpalte, display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px' }}>
                       <div
                         style={{
-                          width: 30,
-                          height: 30,
+                          width: 38,
+                          height: 38,
                           borderRadius: '50%',
-                          background: farbeFuerAvatar(mitarbeiter.name),
-                          color: '#ffffff',
+                          background: '#e8eefb',
+                          color: 'var(--navy)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          fontSize: 11,
+                          fontSize: 13,
                           fontWeight: 700,
                           flexShrink: 0,
                         }}
@@ -2978,12 +2981,23 @@ export default function Dienstplan() {
                         {initialen(mitarbeiter.name)}
                       </div>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b', lineHeight: 1.25 }}>
+                        <div style={{ fontWeight: 600, fontSize: 15, color: '#1e293b', lineHeight: 1.25 }}>
                           {mitarbeiter.name}
                         </div>
-                        <div style={{ fontSize: 11, color: '#64748b' }}>{mitarbeiter.kategorie ?? 'Ohne Qualifikation'}</div>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>
+                          {wochenArbeitszeit(mitarbeiter.id)} von 40:00 h
+                        </div>
+                        <div style={{ height: 4, borderRadius: 2, background: '#e2e8f0', margin: '4px 0 2px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.min(100, (wochenMinuten(mitarbeiter.id) / (40 * 60)) * 100)}%`, background: wochenMinuten(mitarbeiter.id) > 48 * 60 ? '#dc2626' : '#2563eb' }} />
+                        </div>
                         {(mitarbeiter.lok_typen ?? []).length > 0 && (
-                          <div style={{ fontSize: 10, color: '#0e7490' }}>{(mitarbeiter.lok_typen ?? []).join(' · ')}</div>
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                            {(mitarbeiter.lok_typen ?? []).map((lt) => (
+                              <span key={lt} style={{ background: '#e8eefb', color: 'var(--navy)', borderRadius: 6, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>
+                                {lt}
+                              </span>
+                            ))}
+                          </div>
                         )}
                         {wunschFuer(mitarbeiter.id, datumIso) && (
                           <div
@@ -3044,7 +3058,7 @@ export default function Dienstplan() {
                       style={{
                         flex: 1,
                         position: 'relative',
-                        minHeight: 52,
+                        minHeight: 76,
                         cursor: urlaub && !eintrag ? 'default' : 'pointer',
                         background: hoverZiel === zielSchluessel ? '#e0f2fe' : undefined,
                         boxShadow: ausgewaehlt ? 'inset 0 0 0 2px var(--navy)' : undefined,
@@ -3073,10 +3087,10 @@ export default function Dienstplan() {
                             position: 'absolute',
                             left: 0,
                             right: 0,
-                            top: 'calc(50% - 16px)',
-                            height: 32,
-                            borderRadius: 6,
-                            background: '#c026d3',
+                            top: 'calc(50% - 20px)',
+                            height: 40,
+                            borderRadius: 8,
+                            background: '#db2777',
                             color: '#ffffff',
                             fontWeight: 700,
                             fontSize: 12,
@@ -3095,9 +3109,9 @@ export default function Dienstplan() {
                             position: 'absolute',
                             left: 0,
                             right: 0,
-                            top: 'calc(50% - 16px)',
-                            height: 32,
-                            borderRadius: 6,
+                            top: 'calc(50% - 20px)',
+                            height: 40,
+                            borderRadius: 8,
                             border: `1.5px solid ${eintrag.status === 'ruhe' ? '#0e7490' : '#64748b'}`,
                             background: eintrag.status === 'ruhe' ? '#0e749015' : '#64748b15',
                             color: eintrag.status === 'ruhe' ? '#0e7490' : '#64748b',
@@ -3161,37 +3175,35 @@ export default function Dienstplan() {
                               position: 'absolute',
                               left: `${(b.von / 1440) * 100}%`,
                               width: `${breite}%`,
-                              top: ueberlappt ? (b.vortag ? 'calc(50% - 24px)' : 'calc(50% + 2px)') : 'calc(50% - 16px)',
-                              height: ueberlappt ? 22 : 32,
+                              top: ueberlappt ? (b.vortag ? 'calc(50% - 28px)' : 'calc(50% + 2px)') : 'calc(50% - 22px)',
+                              height: ueberlappt ? 26 : 44,
                               boxSizing: 'border-box',
-                              boxShadow: istAuswahl
-                                ? '0 0 0 2px var(--navy)'
-                                : ueberlappt
-                                ? '0 0 0 2px #dc2626'
-                                : undefined,
                               background: b.vortag ? '#f6d3cc' : b.info.farbe,
                               color: b.vortag ? '#7a1d0f' : textFarbeFuer(b.info.farbe),
-                              borderRadius: `${b.vortag ? 0 : 6}px ${b.weiter ? 0 : 6}px ${b.weiter ? 0 : 6}px ${b.vortag ? 0 : 6}px`,
-                              padding: '0 9px',
+                              borderRadius: `${b.vortag ? 0 : 8}px ${b.weiter ? 0 : 8}px ${b.weiter ? 0 : 8}px ${b.vortag ? 0 : 8}px`,
+                              padding: '0 10px',
                               overflow: 'hidden',
                               cursor: 'pointer',
                               zIndex: istAuswahl ? 3 : 1,
                               display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
+                              flexDirection: ueberlappt ? 'row' : 'column',
+                              alignItems: ueberlappt ? 'center' : 'flex-start',
+                              justifyContent: 'center',
+                              gap: ueberlappt ? 6 : 0,
                               whiteSpace: 'nowrap',
                               fontSize: 12,
+                              boxShadow: istAuswahl ? '0 0 0 2px var(--navy)' : ueberlappt ? '0 0 0 2px #dc2626' : '0 1px 2px rgba(15,23,42,0.2)',
                             }}
                           >
-                            <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <span style={{ fontWeight: 700, fontSize: ueberlappt ? 12 : 14, flexShrink: 0, order: ueberlappt ? 1 : 0 }}>
+                              {zeitText}
+                              {b.weiter ? ' →' : ''}
+                            </span>
+                            <span style={{ fontWeight: 500, fontSize: 12, opacity: 0.95, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%', order: ueberlappt ? 0 : 1 }}>
                               {b.info.titel}
                               {b.vortag ? ' (Vortag)' : ''}
                               {b.info.abweichung ? ' ✎' : ''}
                               {b.info.info ? ' ℹ' : ''}
-                            </span>
-                            <span style={{ fontWeight: 400, opacity: 0.9, flexShrink: 0 }}>
-                              {zeitText}
-                              {b.weiter ? ' →' : ''}
                             </span>
                             {pauseSichtbar && (
                               <div
@@ -3215,7 +3227,7 @@ export default function Dienstplan() {
               })}
 
               {/* Besetzung pro Stunde */}
-              <div style={{ display: 'flex', background: '#f8fafc', borderTop: '2px solid #14325c' }}>
+              <div style={{ display: 'flex', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
                 <div style={{ ...linkeSpalte, padding: '10px 14px', fontSize: 12, color: '#334155' }}>
                   <div style={{ fontWeight: 700, color: 'var(--navy)', fontSize: 13 }}>Besetzung je Stunde</div>
                   <div style={{ marginTop: 2 }}>
