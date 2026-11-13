@@ -5,6 +5,8 @@ import Anmeldung from './Anmeldung'
 import PasswortDialog from './PasswortDialog'
 import Uebersichten from './Uebersichten'
 import Auftraege from './Auftraege'
+import Zuglaeufe from './Zuglaeufe'
+import Kunden from './Kunden'
 import Abrechnung from './Abrechnung'
 import Bahnstrom from './Bahnstrom'
 import Kennzahlen from './Kennzahlen'
@@ -63,7 +65,9 @@ const ALLE_TABS = [
   { id: 'kalender', label: 'Personalplanung', kurz: 'Planung', nurAdmin: true },
   { id: 'antraege', label: 'Anträge', kurz: 'Anträge', nurAdmin: false },
   { id: 'uebersicht', label: 'Übersicht', kurz: 'Übersicht', nurAdmin: false },
+  { id: 'zuglaeufe', label: 'Zugläufe', kurz: 'Zugläufe', nurAdmin: false },
   { id: 'auftraege', label: 'Aufträge', kurz: 'Aufträge', nurAdmin: false },
+  { id: 'kunden', label: 'Kunden', kurz: 'Kunden', nurAdmin: false },
   { id: 'abrechnung', label: 'Abrechnung', kurz: 'Abrechnung', nurAdmin: false },
   { id: 'bahnstrom', label: 'Bahnstrom', kurz: 'Bahnstrom', nurAdmin: false },
   { id: 'rechnungen', label: 'Rechnungsentwurf', kurz: 'Rechnungen', nurAdmin: false },
@@ -249,7 +253,7 @@ function AppInnen() {
   // (und in der Datenbank die Funktion darf_kosten() anpassen, siehe kosten.sql).
   const darfKosten = istAdmin
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' || tab.id === 'lokplan' ? darfDisponieren || darfAbrechnen : tab.id === 'antritt' ? darfDisponieren : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' || tab.id === 'zuglaeufe' || tab.id === 'kunden' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' || tab.id === 'lokplan' ? darfDisponieren || darfAbrechnen : tab.id === 'antritt' ? darfDisponieren : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
@@ -260,7 +264,7 @@ function AppInnen() {
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
       tabs: ['meinplan', 'antritt', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubsregeln', 'urlaubimport', 'jahreswechsel'],
     },
-    { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'lokplan', 'protokoll'] },
+    { id: 'auftraege', label: 'Betrieb', tabs: ['zuglaeufe', 'auftraege', 'lokplan', 'kunden', 'protokoll'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
     { id: 'bahnstrom', label: 'Bahnstrom', tabs: ['bahnstrom'] },
     { id: 'mitarbeiter', label: 'Mitarbeiter', tabs: ['mitarbeiter', 'benutzer', 'datenpruefung', 'personalprotokoll'] },
@@ -706,6 +710,10 @@ function AppInnen() {
             istAdmin ? <MeineAntraege neuLadenAuslöser={neuLadenAuslöser} onGeaendert={neuLaden} /> : <MeineEigenenAntraege key={neuLadenAuslöser} />,
             { ohneKarte: true, breite: istAdmin ? undefined : 760 }
           )}
+
+        {aktiverTab === 'zuglaeufe' && (darfDisponieren || darfAbrechnen) && seite('Zugläufe', <Zuglaeufe darfSchreiben={darfDisponieren} mitarbeiterId={mitarbeiter?.id ?? null} />, { breite: 1100 })}
+
+        {aktiverTab === 'kunden' && (darfDisponieren || darfAbrechnen) && seite('Kunden', <Kunden darfSchreiben={darfDisponieren} />, { breite: 1100 })}
 
         {aktiverTab === 'auftraege' && (darfDisponieren || darfAbrechnen) && seite('Aufträge', <Auftraege darfDisponieren={darfDisponieren} darfAbrechnen={darfAbrechnen} />)}
 

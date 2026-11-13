@@ -43,6 +43,10 @@ interface Zahlen {
   ohneZuordnungNamen: string[]
   ohneEmailNamen: string[]
   kontenProbleme: { name: string; jahr: number; grund: string }[]
+  zlOhne: number | null
+  zlLaeuft: number | null
+  zlAngekommen: number | null
+  zlGesamt: number | null
   liste: (AuftragKurz & { besetzung: 'besetzt' | 'offen' | 'unbesetzt' })[]
 }
 
@@ -141,6 +145,10 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       ohneZuordnungNamen: [],
       ohneEmailNamen: [],
       kontenProbleme: [],
+      zlOhne: null,
+      zlLaeuft: null,
+      zlAngekommen: null,
+      zlGesamt: null,
       liste: [],
     }
 
@@ -281,6 +289,17 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
           neu.offeneSpots = fehlend + neu.offSpot
         })(),
         (async () => {
+          const r = await supabase.from('auftraege').select('id, status, abfahrt_ist, ankunft_ist').eq('abfahrt_datum', heuteIso).neq('status', 'storniert')
+          if (r.error) return
+          const heut = (r.data ?? []) as { id: string; status: string; abfahrt_ist: string | null; ankunft_ist: string | null }[]
+          const m = heut.length > 0 ? await supabase.from('zuglauf_meldungen').select('auftrag_id').in('auftrag_id', heut.map((x) => x.id)) : null
+          const gemeldet = new Set(((m && !m.error ? m.data : []) ?? []).map((x: { auftrag_id: string }) => x.auftrag_id))
+          neu.zlGesamt = heut.length
+          neu.zlAngekommen = heut.filter((x) => x.ankunft_ist || x.status === 'gefahren').length
+          neu.zlLaeuft = heut.filter((x) => !(x.ankunft_ist || x.status === 'gefahren') && x.abfahrt_ist).length
+          neu.zlOhne = heut.filter((x) => !(x.ankunft_ist || x.status === 'gefahren') && !x.abfahrt_ist && !gemeldet.has(x.id)).length
+        })(),
+        (async () => {
           neu.ohnePreis = await zahl(
             supabase.from('auftraege').select('id', { count: 'exact', head: true }).eq('status', 'gefahren').is('preis', null).lte('abfahrt_datum', heuteIso).gte('abfahrt_datum', seitIso)
           )
@@ -316,16 +335,32 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
     laden()
   }, [laden])
 
-  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'offene_spotschichten', 'urlaubsantraege', 'zeitkorrekturen', 'wunschfrei', 'mitarbeiter', 'mitarbeiter_jahresdaten'], laden)
+  useLiveAktualisierung(['auftraege', 'dienstplan_eintraege', 'offene_spotschichten', 'zuglauf_meldungen', 'urlaubsantraege', 'zeitkorrekturen', 'wunschfrei', 'mitarbeiter', 'mitarbeiter_jahresdaten'], laden)
 
   const stunde = new Date().getHours()
   const gruss = stunde < 11 ? 'Guten Morgen' : stunde < 18 ? 'Guten Tag' : 'Guten Abend'
   const vorname = name.split(' ')[0]
   const farbeAnzahl = (n: number | null): 'ok' | 'achtung' | 'neutral' => (n === null ? 'neutral' : n > 0 ? 'achtung' : 'ok')
 
-  const kacheln: ReactNode[] = []
+  const kachBetrieb: ReactNode[] = []
+  const kachPlanung: ReactNode[] = []
+  const kachAdmin: ReactNode[] = []
+  const kachGeld: ReactNode[] = []
+  if (planer) {
+    kachBetrieb.push(
+      <Kachel key="zl" titel="Zugläufe heute" wert={z?.zlGesamt ?? '–'} unter={z ? `${z.zlOhne ?? 0} ohne Meldung · ${z.zlLaeuft ?? 0} laufen · ${z.zlAngekommen ?? 0} angekommen` : undefined} farbe={z?.zlOhne ? 'achtung' : z?.zlGesamt ? 'ok' : 'neutral'} onClick={() => gehe('zuglaeufe')} laedt={laedt} />,
+      <Kachel key="h" titel="Aufträge heute" wert={z?.heuteAuftraege ?? '–'} unter={`morgen: ${z?.morgenAuftraege ?? '–'}`} farbe="neutral" onClick={() => gehe('auftraege')} laedt={laedt} />,
+      <Kachel key="b" titel="Ohne Besetzung (7 Tage)" wert={z?.ohneBesetzung ?? '–'} unter={z?.ohneBesetzung ? 'noch kein Lokführer eingeteilt' : 'alle Aufträge haben Personal'} farbe={farbeAnzahl(z?.ohneBesetzung ?? null)} onClick={() => gehe('auftraege')} laedt={laedt} />,
+    )
+    kachPlanung.push(
+      <Kachel key="o" titel="Offene Schichten (7 Tage)" wert={z?.offeneSpots ?? '–'} unter={z?.offeneSpots ? `${z.offStandard ?? 0} Standard · ${z.offSpot ?? 0} Spot` : 'alle Schichten besetzt'} farbe={farbeAnzahl(z?.offeneSpots ?? null)} onClick={() => gehe(istAdmin ? 'dienstplan' : 'auftraege')} laedt={laedt} />,
+    )
+    kachGeld.push(
+      <Kachel key="p" titel="Gefahren ohne Preis" wert={z?.ohnePreis ?? '–'} unter={z?.ohnePreis ? 'Preis fehlt (letzte 120 Tage)' : 'alles bepreist'} farbe={farbeAnzahl(z?.ohnePreis ?? null)} onClick={() => gehe('auftraege')} laedt={laedt} />
+    )
+  }
   if (istAdmin) {
-    kacheln.push(
+    kachAdmin.push(
       <Kachel key="u" titel="Urlaubsanträge offen" wert={z?.urlaub ?? '–'} unter={z?.urlaub ? 'warten auf Entscheidung' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.urlaub ?? null)} onClick={() => gehe('antraege')} laedt={laedt} />,
       <Kachel key="z" titel="Zeitkorrekturen offen" wert={z?.zeitkorrekturen ?? '–'} unter={z?.zeitkorrekturen ? 'im Dienstplan prüfen' : 'alles bearbeitet'} farbe={farbeAnzahl(z?.zeitkorrekturen ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
       <Kachel key="w" titel="Wunschfrei offen" wert={z?.wunschfrei ?? '–'} unter={z?.wunschfrei ? 'im Dienstplan prüfen' : 'keine Wünsche offen'} farbe={farbeAnzahl(z?.wunschfrei ?? null)} onClick={() => gehe('dienstplan')} laedt={laedt} />,
@@ -334,16 +369,8 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
       <Kachel key="uk" titel="Urlaubskonten prüfen" wert={z?.kontenProbleme.length ?? '–'} unter={z?.kontenProbleme.length ? 'Zahlen passen nicht zusammen' : 'alles plausibel'} farbe={farbeAnzahl(z?.kontenProbleme.length ?? null)} onClick={() => gehe('datenpruefung')} laedt={laedt} />
     )
   }
-  if (planer) {
-    kacheln.push(
-      <Kachel key="h" titel="Aufträge heute" wert={z?.heuteAuftraege ?? '–'} unter={`morgen: ${z?.morgenAuftraege ?? '–'}`} farbe="neutral" onClick={() => gehe('auftraege')} laedt={laedt} />,
-      <Kachel key="b" titel="Ohne Besetzung (7 Tage)" wert={z?.ohneBesetzung ?? '–'} unter={z?.ohneBesetzung ? 'noch kein Lokführer eingeteilt' : 'alle Aufträge haben Personal'} farbe={farbeAnzahl(z?.ohneBesetzung ?? null)} onClick={() => gehe('auftraege')} laedt={laedt} />,
-      <Kachel key="o" titel="Offene Schichten (7 Tage)" wert={z?.offeneSpots ?? '–'} unter={z?.offeneSpots ? `${z.offStandard ?? 0} Standard · ${z.offSpot ?? 0} Spot` : 'alle Schichten besetzt'} farbe={farbeAnzahl(z?.offeneSpots ?? null)} onClick={() => gehe(istAdmin ? 'dienstplan' : 'auftraege')} laedt={laedt} />,
-      <Kachel key="p" titel="Gefahren ohne Preis" wert={z?.ohnePreis ?? '–'} unter={z?.ohnePreis ? 'Preis fehlt (letzte 120 Tage)' : 'alles bepreist'} farbe={farbeAnzahl(z?.ohnePreis ?? null)} onClick={() => gehe('auftraege')} laedt={laedt} />
-    )
-  }
   if (darfAbrechnen) {
-    kacheln.push(
+    kachGeld.push(
       <Kachel key="a" titel="Bereit zur Abrechnung" wert={z?.bereitAnzahl ?? '–'} unter={z?.bereitSumme ? `Summe ${euro(z.bereitSumme)}` : 'nichts offen'} farbe={z?.bereitAnzahl ? 'achtung' : 'ok'} onClick={() => gehe('abrechnung')} laedt={laedt} />
     )
   }
@@ -358,7 +385,19 @@ export default function Dashboard({ name, istAdmin, darfDisponieren, darfAbrechn
         {new Date().toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })} – das steht heute an:
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 12, marginBottom: 24 }}>{kacheln}</div>
+      {[
+        { titel: 'Heute im Betrieb', liste: kachBetrieb },
+        { titel: 'Planung', liste: kachPlanung },
+        { titel: 'Anträge und Verwaltung', liste: kachAdmin },
+        { titel: 'Abrechnung', liste: kachGeld },
+      ]
+        .filter((g) => g.liste.length > 0)
+        .map((g) => (
+          <div key={g.titel} style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.04em', margin: '0 0 8px' }}>{g.titel}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 12 }}>{g.liste}</div>
+          </div>
+        ))}
 
       {planer && (
         <>
