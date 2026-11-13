@@ -134,6 +134,10 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
   const [ansicht, setAnsicht] = useState<'plan' | 'wunsch' | 'zeit'>('plan')
   const [gelesen, setGelesen] = useState<string[]>([])
   const [gelesenGeladen, setGelesenGeladen] = useState(false)
+  const [kategorie, setKategorie] = useState<string | null>(null)
+  const [antritt, setAntritt] = useState<{ status: string; gemeldet_am: string | null; neuer_beginn: string | null } | null>(null)
+  const [antrittFehler, setAntrittFehler] = useState<string | null>(null)
+  const [jetztMin, setJetztMin] = useState(() => new Date().getHours() * 60 + new Date().getMinutes())
   const [wuensche, setWuensche] = useState<Wunsch[]>([])
   const [pushZustand, setPushZustand] = useState<PushStatus>('aus')
   const [pushMeldung, setPushMeldung] = useState<string | null>(null)
@@ -251,13 +255,44 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
 
   // Aenderungen vom Planer erscheinen von selbst
   useLiveAktualisierung(
-    ['dienstplan_eintraege', 'dienstplan_freigaben', 'schichtvorlagen', 'wunschfrei', 'dienstplan_gelesen', 'urlaubsantraege', 'auftraege'],
+    ['dienstplan_eintraege', 'dienstplan_freigaben', 'schichtvorlagen', 'wunschfrei', 'dienstplan_gelesen', 'urlaubsantraege', 'auftraege', 'dienst_antritt'],
     () => {
       stillNeuLaden.current = true
       setNeuLadenZaehler((z) => z + 1)
       extraLaden()
     }
   )
+
+  // Dienstantritt: Anmeldung von heute und Kategorie laden
+  async function antrittLaden() {
+    const [a, k] = await Promise.all([
+      supabase.from('dienst_antritt').select('status, gemeldet_am, neuer_beginn').eq('mitarbeiter_id', mitarbeiterId).eq('datum', heuteIso).maybeSingle(),
+      supabase.from('mitarbeiter').select('kategorie').eq('id', mitarbeiterId).maybeSingle(),
+    ])
+    if (!a.error) setAntritt((a.data as { status: string; gemeldet_am: string | null; neuer_beginn: string | null } | null) ?? null)
+    if (!k.error) setKategorie((k.data as { kategorie: string | null } | null)?.kategorie ?? null)
+  }
+  useEffect(() => {
+    void antrittLaden()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mitarbeiterId, neuLadenZaehler])
+  useEffect(() => {
+    const t = setInterval(() => setJetztMin(new Date().getHours() * 60 + new Date().getMinutes()), 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  async function antrittMelden() {
+    setAntrittFehler(null)
+    const { error } = await supabase.from('dienst_antritt').upsert(
+      { mitarbeiter_id: mitarbeiterId, datum: heuteIso, status: 'angemeldet', gemeldet_am: new Date().toISOString(), gemeldet_von: 'mitarbeiter', neuer_beginn: null },
+      { onConflict: 'mitarbeiter_id,datum' }
+    )
+    if (error) {
+      setAntrittFehler('Anmeldung fehlgeschlagen: ' + error.message)
+      return
+    }
+    await antrittLaden()
+  }
 
   async function gelesenBestaetigen(wocheIso: string) {
     const { error } = await supabase
@@ -362,6 +397,18 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
     return freigegeben.includes(iso) && !gelesen.includes(iso) && datumZuISO(addTage(woche, 6)) >= heuteIso
   }
   const offeneWochen = wochen.filter((w) => gesperrt(w))
+
+  // Dienstantritt (nur Lokführer): heutiger Dienst, falls die Woche veröffentlicht und bestätigt ist
+  const heuteWoche = wochen.find((w) => datumZuISO(w) === datumZuISO(ersteWoche))
+  const heuteDienst =
+    heuteWoche && freigegeben.includes(datumZuISO(heuteWoche)) && !gesperrt(heuteWoche) && !istUrlaub(heuteIso)
+      ? dienstFuer(eintraege.find((e) => e.datum === heuteIso))
+      : null
+  const antrittPflicht = kategorie === 'Lokführer' && heuteDienst !== null
+  const antrittBeginnMin = heuteDienst ? minuten(heuteDienst.beginn) : 0
+  let antrittEndeMin = heuteDienst ? minuten(heuteDienst.ende) : 0
+  if (heuteDienst && antrittEndeMin <= antrittBeginnMin) antrittEndeMin += 1440
+  const antrittFruehestens = antrittBeginnMin - 120
 
   // Naechster Dienst
   let naechster: { tag: Date; dienst: Dienst } | null = null
@@ -735,6 +782,38 @@ export default function MeinDienstplan({ mitarbeiterId }: { mitarbeiterId: strin
           </div>
         ))}
       </div>
+
+      {antrittPflicht && heuteDienst && jetztMin <= antrittEndeMin && (
+        <div style={{ background: antritt?.status === 'angemeldet' ? '#f0fdf4' : '#eff6ff', border: `2px solid ${antritt?.status === 'angemeldet' ? '#86efac' : '#93c5fd'}`, borderRadius: 12, padding: 16, marginBottom: 18 }}>
+          {antritt?.status === 'angemeldet' ? (
+            <div style={{ fontWeight: 700, color: '#166534', fontSize: 16 }}>
+              ✓ Dienstantritt gemeldet{antritt.gemeldet_am ? ` um ${new Date(antritt.gemeldet_am).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr` : ''}
+              <div style={{ fontWeight: 400, fontSize: 13, color: '#166534', marginTop: 2 }}>
+                {heuteDienst.name} · {kurz(heuteDienst.beginn)} – {kurz(heuteDienst.ende)}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontWeight: 700, color: '#1e3a8a', fontSize: 16, marginBottom: 2 }}>🚉 Dienstantritt heute</div>
+              <div style={{ fontSize: 13, color: '#1e3a8a', marginBottom: 10 }}>
+                {heuteDienst.name} · {kurz(heuteDienst.beginn)} – {kurz(heuteDienst.ende)}
+                {antritt?.status === 'verschoben' && antritt.neuer_beginn ? ` · Dein Dienstbeginn wurde auf ${kurz(antritt.neuer_beginn)} verschoben.` : ''}
+                {antritt?.status === 'nicht_erschienen' ? ' · Vom Planer als nicht erschienen vermerkt. Du kannst dich trotzdem noch anmelden.' : ''}
+              </div>
+              {jetztMin >= antrittFruehestens ? (
+                <button onClick={antrittMelden} style={{ ...knopfVoll, padding: '12px 20px', fontSize: 15, width: '100%' }}>
+                  Ich bin da: Dienstantritt melden
+                </button>
+              ) : (
+                <div style={{ fontSize: 13, color: '#1e3a8a' }}>
+                  Die Anmeldung ist ab {String(Math.floor(((antrittFruehestens % 1440) + 1440) % 1440 / 60)).padStart(2, '0')}:{String((((antrittFruehestens % 1440) + 1440) % 1440) % 60).padStart(2, '0')} Uhr möglich (2 Stunden vor Dienstbeginn).
+                </div>
+              )}
+              {antrittFehler && <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 8 }}>{antrittFehler}</div>}
+            </>
+          )}
+        </div>
+      )}
 
       {offeneWochen.length > 0 && (
         <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: 12, padding: 16, marginBottom: 18 }}>

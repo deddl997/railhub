@@ -34,6 +34,7 @@ import MeinDienstplan from './MeinDienstplan'
 import SchichtvorlagenVerwaltung from './SchichtvorlagenVerwaltung'
 import { useAktuellerMitarbeiter } from './useAktuellerMitarbeiter'
 import Dashboard from './Dashboard'
+import Dienstantritt, { useAntrittDaten } from './Dienstantritt'
 import { UiAnbieter } from './ui'
 import { FIRMA } from './firma'
 import './design.css'
@@ -79,6 +80,7 @@ const ALLE_TABS = [
   { id: 'datenpruefung', label: 'Datenprüfung', kurz: 'Prüfung', nurAdmin: true },
   { id: 'personalprotokoll', label: 'Personal-Protokoll', kurz: 'Protokoll', nurAdmin: true },
   { id: 'streckenkunde', label: 'Streckenkunde', kurz: 'Strecken', nurAdmin: false },
+  { id: 'antritt', label: 'Dienstantritt', kurz: 'Antritt', nurAdmin: false },
   { id: 'dienstplan', label: 'Dienstplan', kurz: 'Dienstplan', nurAdmin: true },
   { id: 'schichtvorlagen', label: 'Schichtvorlagen', kurz: 'Vorlagen', nurAdmin: true },
 ] as const
@@ -109,6 +111,8 @@ function AppInnen() {
   }, [])
 
   const { mitarbeiter, istAdmin, ladeVorgang: ladeRolle } = useAktuellerMitarbeiter()
+  // Dienstantritt: wer ist noch nicht angemeldet (für Planer, auch fürs Zähler-Zeichen am Reiter)
+  const antrittDaten = useAntrittDaten(!!session && (istAdmin || rolle === 'disponent'))
   useEffect(() => {
     if (session) pushStatus().then(setPushZustand)
   }, [session, menueOffen])
@@ -245,7 +249,7 @@ function AppInnen() {
   // (und in der Datenbank die Funktion darf_kosten() anpassen, siehe kosten.sql).
   const darfKosten = istAdmin
   const sichtbareTabs = ALLE_TABS.filter((tab) =>
-    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' || tab.id === 'lokplan' ? darfDisponieren || darfAbrechnen : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
+    tab.id === 'start' ? istAdmin || darfDisponieren || darfAbrechnen : tab.id === 'meinplan' ? !istAdmin : tab.id === 'auftraege' ? darfDisponieren || darfAbrechnen : tab.id === 'abrechnung' || tab.id === 'rechnungen' || tab.id === 'kennzahlen' ? darfAbrechnen : tab.id === 'wirtschaft' || tab.id === 'trassenpreise' ? darfKosten : tab.id === 'protokoll' || tab.id === 'lokplan' ? darfDisponieren || darfAbrechnen : tab.id === 'antritt' ? darfDisponieren : tab.id === 'bahnstrom' ? darfDisponieren || darfAbrechnen : !tab.nurAdmin || istAdmin
   )
 
   // Hauptpunkte oben, Unterpunkte in einer zweiten Zeile darunter
@@ -254,7 +258,7 @@ function AppInnen() {
     {
       id: 'plan',
       label: istAdmin ? 'Dienstplan' : 'Mein Dienstplan',
-      tabs: ['meinplan', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubsregeln', 'urlaubimport', 'jahreswechsel'],
+      tabs: ['meinplan', 'antritt', 'dienstplan', 'kalender', 'antrag', 'antraege', 'uebersicht', 'schichtvorlagen', 'urlaubsregeln', 'urlaubimport', 'jahreswechsel'],
     },
     { id: 'auftraege', label: 'Aufträge', tabs: ['auftraege', 'lokplan', 'protokoll'] },
     { id: 'abrechnung', label: 'Abrechnung', tabs: ['abrechnung', 'rechnungen', 'kennzahlen', 'wirtschaft', 'trassenpreise'] },
@@ -630,6 +634,9 @@ function AppInnen() {
                 }}
               >
                 {UNTERPUNKT_NAME[id] ?? tab?.label}
+                {id === 'antritt' && antrittDaten.probleme > 0 && (
+                  <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 999, padding: '0 7px', fontSize: 11, fontWeight: 700 }}>{antrittDaten.probleme}</span>
+                )}
               </button>
             )
           })}
@@ -738,6 +745,8 @@ function AppInnen() {
         {aktiverTab === 'mitarbeiter' && istAdmin && seite('Mitarbeiterübersicht', <MitarbeiterVerwaltung neuLadenAuslöser={neuLadenAuslöser} />, { ohneKarte: true })}
 
         {aktiverTab === 'streckenkunde' && seite(`Streckenkunde${istAdmin ? '-Überwachung' : ''}`, <Streckenkunde />)}
+
+        {aktiverTab === 'antritt' && darfDisponieren && seite('Dienstantritt', <Dienstantritt daten={antrittDaten} />, { breite: 1100, untertitel: 'wer hat sich zum Dienst angemeldet' })}
 
         {aktiverTab === 'dienstplan' && istAdmin && seite('Dienstplan', <Dienstplan />)}
 
