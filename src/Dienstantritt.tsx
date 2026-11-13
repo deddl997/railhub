@@ -35,6 +35,7 @@ interface MitarbeiterZeile {
   id: string
   name: string
   kategorie: string | null
+  telefon?: string | null
 }
 interface AntrittZeile {
   mitarbeiter_id: string
@@ -52,6 +53,7 @@ export interface AntrittReihe {
   mitarbeiterId: string
   name: string
   kategorie: string
+  telefon: string | null
   datum: string
   titel: string
   ort: string
@@ -127,7 +129,7 @@ export function useAntrittDaten(aktiv: boolean): AntrittDaten {
         .select('mitarbeiter_id, datum, schichtvorlage_id, ist_spotschicht, spot_name, spot_beginn_zeit, spot_ende_zeit, spot_dienstort, abw_beginn_zeit, abw_ende_zeit, abw_dienstort, status')
         .gte('datum', von)
         .lte('datum', heuteIso),
-      supabase.from('mitarbeiter').select('id, name, kategorie'),
+      supabase.from('mitarbeiter').select('id, name, kategorie, telefon'),
       supabase.from('dienst_antritt').select('mitarbeiter_id, datum, status, gemeldet_am, gemeldet_von, neuer_beginn').gte('datum', von).lte('datum', heuteIso),
       supabase.from('dienstplan_freigaben').select('woche_start').gte('woche_start', montagVon(von)).lte('woche_start', heuteIso),
       supabase.from('urlaubsantraege').select('mitarbeiter_id, erster_tag, letzter_tag').eq('status', 'genehmigt').lte('erster_tag', heuteIso).gte('letzter_tag', von),
@@ -222,6 +224,7 @@ export function useAntrittDaten(aktiv: boolean): AntrittDaten {
         mitarbeiterId: e.mitarbeiter_id,
         name: m.name,
         kategorie: m.kategorie ?? 'Ohne Kategorie',
+        telefon: m.telefon ?? null,
         datum: e.datum,
         titel,
         ort,
@@ -302,12 +305,25 @@ export default function Dienstantritt({ daten }: { daten: AntrittDaten }) {
             <div style={{ fontWeight: 700, fontSize: 15 }}>{r.name}{filter === 'Alle' && <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text-muted)' }}> · {r.kategorie}</span>}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               {datumKurz(r.datum)} {r.beginn}–{r.ende}{r.titel ? ` · ${r.titel}` : ''}{r.ort ? ` · ${r.ort}` : ''}
+              {r.telefon && (
+                <>
+                  {' · '}
+                  <a href={`tel:${r.telefon.replace(/[^+\d]/g, '')}`} style={{ color: 'inherit' }}>
+                    {r.telefon}
+                  </a>
+                </>
+              )}
             </div>
           </div>
           <div style={{ flex: '2 1 240px', fontWeight: 600, color: farbe, fontSize: 14 }}>{r.text}</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {offen ? (
               <>
+                {r.telefon && (
+                  <a href={`tel:${r.telefon.replace(/[^+\d]/g, '')}`} style={{ ...knopfKlein, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+                    📞 Anrufen
+                  </a>
+                )}
                 <button style={knopfKlein} onClick={() => void setzen(r, 'angemeldet')}>✓ Ist da</button>
                 <button style={knopfKlein} onClick={() => (setVerschiebenFuer(verschiebenFuer === r.key ? null : r.key), setNeueZeit(r.verschobenAuf ?? r.beginn))}>🕐 Verschieben</button>
                 <button style={knopfKlein} onClick={() => window.confirm(`${r.name} als nicht erschienen vermerken?`) && void setzen(r, 'nicht_erschienen')}>Nicht erschienen</button>

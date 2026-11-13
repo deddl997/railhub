@@ -28,6 +28,7 @@ interface Zeile {
   resturlaub_vorjahr: number | null
   tageGenommen: number
   email: string
+  telefon: string
   rfuDatum: string | null
   simulatorDatum: string | null
 }
@@ -85,7 +86,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
     const [{ data: mitarbeiterListe }, { data: alleJahresdaten }, { data: genehmigteAntraege }] =
       await Promise.all([
-        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen, rolle, email').order('name'),
+        supabase.from('mitarbeiter').select('id, name, kategorie, lok_typen, rolle, email, telefon').order('name'),
         supabase.from('mitarbeiter_jahresdaten').select('jahr'),
         supabase
           .from('urlaubsantraege')
@@ -126,6 +127,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
         resturlaub_vorjahr: jd ? jd.resturlaub_vorjahr : 0,
         tageGenommen: genommenMap.get(namensSignatur(m.name)) ?? 0,
         email: m.email ?? '',
+        telefon: m.telefon ?? '',
         rfuDatum: jd?.rfu_datum ?? null,
         simulatorDatum: jd?.simulator_datum ?? null,
       }
@@ -210,6 +212,20 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
 
   function emailAendern(mitarbeiterId: string, wert: string) {
     setZeilen((vorher) => vorher.map((z) => (z.mitarbeiterId === mitarbeiterId ? { ...z, email: wert } : z)))
+  }
+
+  function telefonAendern(mitarbeiterId: string, wert: string) {
+    setZeilen((vorher) => vorher.map((z) => (z.mitarbeiterId === mitarbeiterId ? { ...z, telefon: wert } : z)))
+  }
+
+  async function telefonSpeichern(zeile: Zeile) {
+    const sauber = zeile.telefon.trim()
+    const { error } = await supabase.from('mitarbeiter').update({ telefon: sauber === '' ? null : sauber }).eq('id', zeile.mitarbeiterId)
+    if (error) toast.fehler('Telefonnummer konnte nicht gespeichert werden: ' + error.message)
+    else {
+      setGespeichertId(zeile.mitarbeiterId)
+      setTimeout(() => setGespeichertId(null), 1200)
+    }
   }
 
   async function emailSpeichern(zeile: Zeile) {
@@ -666,6 +682,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
               <th style={kopfZelleStil}>Qualifikation</th>
               <th style={kopfZelleStil}>Lok-Typen</th>
               <th style={kopfZelleStil}>E-Mail</th>
+              <th style={kopfZelleStil}>Telefon</th>
               <th style={kopfZelleStil}>Datum RFU</th>
               <th style={kopfZelleStil}>Datum Simulator</th>
               <th style={kopfZelleStil}>Resturlaub Vorjahr</th>
@@ -680,7 +697,7 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
           <tbody>
             {sichtbareZeilen.length === 0 && (
               <tr>
-                <td colSpan={14} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+                <td colSpan={15} style={{ ...zellStil, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
                   Keine Mitarbeiter in dieser Auswahl.
                 </td>
               </tr>
@@ -801,6 +818,16 @@ export default function MitarbeiterVerwaltung({ neuLadenAuslöser }: { neuLadenA
                     onChange={(e) => emailAendern(zeile.mitarbeiterId, e.target.value)}
                     onBlur={() => emailSpeichern(zeile)}
                     style={{ ...eingabeStil, width: 210 }}
+                  />
+                </td>
+                <td style={zellStil}>
+                  <input
+                    type="tel"
+                    value={zeile.telefon}
+                    placeholder="0170 …"
+                    onChange={(e) => telefonAendern(zeile.mitarbeiterId, e.target.value)}
+                    onBlur={() => telefonSpeichern(zeile)}
+                    style={{ ...eingabeStil, width: 140 }}
                   />
                 </td>
                 <td style={zellStil}>

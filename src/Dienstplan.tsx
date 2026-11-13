@@ -93,6 +93,8 @@ interface DienstplanEintrag {
   abw_pause_minuten?: number | null
   abw_dienstort?: string | null
   abw_info?: string | null
+  gesendet_am?: string | null
+  geaendert_am?: string | null
   status: string | null
 }
 
@@ -139,6 +141,16 @@ const ABW_LEER = {
   abw_pause_minuten: null,
   abw_dienstort: null,
   abw_info: null,
+}
+
+type SendeStatus = 'neu' | 'gesendet' | 'geaendert'
+
+// Wurde der Dienst schon an die Person gesendet? Und danach nochmal geaendert?
+function sendeStatusVon(e: DienstplanEintrag | undefined): SendeStatus | null {
+  if (!e || e.status || (!e.schichtvorlage_id && !e.ist_spotschicht)) return null
+  if (!e.gesendet_am) return 'neu'
+  if (e.geaendert_am && new Date(e.geaendert_am).getTime() > new Date(e.gesendet_am).getTime() + 1000) return 'geaendert'
+  return 'gesendet'
 }
 
 const MONATE = [
@@ -1234,6 +1246,43 @@ export default function Dienstplan() {
     return { dienste, offen }
   }
 
+  // Dienste der angezeigten Woche (bzw. des Tages), die noch nicht oder geaendert gesendet wurden
+  function zuSendendeEintraege(): DienstplanEintrag[] {
+    const tageIso = ansicht === 'tag' ? [tagIso] : tage.map((t) => datumZuISO(t))
+    return eintraege.filter((e) => tageIso.includes(e.datum) && !istUrlaub(e.mitarbeiter_id, e.datum) && ['neu', 'geaendert'].includes(sendeStatusVon(e) ?? ''))
+  }
+
+  async function markiereGesendet(ids: string[]) {
+    if (ids.length === 0) return
+    const { error } = await supabase.from('dienstplan_eintraege').update({ gesendet_am: new Date().toISOString() }).in('id', ids)
+    if (error) window.alert('Sende-Status konnte nicht gespeichert werden: ' + error.message)
+  }
+
+  async function diensteSenden() {
+    const liste = zuSendendeEintraege()
+    if (liste.length === 0) return
+    const personen = new Set(liste.map((e) => e.mitarbeiter_id))
+    const bestaetigt = window.confirm(
+      `${liste.length} Dienste an ${personen.size} Mitarbeiter senden? Sie bekommen eine Push-Nachricht und sehen die Dienste in ihrem Dienstplan.`
+    )
+    if (!bestaetigt) return
+    if (!freigegebeneWochen.includes(wochenStartIso)) {
+      const { error } = await supabase.from('dienstplan_freigaben').upsert({ woche_start: wochenStartIso })
+      if (error) {
+        window.alert('Senden fehlgeschlagen: ' + error.message)
+        return
+      }
+    }
+    const ergebnis = await pushSenden(
+      'Dienstplan',
+      `Dein Dienstplan (KW ${kalenderwoche(tage[0])}) wurde aktualisiert. Bitte prüfen.`,
+      [...personen]
+    )
+    setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Gesendet. Push nicht verschickt: ' + ergebnis.meldung)
+    await markiereGesendet(liste.map((e) => e.id))
+    await laden()
+  }
+
   async function wocheVeroeffentlichen() {
     const bestaetigt = window.confirm(
       `Woche ${datumKurz(tage[0])} – ${datumKurz(tage[6])} für alle Mitarbeiter veröffentlichen? Jeder sieht dann seinen eigenen Dienstplan dieser Woche. Spätere Änderungen sind sofort sichtbar.`
@@ -1249,6 +1298,7 @@ export default function Dienstplan() {
         mitarbeiterMitDienstInWoche().map((m) => m.id)
       )
       setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Veröffentlicht. Push nicht gesendet: ' + ergebnis.meldung)
+      await markiereGesendet(eintraege.filter((e) => tage.some((t) => datumZuISO(t) === e.datum) && sendeStatusVon(e) !== null).map((e) => e.id))
     }
     await laden()
   }
@@ -1269,6 +1319,8 @@ export default function Dienstplan() {
       empfaenger.map((m) => m.id)
     )
     setPushHinweis(ergebnis.ok ? ergebnis.meldung : 'Push nicht gesendet: ' + ergebnis.meldung)
+    await markiereGesendet(eintraege.filter((e) => tage.some((t) => datumZuISO(t) === e.datum) && sendeStatusVon(e) !== null).map((e) => e.id))
+    await laden()
   }
 
   function datumDeutsch(iso: string): string {
@@ -1512,6 +1564,37 @@ export default function Dienstplan() {
             Offen
           </span>
         </div>
+
+        {ansicht !== 'monat' &&
+          (() => {
+            const alle = eintraege.filter((e) => (ansicht === 'tag' ? e.datum === tagIso : tage.some((t) => datumZuISO(t) === e.datum)))
+            const z = { neu: 0, gesendet: 0, geaendert: 0 }
+            for (const e of alle) {
+              if (istUrlaub(e.mitarbeiter_id, e.datum)) continue
+              const st = sendeStatusVon(e)
+              if (st) z[st]++
+            }
+            const offenSenden = z.neu + z.geaendert
+            const punkt = (farbe: string): React.CSSProperties => ({ width: 9, height: 9, borderRadius: 999, background: farbe, display: 'inline-block', marginRight: 5 })
+            return (
+              <>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 12, color: '#475569' }}>
+                  <span><span style={punkt('#f59e0b')} />{z.neu} nicht gesendet</span>
+                  <span><span style={punkt('#16a34a')} />{z.gesendet} gesendet</span>
+                  {z.geaendert > 0 && <span><span style={punkt('#ea580c')} />{z.geaendert} geändert</span>}
+                </div>
+                {offenSenden > 0 && (
+                  <button
+                    onClick={diensteSenden}
+                    title="Alle noch nicht gesendeten oder geänderten Dienste an die Mitarbeiter senden"
+                    style={{ background: '#1d4ed8', color: '#ffffff', border: 'none', borderRadius: 6, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    ✉ {offenSenden} {offenSenden === 1 ? 'Dienst' : 'Dienste'} senden
+                  </button>
+                )}
+              </>
+            )
+          })()}
 
         {ansicht !== 'monat' &&
           (freigegebeneWochen.includes(wochenStartIso) ? (
@@ -4131,6 +4214,7 @@ export default function Dienstplan() {
                         karte = (
                           <SchichtKarte
                             rot={rotUmrandet}
+                            sende={sendeStatusVon(eintrag)}
                             farbe={eintrag.spot_farbe ?? '#8b1a1a'}
                             titel={eintrag.spot_name ?? ''}
                             zeile2={`${zeitKurz(eintrag.spot_beginn_zeit)}–${zeitKurz(eintrag.spot_ende_zeit)}`}
@@ -4145,6 +4229,7 @@ export default function Dienstplan() {
                           karte = (
                             <SchichtKarte
                               rot={rotUmrandet}
+                            sende={sendeStatusVon(eintrag)}
                               farbe={vorlage.farbe}
                               titel={vorlage.name + (si?.abweichung ? ' ✎' : '')}
                               zeile2={
@@ -4297,6 +4382,7 @@ function SchichtKarte({
   info,
   umrandet,
   rot,
+  sende,
 }: {
   farbe: string
   titel: string
@@ -4305,6 +4391,7 @@ function SchichtKarte({
   info?: string
   umrandet?: boolean
   rot?: boolean
+  sende?: SendeStatus | null
 }) {
   if (umrandet) {
     return (
@@ -4342,8 +4429,25 @@ function SchichtKarte({
         flexDirection: 'column',
         justifyContent: 'center',
         gap: 2,
+        position: 'relative',
       }}
     >
+      {sende && (
+        <span
+          title={sende === 'gesendet' ? 'Gesendet' : sende === 'geaendert' ? 'Geändert seit dem Versand' : 'Noch nicht gesendet'}
+          style={{
+            position: 'absolute',
+            top: 5,
+            right: 7,
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: 1,
+            color: sende === 'gesendet' ? '#16a34a' : sende === 'geaendert' ? '#ea580c' : '#f59e0b',
+          }}
+        >
+          {sende === 'gesendet' ? '✓' : sende === 'geaendert' ? '✎' : '●'}
+        </span>
+      )}
       {zeile2 && <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2, letterSpacing: -0.2 }}>{zeile2}</div>}
       <div
         style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
