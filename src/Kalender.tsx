@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { feiertageBayern } from './feiertage'
+import { FERIEN_FARBEN, ferienFuerTag } from './ferien'
+import type { FerienArt } from './ferien'
 import { datumZuISO } from './datumUtils'
 import { namensSignatur } from './namensAbgleich'
 import { KATEGORIEN, LOK_TYPEN } from './qualifikationen'
@@ -665,6 +667,8 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
     if (istHeute(tag)) return '#dbe6f5'
     if (feiertagName(tag)) return '#fbe1e4'
     if (istWochenende(tag)) return '#eef1f5'
+    const fe = ferienFuerTag(datumZuISO(tag))
+    if (fe) return FERIEN_FARBEN[fe.art].hell
     return zeilenIndex % 2 === 0 ? 'var(--card)' : 'var(--bg)'
   }
 
@@ -883,13 +887,14 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
               </th>
               {tage.map((tag) => {
                 const feiertag = feiertagName(tag)
+                const ferien = ferienFuerTag(datumZuISO(tag))
                 return (
                   <th
                     key={tag.toISOString()}
-                    title={feiertag ?? undefined}
+                    title={[feiertag, ferien?.name].filter(Boolean).join(' · ') || undefined}
                     style={{
                       padding: '4px 2px',
-                      borderBottom: '1px solid var(--border)',
+                      borderBottom: ferien ? `3px solid ${FERIEN_FARBEN[ferien.art].kraeftig}` : '1px solid var(--border)',
                       color: istHeute(tag) ? 'var(--navy)' : 'var(--text-muted)',
                       fontWeight: istHeute(tag) ? 700 : 500,
                       minWidth: 26,
@@ -899,6 +904,8 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
                         ? '#fbe1e4'
                         : istWochenende(tag)
                         ? '#eef1f5'
+                        : ferien
+                        ? FERIEN_FARBEN[ferien.art].hell
                         : 'var(--card)',
                     }}
                   >
@@ -941,7 +948,7 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
                   return (
                     <td
                       key={tag.toISOString()}
-                      title={eintrag ? `${zeile.name} – klicken zum Bearbeiten` : istPerson ? `${feiertag ? feiertag + ' – ' : ''}Klicken oder ziehen, um Urlaub einzutragen` : feiertag ?? undefined}
+                      title={eintrag ? `${zeile.name} – klicken zum Bearbeiten` : istPerson ? `${feiertag ? feiertag + ' – ' : ''}${ferienFuerTag(tagIso) ? ferienFuerTag(tagIso)?.name + ' – ' : ''}Klicken oder ziehen, um Urlaub einzutragen` : feiertag ?? undefined}
                       onClick={eintrag ? () => setBearbeiten({ eintrag, tag: tagIso }) : undefined}
                       onMouseDown={!eintrag && istPerson ? (ev) => { ev.preventDefault(); setZiehen({ zeileId: zeile.id, start: tagIso, ende: tagIso }) } : undefined}
                       onMouseEnter={() => setZiehen((z) => (z && z.zeileId === zeile.id ? { ...z, ende: tagIso } : z))}
@@ -986,6 +993,12 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
         <span>
           <span style={legendenFlaecheStil('#dbe6f5')} /> Heute
         </span>
+        <span style={{ marginLeft: 8, fontWeight: 600 }}>Schulferien Bayern:</span>
+        {(Object.keys(FERIEN_FARBEN) as FerienArt[]).map((art) => (
+          <span key={art}>
+            <span style={legendenFlaecheStil(FERIEN_FARBEN[art].hell)} /> {art === 'Weihnachten' ? 'Weihnachten' : art === 'Herbst' ? 'Herbst' : art}
+          </span>
+        ))}
       </div>
 
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>
