@@ -516,6 +516,7 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
   const [bearbeiten, setBearbeiten] = useState<{ eintrag: KalenderEintrag; tag: string } | null>(null)
   const [ziehen, setZiehen] = useState<{ zeileId: string; start: string; ende: string } | null>(null)
   const [filter, setFilter] = useState<'alle' | 'Lokführer' | 'Wagenmeister'>('alle')
+  const [lokFilter, setLokFilter] = useState<string[]>([])
   const [neuerUrlaub, setNeuerUrlaub] = useState<{ person: Mitarbeiter; von: string; bis: string } | null>(null)
   const ziehenRef = useRef(ziehen)
   ziehenRef.current = ziehen
@@ -581,15 +582,18 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
   ).sort()
 
   const jahr = monat.getFullYear()
-  const sichtbareMitarbeiter = mitarbeiterListe.filter((m) => filter === 'alle' || m.kategorie === filter)
+  const ohneEinschraenkung = filter === 'alle' && lokFilter.length === 0
+  const sichtbareMitarbeiter = mitarbeiterListe.filter(
+    (m) => (filter === 'alle' || m.kategorie === filter) && (lokFilter.length === 0 || (m.lok_typen ?? []).some((t) => lokFilter.includes(t)))
+  )
   const sichtbareSignaturen = new Set(sichtbareMitarbeiter.map((m) => normalisiereName(m.name)))
   const eintraegeSicht = eintraege.filter(
-    (e) => e.name && (sichtbareSignaturen.has(normalisiereName(e.name)) || (filter === 'alle' && !bekannteNamen.has(normalisiereName(e.name))))
+    (e) => e.name && (sichtbareSignaturen.has(normalisiereName(e.name)) || (ohneEinschraenkung && !bekannteNamen.has(normalisiereName(e.name))))
   )
 
   const zeilen = [
     ...sichtbareMitarbeiter.map((m) => ({ id: m.id, name: m.name })),
-    ...(filter === 'alle' ? unbekannteNamen.map((name) => ({ id: `unbekannt-${name}`, name })) : []),
+    ...(ohneEinschraenkung ? unbekannteNamen.map((name) => ({ id: `unbekannt-${name}`, name })) : []),
   ]
 
   // Jahresübersicht: pro Werktag, wer im Urlaub ist (Wochenenden und Feiertage zählen nicht)
@@ -762,6 +766,41 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
               </button>
             ))}
           </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginRight: 4 }}>Lok</span>
+          {LOK_TYPEN.map((lt) => {
+            const aktiv = lokFilter.includes(lt)
+            const anzahl = mitarbeiterListe.filter((m) => (m.lok_typen ?? []).includes(lt)).length
+            return (
+              <button
+                key={lt}
+                onClick={() => setLokFilter((v) => (v.includes(lt) ? v.filter((x) => x !== lt) : [...v, lt]))}
+                title={aktiv ? 'Filter entfernen' : `Nur Mitarbeiter, die ${lt} fahren dürfen`}
+                style={{
+                  background: aktiv ? '#0e7490' : '#f3f5f8',
+                  color: aktiv ? '#ffffff' : 'var(--text)',
+                  border: 'none',
+                  borderRadius: 999,
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                {lt} <span style={{ opacity: 0.65 }}>{anzahl}</span>
+              </button>
+            )
+          })}
+          {lokFilter.length > 0 && (
+            <button
+              onClick={() => setLokFilter([])}
+              style={{ background: 'none', border: 'none', color: 'var(--navy)', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
+            >
+              Lok-Filter zurücksetzen
+            </button>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
