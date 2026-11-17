@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { feiertageBayern } from './feiertage'
-import { FERIEN_FARBEN, ferienFuerTag } from './ferien'
+import { FERIEN_BAYERN, FERIEN_FARBEN, ferienFuerTag } from './ferien'
 import type { FerienArt } from './ferien'
 import { datumZuISO } from './datumUtils'
 import { namensSignatur } from './namensAbgleich'
@@ -672,6 +672,99 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
     return zeilenIndex % 2 === 0 ? 'var(--card)' : 'var(--bg)'
   }
 
+  // Gesamte Jahresplanung als druckfertige Seiten (Querformat): Uebersicht + ein Blatt pro Monat
+  function jahresplanDrucken() {
+    const fenster = window.open('', '_blank')
+    if (!fenster) {
+      window.alert('Das Druckfenster wurde vom Browser blockiert. Bitte Pop-ups für diese Seite erlauben und noch einmal klicken.')
+      return
+    }
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const filterText = [filter === 'alle' ? 'Alle Mitarbeiter' : filter, lokFilter.length > 0 ? `Lok: ${lokFilter.join(', ')}` : ''].filter(Boolean).join(' · ')
+    const feiertageJahr = new Map(feiertageBayern(jahr).map((f) => [f.datum, f.name]))
+    const personen = zeilen
+    const stand = new Date().toLocaleDateString('de-DE')
+
+    // Seite 1: Uebersicht je Monat
+    let html = `<section class="seite"><h1>Urlaubsplanung ${jahr}</h1><div class="unter">${esc(filterText)} · ${personen.length} Personen · Stand ${stand}</div>
+      <table class="uebersicht"><thead><tr><th>Monat</th><th>Urlaubstage (Werktage)</th><th>Höchststand gleichzeitig</th><th>am</th></tr></thead><tbody>`
+    monatsStatistik.forEach((ms, i) => {
+      html += `<tr><td>${MONATSNAMEN[i]}</td><td>${ms.urlaubstage}</td><td>${ms.spitze > 0 ? ms.spitze : '–'}</td><td>${ms.spitzeTag ? datumDeutsch(ms.spitzeTag) : ''}</td></tr>`
+    })
+    html += `</tbody></table>
+      <div class="unter" style="margin-top:14px">Genehmigt: ${urlaubstageGenehmigt} Urlaubstage · in Prüfung: ${urlaubstageOffen} Urlaubstage</div>
+      <h2>Schulferien Bayern ${jahr}</h2><div class="ferienliste">`
+    for (const f of FERIEN_BAYERN) {
+      if (f.bis.slice(0, 4) < String(jahr) || f.von.slice(0, 4) > String(jahr)) continue
+      html += `<span class="fchip" style="background:${FERIEN_FARBEN[f.art].hell};border-color:${FERIEN_FARBEN[f.art].kraeftig}">${esc(f.name)}: ${datumDeutsch(f.von)} – ${datumDeutsch(f.bis)}</span>`
+    }
+    html += `</div></section>`
+
+    // Seiten 2-13: ein Blatt pro Monat
+    for (let m = 0; m < 12; m++) {
+      const anzahl = new Date(jahr, m + 1, 0).getDate()
+      const tageMonat = Array.from({ length: anzahl }, (_, i) => new Date(jahr, m, i + 1))
+      html += `<section class="seite"><h1>${MONATSNAMEN[m]} ${jahr}</h1><div class="unter">${esc(filterText)} · Höchststand: ${monatsStatistik[m].spitze > 0 ? monatsStatistik[m].spitze + ' gleichzeitig' : 'kein Urlaub'}</div>
+        <table class="plan"><thead><tr><th class="name">Mitarbeiter</th>`
+      for (const t of tageMonat) {
+        const iso = datumZuISO(t)
+        const fe = ferienFuerTag(iso)
+        const bg = feiertageJahr.has(iso) ? '#fbe1e4' : istWochenende(t) ? '#e5e7eb' : fe ? FERIEN_FARBEN[fe.art].hell : '#ffffff'
+        const rand = fe ? `border-bottom:3px solid ${FERIEN_FARBEN[fe.art].kraeftig};` : ''
+        html += `<th style="background:${bg};${rand}">${t.getDate()}<br><span>${WOCHENTAGE_KURZ[t.getDay()]}</span></th>`
+      }
+      html += `</tr></thead><tbody>`
+      for (const z of personen) {
+        html += `<tr><td class="name">${esc(z.name)}</td>`
+        for (const t of tageMonat) {
+          const iso = datumZuISO(t)
+          const e = eintraege.find((x) => x.name && normalisiereName(x.name) === normalisiereName(z.name) && iso >= x.erster_tag && iso <= x.letzter_tag)
+          const fe = ferienFuerTag(iso)
+          let bg = feiertageJahr.has(iso) ? '#fbe1e4' : istWochenende(t) ? '#e5e7eb' : fe ? FERIEN_FARBEN[fe.art].hell : '#ffffff'
+          let inhalt = ''
+          if (e) {
+            bg = e.status === 'genehmigt' ? '#16a34a' : '#f59e0b'
+            inhalt = e.status === 'genehmigt' ? '' : '?'
+          }
+          html += `<td style="background:${bg}">${inhalt}</td>`
+        }
+        html += `</tr>`
+      }
+      html += `</tbody></table>
+        <div class="legende"><span><i style="background:#16a34a"></i>Genehmigt</span><span><i style="background:#f59e0b"></i>In Prüfung (?)</span><span><i style="background:#fbe1e4"></i>Feiertag</span><span><i style="background:#e5e7eb"></i>Wochenende</span>`
+      for (const art of Object.keys(FERIEN_FARBEN) as FerienArt[]) html += `<span><i style="background:${FERIEN_FARBEN[art].hell};border-color:${FERIEN_FARBEN[art].kraeftig}"></i>Ferien ${art}</span>`
+      html += `</div></section>`
+    }
+
+    const gross = personen.length > 32
+    fenster.document.write(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Urlaubsplanung ${jahr}</title><style>
+      @page { size: A4 landscape; margin: 10mm; }
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; color: #1e293b; margin: 0; }
+      .seite { page-break-after: always; padding: 4px; }
+      .seite:last-child { page-break-after: auto; }
+      h1 { margin: 0 0 2px; font-size: 22px; color: #14325c; }
+      h2 { font-size: 15px; color: #14325c; margin: 18px 0 8px; }
+      .unter { color: #64748b; font-size: 12px; margin-bottom: 10px; }
+      table { border-collapse: collapse; width: 100%; }
+      .uebersicht th, .uebersicht td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; font-size: 13px; }
+      .uebersicht th { background: #f1f5f9; }
+      .plan { table-layout: fixed; }
+      .plan th, .plan td { border: 1px solid #cbd5e1; text-align: center; font-size: ${gross ? 8 : 10}px; padding: 0; height: ${gross ? 14 : 19}px; color: #fff; font-weight: 700; }
+      .plan th { color: #334155; height: auto; padding: 2px 0; }
+      .plan th span { font-weight: 400; font-size: 8px; color: #64748b; }
+      .plan .name { width: 130px; text-align: left; padding: 0 6px; color: #1e293b; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #fff; }
+      .legende { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 11px; color: #475569; }
+      .legende i { display: inline-block; width: 12px; height: 12px; border: 1px solid #94a3b8; margin-right: 5px; vertical-align: -2px; }
+      .ferienliste { display: flex; flex-wrap: wrap; gap: 8px; }
+      .fchip { border: 1px solid; border-radius: 999px; padding: 4px 12px; font-size: 12px; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    </style></head><body>${html}</body></html>`)
+    fenster.document.close()
+    fenster.focus()
+    setTimeout(() => fenster.print(), 400)
+  }
+
   function berechneAuslastung(gruppe: Mitarbeiter[]) {
     const namenSignaturen = new Set(gruppe.map((m) => normalisiereName(m.name)))
     return tage.map((tag) => {
@@ -797,6 +890,13 @@ export default function Kalender({ neuLadenAuslöser, onGeaendert }: { neuLadenA
               </button>
             )
           })}
+          <button
+            onClick={jahresplanDrucken}
+            title="Gesamte Jahresplanung als Querformat-Seiten drucken (Übersicht + ein Blatt pro Monat)"
+            style={{ marginLeft: 'auto', background: 'var(--navy)', color: '#ffffff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+          >
+            🖨 Jahresplan drucken
+          </button>
           {lokFilter.length > 0 && (
             <button
               onClick={() => setLokFilter([])}
